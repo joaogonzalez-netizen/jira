@@ -1086,9 +1086,9 @@ function SemanalCard({ task, onOpen, onDragStart, checked, onToggle }) {
       draggable onDragStart={(e) => onDragStart && onDragStart(e, task.key)}
       onClick={() => onOpen(task)}
       className="pp-card"
-      style={{ background: T.bg1, border: `1px solid ${T.border2}`, borderRadius: 10, padding: "8px 10px", cursor: "grab", boxShadow: T.cardShadow }}
+      style={{ background: T.bg1, border: `1px solid ${T.border2}`, borderRadius: 12, padding: 10, cursor: "grab", boxShadow: T.cardShadow }}
     >
-      <div className="flex items-center justify-between" style={{ gap: 8 }}>
+      <div className="flex items-start justify-between" style={{ gap: 8 }}>
         <div className="flex items-center" style={{ gap: 6, minWidth: 0 }}>
           {onToggle && (
             <input
@@ -1098,26 +1098,28 @@ function SemanalCard({ task, onOpen, onDragStart, checked, onToggle }) {
               style={{ accentColor: "#5166e6", cursor: "pointer", flexShrink: 0 }}
             />
           )}
-          <span style={{ fontSize: 11, color: T.ink2, fontFamily: "'Inter Tight', sans-serif", flexShrink: 0 }}>{task.key}</span>
+          <span style={{ fontSize: 11, fontWeight: 500, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>{task.key}</span>
         </div>
         <div className="flex items-center" style={{ gap: 4, flexShrink: 0 }}>
           {task.intercom && <Badge bg={PRODUCT_STYLE["STLFLIX"].subtle} color={PRODUCT_STYLE["STLFLIX"].text}>Intercom</Badge>}
           <Badge bg={prod.subtle} color={prod.text}>{task.project}</Badge>
         </div>
       </div>
-      <p style={{ marginTop: 4, fontSize: 12.5, lineHeight: 1.35, color: T.ink0, fontFamily: "'Inter Tight', sans-serif", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+      <p style={{ marginTop: 6, fontSize: 13, lineHeight: 1.35, color: T.ink0, fontFamily: "'Inter Tight', sans-serif", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
         {task.summary || "(sem título)"}
       </p>
       {epic && (
-        <p style={{ marginTop: 2, fontSize: 10.5, color: T.ink2, fontFamily: "'Inter Tight', sans-serif", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+        <p style={{ marginTop: 3, fontSize: 10.5, color: T.ink2, fontFamily: "'Inter Tight', sans-serif", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
           ⌂ {epic}
         </p>
       )}
-      <div className="flex items-center justify-between" style={{ marginTop: 6 }}>
+      <div className="flex items-center justify-between" style={{ marginTop: 8 }}>
         <span className="inline-flex items-center" style={{ gap: 5, fontSize: 11, color: layer.text, fontFamily: "'Inter Tight', sans-serif" }}>
           <span style={{ width: 6, height: 6, borderRadius: 999, background: layer.dot, display: "inline-block" }} />{layerOf(task)}
         </span>
-        <span style={{ fontSize: 11, color: T.ink2, fontFamily: "'Inter Tight', sans-serif" }}>{task.status}</span>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 20, height: 20, borderRadius: 999, background: T.bg2, color: T.ink0, fontSize: 10, fontWeight: 700, textTransform: "uppercase", border: `1px solid ${T.border2}`, fontFamily: "'Inter Tight', sans-serif" }}>
+          {initials(task.assignee)}
+        </div>
       </div>
     </div>
   );
