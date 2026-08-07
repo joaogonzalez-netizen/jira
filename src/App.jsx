@@ -1044,7 +1044,6 @@ function AnaliseScreen() {
 
 const SEMANAL_DESTAQUES_KEY = "semanal-destaques-v1";
 const SEMANAL_STATUS_COLS = [
-  { key: "pronto", label: "Pronto para dev", accent: "#5166e6", tooltip: "Status 'Pronto P/ DEV' — já passou pela fila e está liberado pro time pegar.", match: (t) => t.status === "Pronto P/ DEV" },
   { key: "fila", label: "Fila para dev", accent: "#75797d", tooltip: "Status 'Fila da Sprint' (ou 'Fila da sprint UX') — refinado e aguardando entrar em desenvolvimento.", match: (t) => t.status === "Fila da Sprint" || t.status === "Fila da sprint UX" },
   { key: "emdev", label: "Em dev", accent: "#ad54ff", tooltip: "Em DEV, Code Review, Pronta p/ teste, Em testes ou Pronto p/ Deploy — em algum ponto do desenvolvimento.", match: (t) => t.stage === "Em dev" },
   { key: "concluido", label: "Concluído", accent: "#00aa6c", tooltip: "Status Concluído com Data Concluído nos últimos 10 dias.", match: (t) => t.stage === "Concluído" },
@@ -1154,6 +1153,7 @@ function SemanalScreen() {
   const [openTask, setOpenTask] = useState(null);
   const [destaqueKeys, setDestaqueKeys] = useState(() => new Set());
   const [tipoFilter, setTipoFilter] = useState(null);
+  const [produtoFilter, setProdutoFilter] = useState(null);
   const [dragKey, setDragKey] = useState(null);
   const [saving, setSaving] = useState(false);
 
@@ -1187,21 +1187,30 @@ function SemanalScreen() {
 
   const weekTasksAll = useMemo(
     () => TASKS_SEED.filter((t) =>
-      t.stage === "Pronta pra dev" || t.stage === "Em dev" || isRecentlyDone(t) || destaqueKeys.has(t.key)
+      t.status !== "Pronto P/ DEV" &&
+      (t.stage === "Pronta pra dev" || t.stage === "Em dev" || isRecentlyDone(t) || destaqueKeys.has(t.key))
     ),
     [TASKS_SEED, isRecentlyDone, destaqueKeys]
   );
 
   const destaqueTasksAll = useMemo(() => weekTasksAll.filter((t) => destaqueKeys.has(t.key)), [weekTasksAll, destaqueKeys]);
   const weekTasksRest = useMemo(() => weekTasksAll.filter((t) => !destaqueKeys.has(t.key)), [weekTasksAll, destaqueKeys]);
-  const destaqueTasks = useMemo(() => (tipoFilter ? destaqueTasksAll.filter((t) => layerOf(t) === tipoFilter) : destaqueTasksAll), [destaqueTasksAll, tipoFilter]);
-  const weekTasks = useMemo(() => (tipoFilter ? weekTasksRest.filter((t) => layerOf(t) === tipoFilter) : weekTasksRest), [weekTasksRest, tipoFilter]);
+  const destaqueTasks = useMemo(
+    () => destaqueTasksAll.filter((t) => (!tipoFilter || layerOf(t) === tipoFilter) && (!produtoFilter || t.project === produtoFilter)),
+    [destaqueTasksAll, tipoFilter, produtoFilter]
+  );
+  const weekTasks = useMemo(
+    () => weekTasksRest.filter((t) => (!tipoFilter || layerOf(t) === tipoFilter) && (!produtoFilter || t.project === produtoFilter)),
+    [weekTasksRest, tipoFilter, produtoFilter]
+  );
 
   const totals = useMemo(() => {
     const c = { "Sustentação": 0, "Inovação": 0, "Melhoria": 0 };
-    weekTasksAll.forEach((t) => { const l = layerOf(t); if (c[l] !== undefined) c[l] += 1; });
+    weekTasksAll
+      .filter((t) => !produtoFilter || t.project === produtoFilter)
+      .forEach((t) => { const l = layerOf(t); if (c[l] !== undefined) c[l] += 1; });
     return c;
-  }, [weekTasksAll]);
+  }, [weekTasksAll, produtoFilter]);
 
   const totalsByProduct = useMemo(() => {
     const c = {};
@@ -1209,6 +1218,17 @@ function SemanalScreen() {
     weekTasksAll.forEach((t) => { if (c[t.project] !== undefined) c[t.project] += 1; });
     return c;
   }, [weekTasksAll]);
+
+  const totalsByPerson = useMemo(() => {
+    const c = {};
+    weekTasksAll
+      .filter((t) => (!tipoFilter || layerOf(t) === tipoFilter) && (!produtoFilter || t.project === produtoFilter))
+      .forEach((t) => {
+        const name = t.assignee || "Sem responsável";
+        c[name] = (c[name] || 0) + 1;
+      });
+    return Object.entries(c).sort((a, b) => b[1] - a[1]);
+  }, [weekTasksAll, tipoFilter, produtoFilter]);
 
   const onDragStart = (e, key) => { setDragKey(key); e.dataTransfer.effectAllowed = "move"; };
   const setHighlighted = (key, isHighlighted) => {
@@ -1232,8 +1252,8 @@ function SemanalScreen() {
 
       <div style={{ marginTop: 20, marginBottom: 10 }} className="flex items-center justify-between">
         <p style={{ fontSize: 14, fontWeight: 700, color: T.ink0, fontFamily: "'Plus Jakarta Sans', sans-serif" }}>Totalizadores</p>
-        {tipoFilter && (
-          <button onClick={() => setTipoFilter(null)} style={{ fontSize: 12, color: T.ink1, background: "none", border: "none", cursor: "pointer", textDecoration: "underline", fontFamily: "'Inter Tight', sans-serif" }}>
+        {(tipoFilter || produtoFilter) && (
+          <button onClick={() => { setTipoFilter(null); setProdutoFilter(null); }} style={{ fontSize: 12, color: T.ink1, background: "none", border: "none", cursor: "pointer", textDecoration: "underline", fontFamily: "'Inter Tight', sans-serif" }}>
             Limpar filtro
           </button>
         )}
@@ -1259,8 +1279,12 @@ function SemanalScreen() {
       <div className="flex flex-wrap" style={{ gap: 10, marginTop: 14 }}>
         {PRODUCTS.map((p) => {
           const style = PRODUCT_STYLE[p];
+          const active = produtoFilter === p;
           return (
-            <div key={p} style={{ flex: 1, minWidth: 120, borderRadius: 12, border: `1px solid ${T.border2}`, background: T.bg1, padding: "10px 12px" }}>
+            <div
+              key={p} onClick={() => setProdutoFilter((prev) => (prev === p ? null : p))}
+              style={{ flex: 1, minWidth: 120, borderRadius: 12, cursor: "pointer", border: `1px solid ${active ? style.primary : T.border2}`, background: active ? style.subtle : T.bg1, padding: "10px 12px", transition: "all 120ms" }}
+            >
               <span className="inline-flex items-center" style={{ gap: 6, fontSize: 11, color: style.text, fontFamily: "'Inter Tight', sans-serif" }}>
                 <span style={{ width: 6, height: 6, borderRadius: 999, background: style.primary, display: "inline-block" }} />{p}
               </span>
@@ -1268,6 +1292,19 @@ function SemanalScreen() {
             </div>
           );
         })}
+      </div>
+
+      <p style={{ marginTop: 18, marginBottom: 8, fontSize: 12, fontWeight: 600, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>Capacity — tarefas por pessoa</p>
+      <div className="pp-scroll flex" style={{ gap: 6, overflowX: "auto", paddingBottom: 2 }}>
+        {totalsByPerson.map(([name, count]) => (
+          <div key={name} className="inline-flex items-center" style={{ gap: 6, flexShrink: 0, borderRadius: 999, border: `1px solid ${T.border2}`, background: T.bg1, padding: "4px 10px 4px 4px" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 18, height: 18, borderRadius: 999, background: T.bg2, color: T.ink0, fontSize: 9, fontWeight: 700, textTransform: "uppercase", border: `1px solid ${T.border2}`, fontFamily: "'Inter Tight', sans-serif", flexShrink: 0 }}>
+              {initials(name === "Sem responsável" ? null : name)}
+            </div>
+            <span style={{ fontSize: 11.5, color: T.ink0, fontFamily: "'Inter Tight', sans-serif", whiteSpace: "nowrap" }}>{name}</span>
+            <span style={{ fontSize: 11, fontWeight: 700, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>{count}</span>
+          </div>
+        ))}
       </div>
 
       <div style={{ marginTop: 24, marginBottom: 10 }} className="flex items-center justify-between">
