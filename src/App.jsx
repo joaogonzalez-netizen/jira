@@ -12,7 +12,7 @@ const EPIC_COLUMNS = ["Backlog", "Produto", "Em refinamento Técnico", "Pronto P
 const PRODUCTS = ["STLFLIX", "STL IA", "STL Seller", "STL Loja", "Backoffice", "STL Academy"];
 const LAYERS = ["Inovação", "Melhoria", "Sustentação", "Sem classificação"];
 const ACTIVE_STAGES = ["Em design", "Em produto", "Análise técnica", "Pronta pra dev", "Em dev", "Em rollout"];
-const NOW_DATE = new Date("2026-08-05T00:00:00");
+const NOW_DATE = (() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; })();
 
 /* =====================================================================
    TOKENS — Design Tokens STLFLIX v5.3, modo dark e modo light
@@ -1411,25 +1411,69 @@ function layoutLane(epics) {
   return { rowOf, rowCount: Math.max(1, rowEnds.length) };
 }
 
-function PrioCard({ epic, onDragStart, onOpen }) {
-  const { T, PRODUCT_STYLE } = useTheme();
+function PrioCard({ epic, onDragStart, onOpen, onAdd, onMoveToFila, onDragOverCard, onDropOnCard, onDragEndCard, dropIndicator }) {
+  const { T, PRODUCT_STYLE, TIPO_STYLE } = useTheme();
   const prod = epic.project ? (PRODUCT_STYLE[epic.project] || PRODUCT_STYLE["Backoffice"]) : null;
+  const tipo = TIPO_STYLE[layerOf(epic)];
   return (
     <div
       draggable onDragStart={(e) => onDragStart(e, epic.key)} onClick={() => onOpen(epic)}
+      onDragOver={onDragOverCard && ((e) => onDragOverCard(e, epic.key))}
+      onDrop={onDropOnCard && ((e) => onDropOnCard(e, epic.key))}
+      onDragEnd={onDragEndCard}
       className="pp-card"
-      style={{ background: T.bg1, border: `1px solid ${T.border2}`, borderRadius: 10, padding: "6px 10px", cursor: "grab", boxShadow: T.cardShadow, minWidth: 150, maxWidth: 220 }}
+      style={{
+        background: T.bg1, cursor: "grab", boxShadow: T.cardShadow, minWidth: 150, maxWidth: 220,
+        borderRadius: 10, padding: "6px 10px",
+        borderTop: `1px solid ${T.border2}`, borderBottom: `1px solid ${T.border2}`,
+        borderLeft: dropIndicator === "before" ? `2px solid ${prod ? prod.primary : "#5166e6"}` : `1px solid ${T.border2}`,
+        borderRight: dropIndicator === "after" ? `2px solid ${prod ? prod.primary : "#5166e6"}` : `1px solid ${T.border2}`,
+      }}
     >
       <div className="flex items-center justify-between" style={{ gap: 6 }}>
-        <span style={{ fontSize: 10.5, fontWeight: 500, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>{epic.key}</span>
+        <div className="flex items-center" style={{ gap: 6, minWidth: 0 }}>
+          <span style={{ fontSize: 10.5, fontWeight: 500, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>{epic.key}</span>
+        </div>
         {prod && <span style={{ width: 6, height: 6, borderRadius: 999, background: prod.primary, display: "inline-block" }} />}
       </div>
+      {(onAdd || onMoveToFila) && (
+        <div className="flex items-center" style={{ gap: 10, marginTop: 3 }}>
+          {onMoveToFila && (
+            <label className="inline-flex items-center" style={{ gap: 3, fontSize: 9, color: T.ink2, fontFamily: "'Inter Tight', sans-serif", cursor: "pointer" }} onClick={(e) => e.stopPropagation()}>
+              <input
+                type="checkbox" checked={false} title="Mover para Na fila"
+                onChange={(e) => { e.stopPropagation(); onMoveToFila(epic.key); }}
+                style={{ accentColor: prod ? prod.primary : "#5166e6", cursor: "pointer", flexShrink: 0 }}
+              />
+              Na fila
+            </label>
+          )}
+          {onAdd && (
+            <label className="inline-flex items-center" style={{ gap: 3, fontSize: 9, color: T.ink2, fontFamily: "'Inter Tight', sans-serif", cursor: "pointer" }} onClick={(e) => e.stopPropagation()}>
+              <input
+                type="checkbox" checked={false} title="Adicionar ao Gantt"
+                onChange={(e) => { e.stopPropagation(); onAdd(epic.key); }}
+                style={{ accentColor: prod ? prod.primary : "#5166e6", cursor: "pointer", flexShrink: 0 }}
+              />
+              Gantt
+            </label>
+          )}
+        </div>
+      )}
       <p style={{ marginTop: 2, fontSize: 12, color: T.ink0, fontFamily: "'Inter Tight', sans-serif", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{epic.summary || "(sem título)"}</p>
       {epic.status && (
         <span style={{ display: "inline-block", marginTop: 4, borderRadius: 6, padding: "1px 6px", fontSize: 9.5, fontWeight: 500, background: T.bg2, color: T.ink1, fontFamily: "'Inter Tight', sans-serif", whiteSpace: "nowrap" }}>
           {epic.status}
         </span>
       )}
+      <div className="flex items-center justify-between" style={{ marginTop: 5 }}>
+        <span className="inline-flex items-center" style={{ gap: 4, fontSize: 10, color: tipo.text, fontFamily: "'Inter Tight', sans-serif" }}>
+          <span style={{ width: 5, height: 5, borderRadius: 999, background: tipo.dot, display: "inline-block" }} />{layerOf(epic)}
+        </span>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 17, height: 17, borderRadius: 999, background: T.bg2, color: T.ink0, fontSize: 8.5, fontWeight: 700, textTransform: "uppercase", border: `1px solid ${T.border2}`, fontFamily: "'Inter Tight', sans-serif" }}>
+          {initials(epic.assignee)}
+        </div>
+      </div>
     </div>
   );
 }
@@ -1484,11 +1528,27 @@ function RoadmapDrawer({ epic, weeks, onClose, onSave, onDelete }) {
         )}
 
         {!isCustom && (
-          <dl style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 8, fontSize: 12.5, fontFamily: "'Inter Tight', sans-serif" }}>
-            {[["Responsável", epic.assignee], ["Status (Jira)", epic.status], ["Criado em", epic.created]].map(([k, v]) => (
-              <div key={k} className="flex justify-between"><dt style={{ color: T.ink1 }}>{k}</dt><dd style={{ color: T.ink0 }}>{v || "—"}</dd></div>
-            ))}
-          </dl>
+          <>
+            <div className="flex flex-wrap" style={{ gap: 6, marginTop: 10 }}>
+              {epic.project && <Badge bg={PRODUCT_STYLE[epic.project]?.subtle} color={PRODUCT_STYLE[epic.project]?.text}>{epic.project}</Badge>}
+              {epic.tipo && <Badge bg={T.bg2} color={T.ink1}>{epic.tipo}</Badge>}
+              {epic.priority && <Badge bg={T.bg2} color={T.ink2}>{epic.priority}</Badge>}
+            </div>
+            <dl style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 8, fontSize: 12.5, fontFamily: "'Inter Tight', sans-serif" }}>
+              {[
+                ["Responsável", epic.assignee],
+                ["Relator", epic.reporter],
+                ["Desenvolvedor", epic.developer],
+                ["Testador", epic.tester],
+                ["Status (Jira)", epic.status],
+                ["Criado em", epic.created],
+                ["Data de início", epic.dataInicio],
+                ["Data de conclusão", epic.dataConcl],
+              ].map(([k, v]) => (
+                <div key={k} className="flex justify-between"><dt style={{ color: T.ink1 }}>{k}</dt><dd style={{ color: T.ink0 }}>{v || "—"}</dd></div>
+              ))}
+            </dl>
+          </>
         )}
 
         <p style={{ marginTop: 20, marginBottom: 6, fontSize: 12, fontWeight: 500, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>Camada</p>
@@ -1537,20 +1597,30 @@ function RoadmapScreen() {
   const [positions, setPositions] = useState(() => Object.fromEntries(EPICS_SEED.map((e) => [e.key, { roadmapLane: null, startWeek: null, durationWeeks: 2 }])));
   const [openKey, setOpenKey] = useState(null);
   const [dragKey, setDragKey] = useState(null);
+  const [prioOrder, setPrioOrder] = useState([]);
+  const [prioDropInfo, setPrioDropInfo] = useState(null);
+  const [filaOrder, setFilaOrder] = useState([]);
+  const [filaDropInfo, setFilaDropInfo] = useState(null);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     (async () => {
       let savedPositions = {};
       let savedCustom = [];
+      let savedPrioOrder = [];
+      let savedFilaOrder = [];
       try {
         const res = await storage.get(ROADMAP_STORAGE_KEY, true);
         if (res && res.value) {
           const saved = JSON.parse(res.value);
           savedPositions = saved.positions || {};
           savedCustom = saved.customEpics || [];
+          savedPrioOrder = saved.prioOrder || [];
+          savedFilaOrder = saved.filaOrder || [];
         }
       } catch (e) {}
+      setPrioOrder(savedPrioOrder);
+      setFilaOrder(savedFilaOrder);
 
       let projetosStatus = {};
       try {
@@ -1573,15 +1643,15 @@ function RoadmapScreen() {
             changed = true;
           }
         });
-        if (changed) persist(next, savedCustom);
+        if (changed) persist(next, savedCustom, savedPrioOrder, savedFilaOrder);
         return next;
       });
     })();
   }, [EPICS_SEED]);
 
-  const persist = useCallback(async (nextPositions, nextCustom) => {
+  const persist = useCallback(async (nextPositions, nextCustom, nextPrioOrder, nextFilaOrder) => {
     setSaving(true);
-    try { await storage.set(ROADMAP_STORAGE_KEY, JSON.stringify({ positions: nextPositions, customEpics: nextCustom }), true); } catch (e) {}
+    try { await storage.set(ROADMAP_STORAGE_KEY, JSON.stringify({ positions: nextPositions, customEpics: nextCustom, prioOrder: nextPrioOrder, filaOrder: nextFilaOrder }), true); } catch (e) {}
     setSaving(false);
   }, []);
 
@@ -1603,7 +1673,19 @@ function RoadmapScreen() {
   }, []);
 
   const enriched = useMemo(() => allEpics.map((e) => ({ ...e, ...(positions[e.key] || { roadmapLane: null, startWeek: null, durationWeeks: 2 }) })), [allEpics, positions]);
-  const prioItems = enriched.filter((e) => !e.roadmapLane && e.status !== "Done");
+  const backlogItems = enriched.filter((e) => !e.roadmapLane && e.status !== "Done");
+  const filaSet = useMemo(() => new Set(filaOrder), [filaOrder]);
+  const filaItems = useMemo(() => {
+    const byKeyFila = Object.fromEntries(backlogItems.filter((e) => filaSet.has(e.key)).map((e) => [e.key, e]));
+    return filaOrder.map((k) => byKeyFila[k]).filter(Boolean);
+  }, [backlogItems, filaOrder, filaSet]);
+  const prioItemsRaw = backlogItems.filter((e) => !filaSet.has(e.key));
+  const prioItems = useMemo(() => {
+    const byKeyPrio = Object.fromEntries(prioItemsRaw.map((e) => [e.key, e]));
+    const known = prioOrder.filter((k) => byKeyPrio[k]);
+    const unknown = prioItemsRaw.filter((e) => !prioOrder.includes(e.key)).map((e) => e.key);
+    return [...known, ...unknown].map((k) => byKeyPrio[k]);
+  }, [prioItemsRaw, prioOrder]);
   const prioByProduct = useMemo(() => {
     const groups = PRODUCTS.map((p) => ({ product: p, items: prioItems.filter((e) => e.project === p) }));
     const outros = prioItems.filter((e) => !e.project);
@@ -1626,13 +1708,85 @@ function RoadmapScreen() {
   const updatePosition = useCallback((key, patch) => {
     setPositions((prev) => {
       const next = { ...prev, [key]: { ...(prev[key] || { roadmapLane: null, startWeek: null, durationWeeks: 2 }), ...patch } };
-      persist(next, customEpics);
+      persist(next, customEpics, prioOrder, filaOrder);
       return next;
     });
-  }, [persist, customEpics]);
+  }, [persist, customEpics, prioOrder, filaOrder]);
 
   const onDragStart = (e, key) => { setDragKey(key); e.dataTransfer.effectAllowed = "move"; };
-  const onDropPrio = (e) => { e.preventDefault(); if (dragKey) updatePosition(dragKey, { roadmapLane: null, startWeek: null }); setDragKey(null); };
+  const onDropPrio = (e) => {
+    e.preventDefault();
+    if (dragKey) {
+      const nextPositions = { ...positions, [dragKey]: { ...(positions[dragKey] || {}), roadmapLane: null, startWeek: null } };
+      const nextFila = filaOrder.filter((k) => k !== dragKey);
+      setPositions(nextPositions);
+      setFilaOrder(nextFila);
+      persist(nextPositions, customEpics, prioOrder, nextFila);
+    }
+    setDragKey(null);
+  };
+  const moveToFila = (key) => {
+    if (filaOrder.includes(key)) return;
+    const nextFila = [...filaOrder, key];
+    setFilaOrder(nextFila);
+    persist(positions, customEpics, prioOrder, nextFila);
+  };
+  const onPrioDragOverCard = (e, overKey) => {
+    e.preventDefault(); e.stopPropagation();
+    if (!dragKey || overKey === dragKey) { setPrioDropInfo(null); return; }
+    const rect = e.currentTarget.getBoundingClientRect();
+    setPrioDropInfo({ key: overKey, position: e.clientX - rect.left < rect.width / 2 ? "before" : "after" });
+  };
+  const onPrioDropOnCard = (e, overKey) => {
+    e.preventDefault(); e.stopPropagation();
+    const key = dragKey;
+    const position = prioDropInfo?.position || "before";
+    setDragKey(null); setPrioDropInfo(null);
+    if (!key || key === overKey) return;
+    const nextPositions = positions[key]?.roadmapLane
+      ? { ...positions, [key]: { ...(positions[key] || {}), roadmapLane: null, startWeek: null } }
+      : positions;
+    const fullOrder = prioItems.map((e) => e.key).filter((k) => k !== key);
+    let insertAt = fullOrder.indexOf(overKey);
+    if (insertAt === -1) insertAt = fullOrder.length;
+    else if (position === "after") insertAt += 1;
+    fullOrder.splice(insertAt, 0, key);
+    setPositions(nextPositions);
+    setPrioOrder(fullOrder);
+    persist(nextPositions, customEpics, fullOrder, filaOrder);
+  };
+
+  const onFilaDragOverCard = (e, overKey) => {
+    e.preventDefault(); e.stopPropagation();
+    if (!dragKey || overKey === dragKey) { setFilaDropInfo(null); return; }
+    const rect = e.currentTarget.getBoundingClientRect();
+    setFilaDropInfo({ key: overKey, position: e.clientX - rect.left < rect.width / 2 ? "before" : "after" });
+  };
+  const onFilaDropOnCard = (e, overKey) => {
+    e.preventDefault(); e.stopPropagation();
+    const key = dragKey;
+    const position = filaDropInfo?.position || "before";
+    setDragKey(null); setFilaDropInfo(null);
+    if (!key || key === overKey) return;
+    const nextPositions = positions[key]?.roadmapLane
+      ? { ...positions, [key]: { ...(positions[key] || {}), roadmapLane: null, startWeek: null } }
+      : positions;
+    const fullOrder = filaOrder.filter((k) => k !== key);
+    let insertAt = fullOrder.indexOf(overKey);
+    if (insertAt === -1) insertAt = fullOrder.length;
+    else if (position === "after") insertAt += 1;
+    fullOrder.splice(insertAt, 0, key);
+    setPositions(nextPositions);
+    setFilaOrder(fullOrder);
+    const nextPrio = prioOrder.filter((k) => k !== key);
+    setPrioOrder(nextPrio);
+    persist(nextPositions, customEpics, nextPrio, fullOrder);
+  };
+  const onDropFila = (e) => {
+    e.preventDefault();
+    if (dragKey && !filaOrder.includes(dragKey)) moveToFila(dragKey);
+    setDragKey(null);
+  };
   const onDropCell = (e, product, weekIndex) => {
     e.preventDefault();
     if (!dragKey) return;
@@ -1649,25 +1803,31 @@ function RoadmapScreen() {
     updatePosition(key, { roadmapLane: null, startWeek: null });
   };
 
+  const addToGantt = (key) => {
+    const epic = enriched.find((e) => e.key === key);
+    const cur = positions[key] || { durationWeeks: 2 };
+    updatePosition(key, { roadmapLane: epic?.project || null, startWeek: 0, durationWeeks: cur.durationWeeks || 2 });
+  };
+
   const addEpic = () => {
     const key = `NOVO-${Date.now().toString().slice(-6)}`;
     const novo = { key, project: null, summary: "Novo épico", assignee: null, reporter: null, status: "Rascunho", tipo: null, created: null, priority: null, epic: true };
     const nextCustom = [...customEpics, novo];
     setCustomEpics(nextCustom);
-    setPositions((prev) => { const next = { ...prev, [key]: { roadmapLane: null, startWeek: null, durationWeeks: 2 } }; persist(next, nextCustom); return next; });
+    setPositions((prev) => { const next = { ...prev, [key]: { roadmapLane: null, startWeek: null, durationWeeks: 2 } }; persist(next, nextCustom, prioOrder, filaOrder); return next; });
     setOpenKey(key);
   };
   const deleteEpic = (key) => {
     const nextCustom = customEpics.filter((e) => e.key !== key);
     setCustomEpics(nextCustom);
-    setPositions((prev) => { const next = { ...prev }; delete next[key]; persist(next, nextCustom); return next; });
+    setPositions((prev) => { const next = { ...prev }; delete next[key]; persist(next, nextCustom, prioOrder, filaOrder); return next; });
     setOpenKey(null);
   };
   const saveDrawer = (key, patch) => {
     if (key.startsWith("NOVO-")) {
       const nextCustom = customEpics.map((e) => (e.key === key ? { ...e, summary: patch.summary } : e));
       setCustomEpics(nextCustom);
-      setPositions((prev) => { const next = { ...prev, [key]: { roadmapLane: patch.roadmapLane, startWeek: patch.startWeek, durationWeeks: patch.durationWeeks } }; persist(next, nextCustom); return next; });
+      setPositions((prev) => { const next = { ...prev, [key]: { roadmapLane: patch.roadmapLane, startWeek: patch.startWeek, durationWeeks: patch.durationWeeks } }; persist(next, nextCustom, prioOrder, filaOrder); return next; });
     } else {
       updatePosition(key, { roadmapLane: patch.roadmapLane, startWeek: patch.startWeek, durationWeeks: patch.durationWeeks });
     }
@@ -1742,6 +1902,26 @@ function RoadmapScreen() {
       </div>
 
       <div
+        onDragOver={(e) => e.preventDefault()} onDrop={onDropFila}
+        style={{ padding: "16px 24px", borderBottom: `1px solid ${T.border1}` }}
+      >
+        <p style={{ fontSize: 12.5, fontWeight: 600, color: T.ink0, marginBottom: 3, fontFamily: "'Plus Jakarta Sans', sans-serif" }}>Na fila (Produto e UX) <span style={{ color: T.ink2, fontWeight: 400, fontFamily: "'Inter Tight', sans-serif" }}>({filaItems.length})</span></p>
+        <p style={{ fontSize: 11.5, color: T.ink2, marginBottom: 10, fontFamily: "'Inter Tight', sans-serif" }}>Próximas prioridades, na ordem em que vamos trabalhar</p>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, minHeight: 40, borderRadius: 10, border: `1px dashed ${T.border2}`, padding: 8 }}>
+          {filaItems.length === 0 && <span style={{ fontSize: 11.5, color: T.ink2, fontFamily: "'Inter Tight', sans-serif" }}>Marque "Na fila" num card de priorização pra trazer pra aqui</span>}
+          {filaItems.map((e) => (
+            <PrioCard
+              key={e.key} epic={e} onDragStart={onDragStart} onOpen={() => setOpenKey(e.key)}
+              onAdd={e.project ? addToGantt : undefined}
+              onDragOverCard={onFilaDragOverCard} onDropOnCard={onFilaDropOnCard}
+              onDragEndCard={() => setFilaDropInfo(null)}
+              dropIndicator={filaDropInfo?.key === e.key ? filaDropInfo.position : null}
+            />
+          ))}
+        </div>
+      </div>
+
+      <div
         onDragOver={(e) => e.preventDefault()} onDrop={onDropPrio}
         style={{ padding: "16px 24px" }}
       >
@@ -1757,7 +1937,16 @@ function RoadmapScreen() {
               </div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 8, minHeight: 40, borderRadius: 10, border: `1px dashed ${T.border2}`, padding: 8 }}>
                 {group.items.length === 0 && <span style={{ fontSize: 11.5, color: T.ink2, fontFamily: "'Inter Tight', sans-serif" }}>Nenhum épico</span>}
-                {group.items.map((e) => <PrioCard key={e.key} epic={e} onDragStart={onDragStart} onOpen={() => setOpenKey(e.key)} />)}
+                {group.items.map((e) => (
+                  <PrioCard
+                    key={e.key} epic={e} onDragStart={onDragStart} onOpen={() => setOpenKey(e.key)}
+                    onAdd={e.project ? addToGantt : undefined}
+                    onMoveToFila={moveToFila}
+                    onDragOverCard={onPrioDragOverCard} onDropOnCard={onPrioDropOnCard}
+                    onDragEndCard={() => setPrioDropInfo(null)}
+                    dropIndicator={prioDropInfo?.key === e.key ? prioDropInfo.position : null}
+                  />
+                ))}
               </div>
             </div>
           ))}
