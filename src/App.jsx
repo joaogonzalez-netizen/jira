@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { ChevronUp, ChevronDown, ChevronRight, ChevronLeft, X, Users, Tag, FolderKanban, ListChecks, BarChart3, Sun, Moon, Calendar, Plus, Minus, TrendingUp } from "lucide-react";
+import { ChevronUp, ChevronDown, ChevronRight, ChevronLeft, X, Users, Tag, FolderKanban, ListChecks, BarChart3, Sun, Moon, Calendar, Plus, Minus, TrendingUp, RefreshCw } from "lucide-react";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell } from "recharts";
 import storage from "./lib/storage";
 
@@ -72,6 +72,10 @@ function useTheme() { return useContext(ThemeCtx); }
 
 const SHEET_ID = "1HteBrBkY4XCkmXGMTJIuA2EXAraZsDKw_xjZu0xoUgw";
 const SHEET_GID = "0";
+// URL do deployment do Apps Script (termina em /exec). Veja apps-script/sync.gs.js.
+// Fica em .env.local (fora do git) porque dá acesso de leitura à planilha pra quem tiver o link.
+const SHEET_SYNC_URL = import.meta.env.VITE_SHEET_SYNC_URL || "";
+const DATA_OVERRIDE_KEY = "jira-data-override-v1";
 
 const STAGE_MAP_JS = {
   "Backlog": "Backlog", "Candidato Próximo Trimestre": "Backlog",
@@ -85,6 +89,19 @@ const STAGE_MAP_JS = {
 const EXCLUDE_STATUS_JS = new Set(["Cancelado", "Arquivado"]);
 const EXCLUDE_PROJECTS_JS = new Set(["Infra", "Dados"]);
 
+// Normaliza pra "DD/MM/AAAA HH:MM:SS" — o Apps Script pode mandar a data já
+// formatada ou, se a conversão de Date lá dentro falhar, como ISO UTC
+// ("2026-08-07T18:06:01.000Z"); aqui aceitamos os dois formatos.
+function normalizeDateStr(v) {
+  const s = (v == null ? "" : String(v)).trim();
+  if (!s) return null;
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(s)) return s;
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return s;
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
 function transformSheetRow(r) {
   const proj = (r["Project"] || "").trim();
   const status = (r["Status"] || "").trim();
@@ -95,16 +112,16 @@ function transformSheetRow(r) {
   const summary = (r["Summary"] || "").trim();
   return {
     key: r["Key"].trim(), project: proj, type: issueType,
-    summary: summary.slice(0, 140),
+    summary,
     assignee: (r["Assignee"] || "").trim() || null,
     reporter: (r["Reporter"] || "").trim() || null,
     developer: (r["Desenvolvedor"] || "").trim() || null,
     tester: (r["Quem testou"] || "").trim() || null,
     status, stage,
     tipo: (r["Tipo de entrega"] || "").trim() || null,
-    created: (r["Created"] || "").trim() || null,
-    dataInicio: (r["Data de início "] || r["Data de início"] || "").trim() || null,
-    dataConcl: (r["Data Concluído"] || "").trim() || null,
+    created: normalizeDateStr(r["Created"]),
+    dataInicio: normalizeDateStr(r["Data de início "] || r["Data de início"]),
+    dataConcl: normalizeDateStr(r["Data Concluído"]),
     intercom: summary.includes("[Intercom]"),
     epic: isEpic,
     priority: (r["Priority"] || "").trim() || null,
@@ -117,7 +134,50 @@ function useData() { return useContext(DataCtx); }
 function DataProvider({ children }) {
   const [epics, setEpics] = useState(EPICS_SEED_INITIAL);
   const [tasks, setTasks] = useState(TASKS_SEED_INITIAL);
-  const value = useMemo(() => ({ epics, tasks, setEpics, setTasks }), [epics, tasks]);
+  const [lastSync, setLastSync] = useState(null);
+  const [syncStatus, setSyncStatus] = useState("idle"); // idle | loading | error
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await storage.get(DATA_OVERRIDE_KEY, true);
+        if (res && res.value) {
+          const saved = JSON.parse(res.value);
+          if (saved.epics) setEpics(saved.epics);
+          if (saved.tasks) setTasks(saved.tasks);
+          if (saved.syncedAt) setLastSync(saved.syncedAt);
+        }
+      } catch (e) {}
+    })();
+  }, []);
+
+  const syncFromSheet = useCallback(async () => {
+    if (!SHEET_SYNC_URL) {
+      setSyncStatus("error");
+      return { ok: false, reason: "no-url" };
+    }
+    setSyncStatus("loading");
+    try {
+      const res = await fetch(SHEET_SYNC_URL);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const rows = await res.json();
+      const transformed = rows.map(transformSheetRow).filter(Boolean);
+      const nextEpics = transformed.filter((r) => r.epic);
+      const nextTasks = transformed.filter((r) => !r.epic);
+      const syncedAt = new Date().toISOString();
+      setEpics(nextEpics);
+      setTasks(nextTasks);
+      setLastSync(syncedAt);
+      setSyncStatus("idle");
+      try { await storage.set(DATA_OVERRIDE_KEY, JSON.stringify({ epics: nextEpics, tasks: nextTasks, syncedAt }), true); } catch (e) {}
+      return { ok: true };
+    } catch (e) {
+      setSyncStatus("error");
+      return { ok: false, reason: e.message };
+    }
+  }, []);
+
+  const value = useMemo(() => ({ epics, tasks, setEpics, setTasks, syncFromSheet, lastSync, syncStatus }), [epics, tasks, syncFromSheet, lastSync, syncStatus]);
   return <DataCtx.Provider value={value}>{children}</DataCtx.Provider>;
 }
 
@@ -1962,8 +2022,15 @@ function RoadmapScreen() {
    APP — casca com o menu Projetos / Tarefas / Análises + toggle de tema
    ===================================================================== */
 
+function fmtSyncTime(iso) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  return d.toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+}
+
 function AppShell() {
   const { T, theme, toggleTheme } = useTheme();
+  const { syncFromSheet, lastSync, syncStatus } = useData();
   const [menu, setMenu] = useState("roadmap");
 
   return (
@@ -1973,6 +2040,8 @@ function AppShell() {
         .pp-card:hover { background: ${T.bg2} !important; border-color: ${T.borderStrong} !important; }
         .pp-scroll::-webkit-scrollbar { height: 8px; }
         .pp-scroll::-webkit-scrollbar-thumb { background: ${T.border2}; border-radius: 999px; }
+        .pp-spin { animation: pp-spin-anim 0.9s linear infinite; }
+        @keyframes pp-spin-anim { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
       `}</style>
 
       <div style={{ borderBottom: `1px solid ${T.border1}`, padding: "0 20px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 4, height: 46 }}>
@@ -1995,13 +2064,32 @@ function AppShell() {
             );
           })}
         </div>
-        <button
-          onClick={toggleTheme}
-          style={{ display: "flex", alignItems: "center", gap: 6, borderRadius: 8, padding: "6px 10px", border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink1, fontSize: 12, fontWeight: 500, cursor: "pointer", fontFamily: "'Inter Tight', sans-serif" }}
-        >
-          {theme === "dark" ? <Sun size={13} /> : <Moon size={13} />}
-          {theme === "dark" ? "Modo claro" : "Modo escuro"}
-        </button>
+        <div className="flex items-center" style={{ gap: 8 }}>
+          {syncStatus === "error" && (
+            <span style={{ fontSize: 11, color: "#e08585", fontFamily: "'Inter Tight', sans-serif" }}>
+              {SHEET_SYNC_URL ? "Falha ao atualizar" : "Sincronização não configurada"}
+            </span>
+          )}
+          {lastSync && syncStatus !== "error" && (
+            <span style={{ fontSize: 11, color: T.ink2, fontFamily: "'Inter Tight', sans-serif" }}>
+              Atualizado {fmtSyncTime(lastSync)}
+            </span>
+          )}
+          <button
+            onClick={syncFromSheet} disabled={syncStatus === "loading"} title="Atualizar dados da planilha"
+            style={{ display: "flex", alignItems: "center", gap: 6, borderRadius: 8, padding: "6px 10px", border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink1, fontSize: 12, fontWeight: 500, cursor: syncStatus === "loading" ? "default" : "pointer", fontFamily: "'Inter Tight', sans-serif", opacity: syncStatus === "loading" ? 0.6 : 1 }}
+          >
+            <RefreshCw size={13} className={syncStatus === "loading" ? "pp-spin" : ""} />
+            {syncStatus === "loading" ? "Atualizando…" : "Atualizar"}
+          </button>
+          <button
+            onClick={toggleTheme}
+            style={{ display: "flex", alignItems: "center", gap: 6, borderRadius: 8, padding: "6px 10px", border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink1, fontSize: 12, fontWeight: 500, cursor: "pointer", fontFamily: "'Inter Tight', sans-serif" }}
+          >
+            {theme === "dark" ? <Sun size={13} /> : <Moon size={13} />}
+            {theme === "dark" ? "Modo claro" : "Modo escuro"}
+          </button>
+        </div>
       </div>
 
       {menu === "projetos" ? <ProjetosScreen /> : menu === "tarefas" ? <TarefasScreen /> : menu === "analises" ? <AnaliseScreen /> : menu === "semanal" ? <SemanalScreen /> : <RoadmapScreen />}
