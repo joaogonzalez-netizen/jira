@@ -1214,6 +1214,8 @@ function SemanalScreen() {
   const [destaqueKeys, setDestaqueKeys] = useState(() => new Set());
   const [tipoFilter, setTipoFilter] = useState(null);
   const [produtoFilter, setProdutoFilter] = useState(null);
+  const [dateMode, setDateMode] = useState("10");
+  const [customRange, setCustomRange] = useState({ start: "", end: "" });
   const [dragKey, setDragKey] = useState(null);
   const [saving, setSaving] = useState(false);
 
@@ -1237,13 +1239,23 @@ function SemanalScreen() {
     setSaving(false);
   }, []);
 
+  const dateRange = useMemo(() => {
+    if (dateMode === "custom") {
+      const start = customRange.start ? new Date(`${customRange.start}T00:00:00`) : null;
+      const end = customRange.end ? new Date(`${customRange.end}T23:59:59`) : NOW_DATE;
+      if (!start) return { start: addDays(NOW_DATE, -10), end: NOW_DATE };
+      return { start, end };
+    }
+    const days = dateMode === "30" ? 30 : 10;
+    return { start: addDays(NOW_DATE, -days), end: NOW_DATE };
+  }, [dateMode, customRange]);
+
   const isRecentlyDone = useCallback((task) => {
     if (task.stage !== "Concluído") return false;
     const d = parseBRDate(task.dataConcl);
     if (!d) return false;
-    const diff = daysBetween(d, NOW_DATE);
-    return diff !== null && diff >= 0 && diff <= 10;
-  }, []);
+    return d >= dateRange.start && d <= dateRange.end;
+  }, [dateRange]);
 
   const weekTasksAll = useMemo(
     () => TASKS_SEED.filter((t) =>
@@ -1275,9 +1287,11 @@ function SemanalScreen() {
   const totalsByProduct = useMemo(() => {
     const c = {};
     PRODUCTS.forEach((p) => (c[p] = 0));
-    weekTasksAll.forEach((t) => { if (c[t.project] !== undefined) c[t.project] += 1; });
+    weekTasksAll
+      .filter((t) => !tipoFilter || layerOf(t) === tipoFilter)
+      .forEach((t) => { if (c[t.project] !== undefined) c[t.project] += 1; });
     return c;
-  }, [weekTasksAll]);
+  }, [weekTasksAll, tipoFilter]);
 
   const totalsByPerson = useMemo(() => {
     const c = {};
@@ -1302,12 +1316,44 @@ function SemanalScreen() {
 
   return (
     <div style={{ flex: 1, overflowY: "auto", padding: "20px 24px 40px" }}>
-      <div className="flex items-center justify-between">
+      <div className="flex items-start justify-between">
         <div>
           <h1 style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", fontWeight: 700, fontSize: 18, color: T.ink0 }}>Semanal</h1>
-          <p style={{ fontSize: 12, color: T.ink1, marginTop: 2 }}>Status: Pronta pra dev + Em dev · Concluído nos últimos 10 dias</p>
+          <p style={{ fontSize: 12, color: T.ink1, marginTop: 2 }}>
+            Status: Pronta pra dev + Em dev · Concluído {dateMode === "custom" ? `entre ${fmtWeek(dateRange.start)} e ${fmtWeek(dateRange.end)}` : `nos últimos ${dateMode} dias`}
+          </p>
+          {saving && <span style={{ fontSize: 11, color: T.ink2 }}>salvando…</span>}
         </div>
-        {saving && <span style={{ fontSize: 11, color: T.ink2 }}>salvando…</span>}
+        <div className="flex items-center" style={{ gap: 8, flexShrink: 0 }}>
+          <div className="flex items-center" style={{ gap: 2, borderRadius: 8, border: `1px solid ${T.border2}`, padding: 2 }}>
+            {[["10", "10 dias"], ["30", "30 dias"], ["custom", "Personalizado"]].map(([key, label]) => {
+              const active = dateMode === key;
+              return (
+                <button
+                  key={key} onClick={() => setDateMode(key)}
+                  style={{ borderRadius: 6, padding: "5px 10px", fontSize: 11.5, fontWeight: 500, border: "none", cursor: "pointer", background: active ? "#5166e6" : "transparent", color: active ? "#fff" : T.ink1, fontFamily: "'Inter Tight', sans-serif" }}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+          {dateMode === "custom" && (
+            <div className="flex items-center" style={{ gap: 4 }}>
+              <input
+                type="date" value={customRange.start}
+                onChange={(e) => setCustomRange((r) => ({ ...r, start: e.target.value }))}
+                style={{ borderRadius: 6, border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink0, fontSize: 11.5, padding: "5px 6px", fontFamily: "'Inter Tight', sans-serif" }}
+              />
+              <span style={{ fontSize: 11, color: T.ink2 }}>até</span>
+              <input
+                type="date" value={customRange.end}
+                onChange={(e) => setCustomRange((r) => ({ ...r, end: e.target.value }))}
+                style={{ borderRadius: 6, border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink0, fontSize: 11.5, padding: "5px 6px", fontFamily: "'Inter Tight', sans-serif" }}
+              />
+            </div>
+          )}
+        </div>
       </div>
 
       <div style={{ marginTop: 20, marginBottom: 10 }} className="flex items-center justify-between">
