@@ -133,7 +133,7 @@ const DataCtx = createContext(null);
 function useData() { return useContext(DataCtx); }
 
 function DataProvider({ children }) {
-  const { canWriteShared } = useAuth();
+  const { canWriteShared, canCreateCard, ownsCard, user } = useAuth();
   const [epics, setEpics] = useState(EPICS_SEED_INITIAL);
   const [tasks, setTasks] = useState(TASKS_SEED_INITIAL);
   const [lastSync, setLastSync] = useState(null);
@@ -151,6 +151,124 @@ function DataProvider({ children }) {
         }
       } catch (e) {}
     })();
+  }, []);
+
+  // Estado de agendamento do Roadmap (posições no Gantt, fila, épicos
+  // criados à mão) mora aqui, não em RoadmapScreen, porque o drawer de épico
+  // é o mesmo em Projetos e Roadmap — as duas telas precisam ler e escrever
+  // o mesmo estado pra abrir/editar o card der onde vier.
+  const [positions, setPositions] = useState({});
+  const [customEpics, setCustomEpics] = useState([]);
+  const [prioOrder, setPrioOrder] = useState([]);
+  const [filaOrder, setFilaOrder] = useState([]);
+  const [roadmapSaving, setRoadmapSaving] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      let savedPositions = {};
+      let savedCustom = [];
+      let savedPrioOrder = [];
+      let savedFilaOrder = [];
+      try {
+        const res = await storage.get(ROADMAP_STORAGE_KEY, true);
+        if (res && res.value) {
+          const saved = JSON.parse(res.value);
+          savedPositions = saved.positions || {};
+          savedCustom = saved.customEpics || [];
+          savedPrioOrder = saved.prioOrder || [];
+          savedFilaOrder = saved.filaOrder || [];
+        }
+      } catch (e) {}
+      setPrioOrder(savedPrioOrder);
+      setFilaOrder(savedFilaOrder);
+
+      let projetosStatus = {};
+      try {
+        const res2 = await storage.get("fila-projetos-order-v2", true);
+        if (res2 && res2.value) {
+          const saved2 = JSON.parse(res2.value);
+          projetosStatus = saved2.status || {};
+        }
+      } catch (e) {}
+
+      setCustomEpics(savedCustom);
+      setPositions((prev) => {
+        const next = { ...prev, ...savedPositions };
+        let changed = false;
+        epics.forEach((ep) => {
+          if (Object.prototype.hasOwnProperty.call(savedPositions, ep.key)) return; // respeita escolha manual, mesmo remoção explícita
+          const status = projetosStatus[ep.key] || ep.status;
+          if (status === "Pronto P/ DEV") {
+            next[ep.key] = { roadmapLane: ep.project, startWeek: 0, durationWeeks: 2 };
+            changed = true;
+          }
+        });
+        if (changed) persistRoadmap(next, savedCustom, savedPrioOrder, savedFilaOrder);
+        return next;
+      });
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [epics]);
+
+  const persistRoadmap = useCallback(async (nextPositions, nextCustom, nextPrioOrder, nextFilaOrder) => {
+    setRoadmapSaving(true);
+    try { await storage.set(ROADMAP_STORAGE_KEY, JSON.stringify({ positions: nextPositions, customEpics: nextCustom, prioOrder: nextPrioOrder, filaOrder: nextFilaOrder }), true); } catch (e) {}
+    setRoadmapSaving(false);
+  }, []);
+
+  const allEpicsWithCustom = useMemo(() => [...epics, ...customEpics], [epics, customEpics]);
+  const byKeyWithCustom = useMemo(() => Object.fromEntries(allEpicsWithCustom.map((e) => [e.key, e])), [allEpicsWithCustom]);
+
+  // Choke point de toda mudança de posição (drop no Gantt, resize, remover,
+  // "Gantt", e o Salvar do drawer para épico da planilha): um único gate cobre
+  // todos, então nenhum caminho novo passa por fora sem alguém notar.
+  const updatePosition = useCallback((key, patch) => {
+    if (!ownsCard(byKeyWithCustom[key])) return;
+    setPositions((prev) => {
+      const next = { ...prev, [key]: { ...(prev[key] || { roadmapLane: null, startWeek: null, durationWeeks: 2 }), ...patch } };
+      persistRoadmap(next, customEpics, prioOrder, filaOrder);
+      return next;
+    });
+  }, [persistRoadmap, customEpics, prioOrder, filaOrder, ownsCard, byKeyWithCustom]);
+
+  const addEpic = useCallback(() => {
+    if (!canCreateCard) return null;
+    const key = `NOVO-${Date.now().toString().slice(-6)}`;
+    // `createdBy` é o dono do card: é ele que faz `ownsCard` distinguir "meu card"
+    // de "card de outro" — e um épico da planilha, que nunca passa por aqui, não
+    // tem dono nenhum e por isso é só do super.
+    const novo = { key, project: null, summary: "Novo épico", assignee: null, reporter: null, status: "Rascunho", tipo: null, created: null, priority: null, epic: true, createdBy: user ? user.email : null };
+    const nextCustom = [...customEpics, novo];
+    setCustomEpics(nextCustom);
+    setPositions((prev) => { const next = { ...prev, [key]: { roadmapLane: null, startWeek: null, durationWeeks: 2 } }; persistRoadmap(next, nextCustom, prioOrder, filaOrder); return next; });
+    return key;
+  }, [canCreateCard, user, customEpics, prioOrder, filaOrder, persistRoadmap]);
+
+  const deleteEpic = useCallback((key) => {
+    if (!ownsCard(byKeyWithCustom[key])) return;
+    const nextCustom = customEpics.filter((e) => e.key !== key);
+    setCustomEpics(nextCustom);
+    setPositions((prev) => { const next = { ...prev }; delete next[key]; persistRoadmap(next, nextCustom, prioOrder, filaOrder); return next; });
+  }, [ownsCard, byKeyWithCustom, customEpics, prioOrder, filaOrder, persistRoadmap]);
+
+  const saveDrawer = useCallback((key, patch) => {
+    if (!ownsCard(byKeyWithCustom[key])) return;
+    if (key.startsWith("NOVO-")) {
+      const nextCustom = customEpics.map((e) => (e.key === key ? { ...e, summary: patch.summary } : e));
+      setCustomEpics(nextCustom);
+      setPositions((prev) => { const next = { ...prev, [key]: { roadmapLane: patch.roadmapLane, startWeek: patch.startWeek, durationWeeks: patch.durationWeeks } }; persistRoadmap(next, nextCustom, prioOrder, filaOrder); return next; });
+    } else {
+      updatePosition(key, { roadmapLane: patch.roadmapLane, startWeek: patch.startWeek, durationWeeks: patch.durationWeeks });
+    }
+  }, [ownsCard, byKeyWithCustom, customEpics, prioOrder, filaOrder, persistRoadmap, updatePosition]);
+
+  // Janela fixa de semanas pra popular o seletor "Semana inicial" do drawer
+  // fora do Roadmap (Projetos não tem Gantt, então não tem zoom pra derivar isso).
+  const ROADMAP_PAST_WEEKS = 4;
+  const roadmapWeeks = useMemo(() => {
+    const weekCount = 13;
+    const start = addDays(startOfWeek(NOW_DATE), -ROADMAP_PAST_WEEKS * 7);
+    return Array.from({ length: weekCount + ROADMAP_PAST_WEEKS }, (_, i) => ({ index: i - ROADMAP_PAST_WEEKS, start: addDays(start, i * 7) }));
   }, []);
 
   const syncFromSheet = useCallback(async () => {
@@ -182,7 +300,15 @@ function DataProvider({ children }) {
     }
   }, [canWriteShared]);
 
-  const value = useMemo(() => ({ epics, tasks, setEpics, setTasks, syncFromSheet, lastSync, syncStatus }), [epics, tasks, syncFromSheet, lastSync, syncStatus]);
+  const value = useMemo(() => ({
+    epics, tasks, setEpics, setTasks, syncFromSheet, lastSync, syncStatus,
+    positions, setPositions, customEpics, setCustomEpics, prioOrder, setPrioOrder, filaOrder, setFilaOrder,
+    roadmapSaving, persistRoadmap, updatePosition, addEpic, deleteEpic, saveDrawer, roadmapWeeks,
+  }), [
+    epics, tasks, syncFromSheet, lastSync, syncStatus,
+    positions, customEpics, prioOrder, filaOrder,
+    roadmapSaving, persistRoadmap, updatePosition, addEpic, deleteEpic, saveDrawer, roadmapWeeks,
+  ]);
   return <DataCtx.Provider value={value}>{children}</DataCtx.Provider>;
 }
 
@@ -373,21 +499,27 @@ function EpicDrawer({ epic, onClose, weeks, onSave, onDelete, canEdit }) {
 
 function ProjetosScreen() {
   const { T, PRODUCT_STYLE } = useTheme();
-  const { epics: EPICS_SEED } = useData();
+  const { epics: EPICS_SEED, positions, roadmapWeeks, saveDrawer, deleteEpic } = useData();
   // A fila de épicos é de todos: reordenar ou mudar de coluna aqui muda o board
   // que o time lê. Só o superusuário escreve (o admin escreve nos cards dele, no
   // Roadmap).
-  const { canWriteShared } = useAuth();
+  const { canWriteShared, ownsCard } = useAuth();
   const STORAGE_KEY = "fila-projetos-order-v2";
   const [order, setOrder] = useState(EPICS_SEED.map((e) => e.key));
   const [statusOf, setStatusOf] = useState(() => Object.fromEntries(EPICS_SEED.map((e) => [e.key, e.status])));
   const [productFilter, setProductFilter] = useState("Todos");
-  const [openEpic, setOpenEpic] = useState(null);
+  const [openKey, setOpenKey] = useState(null);
   const [dragKey, setDragKey] = useState(null);
   const [dropInfo, setDropInfo] = useState(null);
   const [saving, setSaving] = useState(false);
 
   const byKey = useMemo(() => Object.fromEntries(EPICS_SEED.map((e) => [e.key, e])), [EPICS_SEED]);
+  const openEpic = useMemo(() => {
+    if (!openKey) return null;
+    const base = byKey[openKey];
+    if (!base) return null;
+    return { ...base, ...(positions[openKey] || { roadmapLane: null, startWeek: null, durationWeeks: 2 }) };
+  }, [openKey, byKey, positions]);
 
   // reconcilia order/statusOf sempre que os dados vindos do contexto mudarem (ex: após "Sincronizar dados")
   useEffect(() => {
@@ -523,7 +655,7 @@ function ProjetosScreen() {
                 <EpicCard key={key} epic={byKey[key]} isFirst={i === 0} isLast={i === columnKeys[col].length - 1}
                   onUp={() => moveWithinColumn(key, -1)} onDown={() => moveWithinColumn(key, 1)}
                   onDragStart={onDragStart} onDragOverCard={onDragOverCard} onDropOnCard={onDropOnCard}
-                  dropIndicator={dropInfo?.key === key ? dropInfo.position : null} onOpen={setOpenEpic}
+                  dropIndicator={dropInfo?.key === key ? dropInfo.position : null} onOpen={(e) => setOpenKey(e.key)}
                   readOnly={!canWriteShared} />
               ))}
             </div>
@@ -531,7 +663,12 @@ function ProjetosScreen() {
         ))}
       </div>
 
-      <EpicDrawer epic={openEpic} onClose={() => setOpenEpic(null)} />
+      <EpicDrawer
+        epic={openEpic} weeks={roadmapWeeks} onClose={() => setOpenKey(null)}
+        onSave={(key, patch) => { saveDrawer(key, patch); setOpenKey(null); }}
+        onDelete={(key) => { deleteEpic(key); setOpenKey(null); }}
+        canEdit={ownsCard(openEpic)}
+      />
     </div>
   );
 }
@@ -1741,73 +1878,24 @@ function EpicBar({ epic, onDragStart, onOpen, onResize, onRemove, canEdit }) {
 
 function RoadmapScreen() {
   const { T, PRODUCT_STYLE } = useTheme();
-  const { epics: EPICS_SEED } = useData();
+  const {
+    epics: EPICS_SEED,
+    positions, setPositions, customEpics, setCustomEpics, prioOrder, setPrioOrder, filaOrder, setFilaOrder,
+    roadmapSaving: saving, persistRoadmap: persist, updatePosition, addEpic: addEpicShared, deleteEpic: deleteEpicShared, saveDrawer: saveDrawerShared,
+  } = useData();
   // Único lugar onde o admin escreve: cria card e mexe NOS DELE (posição no
   // Gantt, fila, nome, duração, exclusão). Épico da planilha não tem dono, então
   // só o super o move. Reordenar as listas mexe na ordem de todo mundo: super.
   const { user, canCreateCard, ownsCard, canWriteShared } = useAuth();
   const [weekCount, setWeekCount] = useState(13);
-  const [customEpics, setCustomEpics] = useState([]);
-  const [positions, setPositions] = useState(() => Object.fromEntries(EPICS_SEED.map((e) => [e.key, { roadmapLane: null, startWeek: null, durationWeeks: 2 }])));
   const [openKey, setOpenKey] = useState(null);
   const [dragKey, setDragKey] = useState(null);
-  const [prioOrder, setPrioOrder] = useState([]);
   const [prioDropInfo, setPrioDropInfo] = useState(null);
-  const [filaOrder, setFilaOrder] = useState([]);
   const [filaDropInfo, setFilaDropInfo] = useState(null);
-  const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    (async () => {
-      let savedPositions = {};
-      let savedCustom = [];
-      let savedPrioOrder = [];
-      let savedFilaOrder = [];
-      try {
-        const res = await storage.get(ROADMAP_STORAGE_KEY, true);
-        if (res && res.value) {
-          const saved = JSON.parse(res.value);
-          savedPositions = saved.positions || {};
-          savedCustom = saved.customEpics || [];
-          savedPrioOrder = saved.prioOrder || [];
-          savedFilaOrder = saved.filaOrder || [];
-        }
-      } catch (e) {}
-      setPrioOrder(savedPrioOrder);
-      setFilaOrder(savedFilaOrder);
-
-      let projetosStatus = {};
-      try {
-        const res2 = await storage.get("fila-projetos-order-v2", true);
-        if (res2 && res2.value) {
-          const saved2 = JSON.parse(res2.value);
-          projetosStatus = saved2.status || {};
-        }
-      } catch (e) {}
-
-      setCustomEpics(savedCustom);
-      setPositions((prev) => {
-        const next = { ...prev, ...savedPositions };
-        let changed = false;
-        EPICS_SEED.forEach((ep) => {
-          if (Object.prototype.hasOwnProperty.call(savedPositions, ep.key)) return; // respeita escolha manual, mesmo remoção explícita
-          const status = projetosStatus[ep.key] || ep.status;
-          if (status === "Pronto P/ DEV") {
-            next[ep.key] = { roadmapLane: ep.project, startWeek: 0, durationWeeks: 2 };
-            changed = true;
-          }
-        });
-        if (changed) persist(next, savedCustom, savedPrioOrder, savedFilaOrder);
-        return next;
-      });
-    })();
-  }, [EPICS_SEED]);
-
-  const persist = useCallback(async (nextPositions, nextCustom, nextPrioOrder, nextFilaOrder) => {
-    setSaving(true);
-    try { await storage.set(ROADMAP_STORAGE_KEY, JSON.stringify({ positions: nextPositions, customEpics: nextCustom, prioOrder: nextPrioOrder, filaOrder: nextFilaOrder }), true); } catch (e) {}
-    setSaving(false);
-  }, []);
+  const addEpic = () => { const key = addEpicShared(); if (key) setOpenKey(key); };
+  const deleteEpic = (key) => { deleteEpicShared(key); setOpenKey(null); };
+  const saveDrawer = (key, patch) => { saveDrawerShared(key, patch); setOpenKey(null); };
 
   const allEpics = useMemo(() => [...EPICS_SEED, ...customEpics], [EPICS_SEED, customEpics]);
   const byKey = useMemo(() => Object.fromEntries(allEpics.map((e) => [e.key, e])), [allEpics]);
@@ -1858,18 +1946,6 @@ function RoadmapScreen() {
     });
   }, [enriched]);
   const totalRows = laneMeta.reduce((s, l) => s + l.rowCount, 2);
-
-  // Choke point de toda mudança de posição (drop no Gantt, resize, remover,
-  // "Gantt", e o Salvar do drawer para épico da planilha): um único gate cobre
-  // todos, então nenhum caminho novo passa por fora sem alguém notar.
-  const updatePosition = useCallback((key, patch) => {
-    if (!ownsCard(byKey[key])) return;
-    setPositions((prev) => {
-      const next = { ...prev, [key]: { ...(prev[key] || { roadmapLane: null, startWeek: null, durationWeeks: 2 }), ...patch } };
-      persist(next, customEpics, prioOrder, filaOrder);
-      return next;
-    });
-  }, [persist, customEpics, prioOrder, filaOrder, ownsCard, byKey]);
 
   const onDragStart = (e, key) => { setDragKey(key); e.dataTransfer.effectAllowed = "move"; };
   const onDropPrio = (e) => {
@@ -1970,37 +2046,6 @@ function RoadmapScreen() {
     const epic = enriched.find((e) => e.key === key);
     const cur = positions[key] || { durationWeeks: 2 };
     updatePosition(key, { roadmapLane: epic?.project || null, startWeek: 0, durationWeeks: cur.durationWeeks || 2 });
-  };
-
-  const addEpic = () => {
-    if (!canCreateCard) return;
-    const key = `NOVO-${Date.now().toString().slice(-6)}`;
-    // `createdBy` é o dono do card: é ele que faz `ownsCard` distinguir "meu card"
-    // de "card de outro" — e um épico da planilha, que nunca passa por aqui, não
-    // tem dono nenhum e por isso é só do super.
-    const novo = { key, project: null, summary: "Novo épico", assignee: null, reporter: null, status: "Rascunho", tipo: null, created: null, priority: null, epic: true, createdBy: user ? user.email : null };
-    const nextCustom = [...customEpics, novo];
-    setCustomEpics(nextCustom);
-    setPositions((prev) => { const next = { ...prev, [key]: { roadmapLane: null, startWeek: null, durationWeeks: 2 } }; persist(next, nextCustom, prioOrder, filaOrder); return next; });
-    setOpenKey(key);
-  };
-  const deleteEpic = (key) => {
-    if (!ownsCard(byKey[key])) return;
-    const nextCustom = customEpics.filter((e) => e.key !== key);
-    setCustomEpics(nextCustom);
-    setPositions((prev) => { const next = { ...prev }; delete next[key]; persist(next, nextCustom, prioOrder, filaOrder); return next; });
-    setOpenKey(null);
-  };
-  const saveDrawer = (key, patch) => {
-    if (!ownsCard(byKey[key])) return;
-    if (key.startsWith("NOVO-")) {
-      const nextCustom = customEpics.map((e) => (e.key === key ? { ...e, summary: patch.summary } : e));
-      setCustomEpics(nextCustom);
-      setPositions((prev) => { const next = { ...prev, [key]: { roadmapLane: patch.roadmapLane, startWeek: patch.startWeek, durationWeeks: patch.durationWeeks } }; persist(next, nextCustom, prioOrder, filaOrder); return next; });
-    } else {
-      updatePosition(key, { roadmapLane: patch.roadmapLane, startWeek: patch.startWeek, durationWeeks: patch.durationWeeks });
-    }
-    setOpenKey(null);
   };
 
   const openEpic = openKey ? enriched.find((e) => e.key === openKey) : null;
