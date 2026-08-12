@@ -256,10 +256,17 @@ function EpicCard({ epic, isFirst, isLast, onUp, onDown, onDragStart, onDragOver
   );
 }
 
-function EpicDrawer({ epic, onClose }) {
+function EpicDrawer({ epic, onClose, weeks, onSave, onDelete }) {
   const { T, PRODUCT_STYLE } = useTheme();
+  const schedulable = !!(weeks && onSave);
+  const [summary, setSummary] = useState(epic?.summary || "");
+  const [lane, setLane] = useState(epic?.roadmapLane || PRIORIZACAO_KEY);
+  const [startWeek, setStartWeek] = useState(epic?.startWeek ?? 0);
+  const [duration, setDuration] = useState(epic?.durationWeeks ?? 2);
+  useEffect(() => { setSummary(epic?.summary || ""); setLane(epic?.roadmapLane || PRIORIZACAO_KEY); setStartWeek(epic?.startWeek ?? 0); setDuration(epic?.durationWeeks ?? 2); }, [epic]);
   if (!epic) return null;
   const prod = PRODUCT_STYLE[epic.project] || PRODUCT_STYLE["Backoffice"];
+  const isCustom = schedulable && epic.key.startsWith("NOVO-");
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 50, display: "flex", justifyContent: "flex-end", background: "rgba(0,0,0,0.45)" }}>
       <div onClick={(e) => e.stopPropagation()} style={{ height: "100%", width: 360, overflowY: "auto", borderLeft: `1px solid ${T.border2}`, background: T.bg0, padding: 20 }}>
@@ -267,20 +274,78 @@ function EpicDrawer({ epic, onClose }) {
           <span style={{ fontSize: 12, fontWeight: 500, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>{epic.key}</span>
           <button onClick={onClose} style={{ background: "none", border: "none", color: T.ink1, cursor: "pointer" }}><X size={16} /></button>
         </div>
-        <h3 style={{ marginTop: 8, fontSize: 18, fontWeight: 700, color: T.ink0, fontFamily: "'Plus Jakarta Sans', sans-serif" }}>{epic.summary}</h3>
-        {epic.resumo && (
-          <p style={{ marginTop: 8, fontSize: 13, lineHeight: 1.45, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>{epic.resumo}</p>
+
+        {isCustom ? (
+          <input value={summary} onChange={(e) => setSummary(e.target.value)} placeholder="Nome do épico"
+            style={{ marginTop: 10, width: "100%", background: T.bg1, border: `1px solid ${T.border2}`, borderRadius: 8, padding: "8px 10px", fontSize: 15, fontWeight: 600, color: T.ink0, fontFamily: "'Plus Jakarta Sans', sans-serif" }} />
+        ) : (
+          <h3 style={{ marginTop: 8, fontSize: 17, fontWeight: 700, color: T.ink0, fontFamily: "'Plus Jakarta Sans', sans-serif" }}>{epic.summary}</h3>
         )}
-        <div className="flex flex-wrap" style={{ gap: 6, marginTop: 14 }}>
-          <Badge bg={prod.subtle} color={prod.text}>{epic.project}</Badge>
-          {epic.tipo && <Badge bg={T.bg2} color={T.ink1}>{epic.tipo}</Badge>}
-          {epic.priority && <Badge bg={T.bg2} color={T.ink2}>{epic.priority}</Badge>}
-        </div>
-        <dl style={{ marginTop: 20, display: "flex", flexDirection: "column", gap: 10, fontSize: 12.5, fontFamily: "'Inter Tight', sans-serif" }}>
-          {[["Responsável", epic.assignee], ["Relator", epic.reporter], ["Status", epic.status], ["Criado em", epic.created]].map(([k, v]) => (
-            <div key={k} className="flex justify-between"><dt style={{ color: T.ink1 }}>{k}</dt><dd style={{ color: T.ink0 }}>{v || "—"}</dd></div>
-          ))}
-        </dl>
+
+        {!isCustom && (
+          <>
+            {epic.resumo && (
+              <p style={{ marginTop: 8, fontSize: 13, lineHeight: 1.45, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>{epic.resumo}</p>
+            )}
+            <div className="flex flex-wrap" style={{ gap: 6, marginTop: 10 }}>
+              <Badge bg={prod.subtle} color={prod.text}>{epic.project}</Badge>
+              {epic.tipo && <Badge bg={T.bg2} color={T.ink1}>{epic.tipo}</Badge>}
+              {epic.priority && <Badge bg={T.bg2} color={T.ink2}>{epic.priority}</Badge>}
+            </div>
+            <dl style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 8, fontSize: 12.5, fontFamily: "'Inter Tight', sans-serif" }}>
+              {[
+                ["Responsável", epic.assignee],
+                ["Relator", epic.reporter],
+                ["Desenvolvedor", epic.developer],
+                ["Testador", epic.tester],
+                ["Status (Jira)", epic.status],
+                ["Criado em", epic.created],
+                ["Data de início", epic.dataInicio],
+                ["Data de conclusão", epic.dataConcl],
+              ].map(([k, v]) => (
+                <div key={k} className="flex justify-between"><dt style={{ color: T.ink1 }}>{k}</dt><dd style={{ color: T.ink0 }}>{v || "—"}</dd></div>
+              ))}
+            </dl>
+          </>
+        )}
+
+        {schedulable && (
+          <>
+            <p style={{ marginTop: 20, marginBottom: 6, fontSize: 12, fontWeight: 500, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>Camada</p>
+            <select value={lane} onChange={(e) => setLane(e.target.value)} style={{ width: "100%", borderRadius: 8, border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink0, fontSize: 13, padding: "7px 8px", fontFamily: "'Inter Tight', sans-serif" }}>
+              <option value={PRIORIZACAO_KEY}>Para priorização</option>
+              {PRODUCTS.map((p) => <option key={p} value={p}>{p}</option>)}
+            </select>
+
+            {lane !== PRIORIZACAO_KEY && (
+              <>
+                <p style={{ marginTop: 16, marginBottom: 6, fontSize: 12, fontWeight: 500, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>Semana inicial</p>
+                <select value={startWeek} onChange={(e) => setStartWeek(Number(e.target.value))} style={{ width: "100%", borderRadius: 8, border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink0, fontSize: 13, padding: "7px 8px", fontFamily: "'Inter Tight', sans-serif" }}>
+                  {weeks.map((w) => <option key={w.index} value={w.index}>Semana de {fmtWeek(w.start)}</option>)}
+                </select>
+
+                <p style={{ marginTop: 16, marginBottom: 6, fontSize: 12, fontWeight: 500, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>Duração (semanas)</p>
+                <div className="flex items-center" style={{ gap: 8 }}>
+                  <button onClick={() => setDuration((d) => Math.max(1, d - 1))} style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 26, height: 26, borderRadius: 6, border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink0, cursor: "pointer" }}><Minus size={12} /></button>
+                  <span style={{ fontSize: 13, color: T.ink0, fontFamily: "'Inter Tight', sans-serif", minWidth: 20, textAlign: "center" }}>{duration}</span>
+                  <button onClick={() => setDuration((d) => Math.min(12, d + 1))} style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 26, height: 26, borderRadius: 6, border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink0, cursor: "pointer" }}><Plus size={12} /></button>
+                </div>
+              </>
+            )}
+
+            <div className="flex items-center justify-between" style={{ marginTop: 24 }}>
+              {isCustom ? (
+                <button onClick={() => onDelete(epic.key)} style={{ fontSize: 12, color: "#e08585", background: "none", border: "none", cursor: "pointer", fontFamily: "'Inter Tight', sans-serif" }}>Excluir</button>
+              ) : <span />}
+              <button
+                onClick={() => onSave(epic.key, { summary: isCustom ? summary : epic.summary, roadmapLane: lane === PRIORIZACAO_KEY ? null : lane, startWeek: lane === PRIORIZACAO_KEY ? null : startWeek, durationWeeks: duration })}
+                style={{ borderRadius: 8, padding: "7px 14px", fontSize: 12.5, fontWeight: 600, border: "none", cursor: "pointer", background: "#5166e6", color: "#fff", fontFamily: "'Inter Tight', sans-serif" }}
+              >
+                Salvar
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
@@ -1622,95 +1687,6 @@ function EpicBar({ epic, onDragStart, onOpen, onResize, onRemove }) {
   );
 }
 
-function RoadmapDrawer({ epic, weeks, onClose, onSave, onDelete }) {
-  const { T, PRODUCT_STYLE } = useTheme();
-  const [summary, setSummary] = useState(epic?.summary || "");
-  const [lane, setLane] = useState(epic?.roadmapLane || PRIORIZACAO_KEY);
-  const [startWeek, setStartWeek] = useState(epic?.startWeek ?? 0);
-  const [duration, setDuration] = useState(epic?.durationWeeks ?? 2);
-  useEffect(() => { setSummary(epic?.summary || ""); setLane(epic?.roadmapLane || PRIORIZACAO_KEY); setStartWeek(epic?.startWeek ?? 0); setDuration(epic?.durationWeeks ?? 2); }, [epic]);
-  if (!epic) return null;
-  const isCustom = epic.key.startsWith("NOVO-");
-  return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 50, display: "flex", justifyContent: "flex-end", background: "rgba(0,0,0,0.45)" }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ height: "100%", width: 360, overflowY: "auto", borderLeft: `1px solid ${T.border2}`, background: T.bg0, padding: 20 }}>
-        <div className="flex items-center justify-between">
-          <span style={{ fontSize: 12, fontWeight: 500, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>{epic.key}</span>
-          <button onClick={onClose} style={{ background: "none", border: "none", color: T.ink1, cursor: "pointer" }}><X size={16} /></button>
-        </div>
-
-        {isCustom ? (
-          <input value={summary} onChange={(e) => setSummary(e.target.value)} placeholder="Nome do épico"
-            style={{ marginTop: 10, width: "100%", background: T.bg1, border: `1px solid ${T.border2}`, borderRadius: 8, padding: "8px 10px", fontSize: 15, fontWeight: 600, color: T.ink0, fontFamily: "'Plus Jakarta Sans', sans-serif" }} />
-        ) : (
-          <h3 style={{ marginTop: 8, fontSize: 17, fontWeight: 700, color: T.ink0, fontFamily: "'Plus Jakarta Sans', sans-serif" }}>{epic.summary}</h3>
-        )}
-
-        {!isCustom && (
-          <>
-            {epic.resumo && (
-              <p style={{ marginTop: 8, fontSize: 13, lineHeight: 1.45, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>{epic.resumo}</p>
-            )}
-            <div className="flex flex-wrap" style={{ gap: 6, marginTop: 10 }}>
-              {epic.project && <Badge bg={PRODUCT_STYLE[epic.project]?.subtle} color={PRODUCT_STYLE[epic.project]?.text}>{epic.project}</Badge>}
-              {epic.tipo && <Badge bg={T.bg2} color={T.ink1}>{epic.tipo}</Badge>}
-              {epic.priority && <Badge bg={T.bg2} color={T.ink2}>{epic.priority}</Badge>}
-            </div>
-            <dl style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 8, fontSize: 12.5, fontFamily: "'Inter Tight', sans-serif" }}>
-              {[
-                ["Responsável", epic.assignee],
-                ["Relator", epic.reporter],
-                ["Desenvolvedor", epic.developer],
-                ["Testador", epic.tester],
-                ["Status (Jira)", epic.status],
-                ["Criado em", epic.created],
-                ["Data de início", epic.dataInicio],
-                ["Data de conclusão", epic.dataConcl],
-              ].map(([k, v]) => (
-                <div key={k} className="flex justify-between"><dt style={{ color: T.ink1 }}>{k}</dt><dd style={{ color: T.ink0 }}>{v || "—"}</dd></div>
-              ))}
-            </dl>
-          </>
-        )}
-
-        <p style={{ marginTop: 20, marginBottom: 6, fontSize: 12, fontWeight: 500, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>Camada</p>
-        <select value={lane} onChange={(e) => setLane(e.target.value)} style={{ width: "100%", borderRadius: 8, border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink0, fontSize: 13, padding: "7px 8px", fontFamily: "'Inter Tight', sans-serif" }}>
-          <option value={PRIORIZACAO_KEY}>Para priorização</option>
-          {PRODUCTS.map((p) => <option key={p} value={p}>{p}</option>)}
-        </select>
-
-        {lane !== PRIORIZACAO_KEY && (
-          <>
-            <p style={{ marginTop: 16, marginBottom: 6, fontSize: 12, fontWeight: 500, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>Semana inicial</p>
-            <select value={startWeek} onChange={(e) => setStartWeek(Number(e.target.value))} style={{ width: "100%", borderRadius: 8, border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink0, fontSize: 13, padding: "7px 8px", fontFamily: "'Inter Tight', sans-serif" }}>
-              {weeks.map((w) => <option key={w.index} value={w.index}>Semana de {fmtWeek(w.start)}</option>)}
-            </select>
-
-            <p style={{ marginTop: 16, marginBottom: 6, fontSize: 12, fontWeight: 500, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>Duração (semanas)</p>
-            <div className="flex items-center" style={{ gap: 8 }}>
-              <button onClick={() => setDuration((d) => Math.max(1, d - 1))} style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 26, height: 26, borderRadius: 6, border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink0, cursor: "pointer" }}><Minus size={12} /></button>
-              <span style={{ fontSize: 13, color: T.ink0, fontFamily: "'Inter Tight', sans-serif", minWidth: 20, textAlign: "center" }}>{duration}</span>
-              <button onClick={() => setDuration((d) => Math.min(12, d + 1))} style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 26, height: 26, borderRadius: 6, border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink0, cursor: "pointer" }}><Plus size={12} /></button>
-            </div>
-          </>
-        )}
-
-        <div className="flex items-center justify-between" style={{ marginTop: 24 }}>
-          {isCustom ? (
-            <button onClick={() => onDelete(epic.key)} style={{ fontSize: 12, color: "#e08585", background: "none", border: "none", cursor: "pointer", fontFamily: "'Inter Tight', sans-serif" }}>Excluir</button>
-          ) : <span />}
-          <button
-            onClick={() => onSave(epic.key, { summary: isCustom ? summary : epic.summary, roadmapLane: lane === PRIORIZACAO_KEY ? null : lane, startWeek: lane === PRIORIZACAO_KEY ? null : startWeek, durationWeeks: duration })}
-            style={{ borderRadius: 8, padding: "7px 14px", fontSize: 12.5, fontWeight: 600, border: "none", cursor: "pointer", background: "#5166e6", color: "#fff", fontFamily: "'Inter Tight', sans-serif" }}
-          >
-            Salvar
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function RoadmapScreen() {
   const { T, PRODUCT_STYLE } = useTheme();
   const { epics: EPICS_SEED } = useData();
@@ -2075,7 +2051,7 @@ function RoadmapScreen() {
         </div>
       </div>
 
-      <RoadmapDrawer epic={openEpic} weeks={weeks} onClose={() => setOpenKey(null)} onSave={saveDrawer} onDelete={deleteEpic} />
+      <EpicDrawer epic={openEpic} weeks={weeks} onClose={() => setOpenKey(null)} onSave={saveDrawer} onDelete={deleteEpic} />
     </div>
   );
 }
