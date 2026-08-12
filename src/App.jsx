@@ -360,11 +360,6 @@ function EpicCard({ epic, isFirst, isLast, onUp, onDown, onDragStart, onDragOver
         <p style={{ marginTop: 6, fontSize: 13, lineHeight: 1.35, color: T.ink0, fontFamily: "'Inter Tight', sans-serif", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
           {epic.summary || "(sem título)"}
         </p>
-        {epic.resumo && (
-          <p style={{ marginTop: 4, fontSize: 11, lineHeight: 1.35, color: T.ink2, fontFamily: "'Inter Tight', sans-serif", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
-            {epic.resumo}
-          </p>
-        )}
         <div className="flex items-center justify-between" style={{ marginTop: 8 }}>
           <span>
             {epic.tipo && tipo && (
@@ -1827,11 +1822,6 @@ function PrioCard({ epic, onDragStart, onOpen, onAdd, onMoveToFila, onDragOverCa
         </div>
       )}
       <p style={{ marginTop: 2, fontSize: 12, color: T.ink0, fontFamily: "'Inter Tight', sans-serif", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{epic.summary || "(sem título)"}</p>
-      {epic.resumo && (
-        <p style={{ marginTop: 2, fontSize: 10, lineHeight: 1.3, color: T.ink2, fontFamily: "'Inter Tight', sans-serif", display: "-webkit-box", WebkitLineClamp: 1, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
-          {epic.resumo}
-        </p>
-      )}
       {epic.status && (
         <span style={{ display: "inline-block", marginTop: 4, borderRadius: 6, padding: "1px 6px", fontSize: 9.5, fontWeight: 500, background: T.bg2, color: T.ink1, fontFamily: "'Inter Tight', sans-serif", whiteSpace: "nowrap" }}>
           {epic.status}
