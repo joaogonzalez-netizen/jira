@@ -73,6 +73,8 @@ function useTheme() { return useContext(ThemeCtx); }
 
 const SHEET_ID = "1HteBrBkY4XCkmXGMTJIuA2EXAraZsDKw_xjZu0xoUgw";
 const SHEET_GID = "0";
+const JIRA_BASE_URL = "https://joaogonzalezstlflix.atlassian.net";
+function jiraUrl(key) { return `${JIRA_BASE_URL}/browse/${key}`; }
 // URL do deployment do Apps Script (termina em /exec). Veja apps-script/sync.gs.js.
 // Fica em .env.local (fora do git) porque dá acesso de leitura à planilha pra quem tiver o link.
 const SHEET_SYNC_URL = import.meta.env.VITE_SHEET_SYNC_URL || "";
@@ -354,7 +356,9 @@ function EpicCard({ epic, isFirst, isLast, onUp, onDown, onDragStart, onDragOver
       {dropIndicator === "before" && <div style={{ position: "absolute", top: -5, left: 0, right: 0, height: 2, borderRadius: 2, background: prod.primary }} />}
       <div onClick={() => onOpen(epic)} className="pp-card" style={{ background: T.bg1, border: `1px solid ${T.border2}`, borderRadius: 12, padding: 10, cursor: readOnly ? "pointer" : "grab", boxShadow: T.cardShadow }}>
         <div className="flex items-start justify-between" style={{ gap: 8 }}>
-          <span style={{ fontSize: 11, fontWeight: 500, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>{epic.key}</span>
+          <a href={jiraUrl(epic.key)} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} style={{ fontSize: 11, fontWeight: 500, color: T.ink1, fontFamily: "'Inter Tight', sans-serif", textDecoration: "none" }}>
+            {epic.key}
+          </a>
           <Badge bg={prod.subtle} color={prod.text}>{epic.project}</Badge>
         </div>
         <p style={{ marginTop: 6, fontSize: 13, lineHeight: 1.35, color: T.ink0, fontFamily: "'Inter Tight', sans-serif", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
@@ -406,7 +410,13 @@ function EpicDrawer({ epic, onClose, weeks, onSave, onDelete, canEdit }) {
     <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 50, display: "flex", justifyContent: "flex-end", background: "rgba(0,0,0,0.45)" }}>
       <div onClick={(e) => e.stopPropagation()} style={{ height: "100%", width: 360, overflowY: "auto", borderLeft: `1px solid ${T.border2}`, background: T.bg0, padding: 20 }}>
         <div className="flex items-center justify-between">
-          <span style={{ fontSize: 12, fontWeight: 500, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>{epic.key}</span>
+          {epic.key.startsWith("NOVO-") ? (
+            <span style={{ fontSize: 12, fontWeight: 500, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>{epic.key}</span>
+          ) : (
+            <a href={jiraUrl(epic.key)} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, fontWeight: 500, color: T.ink1, fontFamily: "'Inter Tight', sans-serif", textDecoration: "none" }}>
+              {epic.key}
+            </a>
+          )}
           <button onClick={onClose} style={{ background: "none", border: "none", color: T.ink1, cursor: "pointer" }}><X size={16} /></button>
         </div>
 
@@ -1793,7 +1803,13 @@ function PrioCard({ epic, onDragStart, onOpen, onAdd, onMoveToFila, onDragOverCa
     >
       <div className="flex items-center justify-between" style={{ gap: 6 }}>
         <div className="flex items-center" style={{ gap: 6, minWidth: 0 }}>
-          <span style={{ fontSize: 10.5, fontWeight: 500, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>{epic.key}</span>
+          {epic.key.startsWith("NOVO-") ? (
+            <span style={{ fontSize: 10.5, fontWeight: 500, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>{epic.key}</span>
+          ) : (
+            <a href={jiraUrl(epic.key)} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} style={{ fontSize: 10.5, fontWeight: 500, color: T.ink1, fontFamily: "'Inter Tight', sans-serif", textDecoration: "none" }}>
+              {epic.key}
+            </a>
+          )}
         </div>
         {prod && <span style={{ width: 6, height: 6, borderRadius: 999, background: prod.primary, display: "inline-block" }} />}
       </div>
