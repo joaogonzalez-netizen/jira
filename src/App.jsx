@@ -131,6 +131,7 @@ function transformSheetRow(r) {
     reporter: (r["Reporter"] || "").trim() || null,
     developer: (r["Desenvolvedor"] || "").trim() || null,
     tester: (r["Quem testou"] || "").trim() || null,
+    parent: (r["parent"] || "").trim() || null,
     status, stage,
     tipo: (r["Tipo de entrega"] || "").trim() || null,
     created: normalizeDateStr(r["Created"]),
