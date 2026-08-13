@@ -170,7 +170,8 @@ function DataProvider({ children }) {
   const [positions, setPositions] = useState({});
   const [customEpics, setCustomEpics] = useState([]);
   const [prioOrder, setPrioOrder] = useState([]);
-  const [filaOrder, setFilaOrder] = useState([]);
+  const [filaProdutoOrder, setFilaProdutoOrder] = useState([]);
+  const [filaUxOrder, setFilaUxOrder] = useState([]);
   const [roadmapSaving, setRoadmapSaving] = useState(false);
 
   useEffect(() => {
@@ -178,7 +179,8 @@ function DataProvider({ children }) {
       let savedPositions = {};
       let savedCustom = [];
       let savedPrioOrder = [];
-      let savedFilaOrder = [];
+      let savedFilaProdutoOrder = [];
+      let savedFilaUxOrder = [];
       try {
         const res = await storage.get(ROADMAP_STORAGE_KEY, true);
         if (res && res.value) {
@@ -186,11 +188,15 @@ function DataProvider({ children }) {
           savedPositions = saved.positions || {};
           savedCustom = saved.customEpics || [];
           savedPrioOrder = saved.prioOrder || [];
-          savedFilaOrder = saved.filaOrder || [];
+          // migração: a fila era única (Produto e UX misturados); dado antigo
+          // vira a fila de Produto, e UX começa vazia.
+          savedFilaProdutoOrder = saved.filaProdutoOrder || saved.filaOrder || [];
+          savedFilaUxOrder = saved.filaUxOrder || [];
         }
       } catch (e) {}
       setPrioOrder(savedPrioOrder);
-      setFilaOrder(savedFilaOrder);
+      setFilaProdutoOrder(savedFilaProdutoOrder);
+      setFilaUxOrder(savedFilaUxOrder);
 
       let projetosStatus = {};
       try {
@@ -213,16 +219,16 @@ function DataProvider({ children }) {
             changed = true;
           }
         });
-        if (changed) persistRoadmap(next, savedCustom, savedPrioOrder, savedFilaOrder);
+        if (changed) persistRoadmap(next, savedCustom, savedPrioOrder, savedFilaProdutoOrder, savedFilaUxOrder);
         return next;
       });
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [epics]);
 
-  const persistRoadmap = useCallback(async (nextPositions, nextCustom, nextPrioOrder, nextFilaOrder) => {
+  const persistRoadmap = useCallback(async (nextPositions, nextCustom, nextPrioOrder, nextFilaProdutoOrder, nextFilaUxOrder) => {
     setRoadmapSaving(true);
-    try { await storage.set(ROADMAP_STORAGE_KEY, JSON.stringify({ positions: nextPositions, customEpics: nextCustom, prioOrder: nextPrioOrder, filaOrder: nextFilaOrder }), true); } catch (e) {}
+    try { await storage.set(ROADMAP_STORAGE_KEY, JSON.stringify({ positions: nextPositions, customEpics: nextCustom, prioOrder: nextPrioOrder, filaProdutoOrder: nextFilaProdutoOrder, filaUxOrder: nextFilaUxOrder }), true); } catch (e) {}
     setRoadmapSaving(false);
   }, []);
 
@@ -236,10 +242,10 @@ function DataProvider({ children }) {
     if (!ownsCard(byKeyWithCustom[key])) return;
     setPositions((prev) => {
       const next = { ...prev, [key]: { ...(prev[key] || { roadmapLane: null, startWeek: null, durationWeeks: 2 }), ...patch } };
-      persistRoadmap(next, customEpics, prioOrder, filaOrder);
+      persistRoadmap(next, customEpics, prioOrder, filaProdutoOrder, filaUxOrder);
       return next;
     });
-  }, [persistRoadmap, customEpics, prioOrder, filaOrder, ownsCard, byKeyWithCustom]);
+  }, [persistRoadmap, customEpics, prioOrder, filaProdutoOrder, filaUxOrder, ownsCard, byKeyWithCustom]);
 
   const addEpic = useCallback(() => {
     if (!canCreateCard) return null;
@@ -250,27 +256,27 @@ function DataProvider({ children }) {
     const novo = { key, project: null, summary: "Novo épico", assignee: null, reporter: null, status: "Rascunho", tipo: null, created: null, priority: null, epic: true, createdBy: user ? user.email : null };
     const nextCustom = [...customEpics, novo];
     setCustomEpics(nextCustom);
-    setPositions((prev) => { const next = { ...prev, [key]: { roadmapLane: null, startWeek: null, durationWeeks: 2 } }; persistRoadmap(next, nextCustom, prioOrder, filaOrder); return next; });
+    setPositions((prev) => { const next = { ...prev, [key]: { roadmapLane: null, startWeek: null, durationWeeks: 2 } }; persistRoadmap(next, nextCustom, prioOrder, filaProdutoOrder, filaUxOrder); return next; });
     return key;
-  }, [canCreateCard, user, customEpics, prioOrder, filaOrder, persistRoadmap]);
+  }, [canCreateCard, user, customEpics, prioOrder, filaProdutoOrder, filaUxOrder, persistRoadmap]);
 
   const deleteEpic = useCallback((key) => {
     if (!ownsCard(byKeyWithCustom[key])) return;
     const nextCustom = customEpics.filter((e) => e.key !== key);
     setCustomEpics(nextCustom);
-    setPositions((prev) => { const next = { ...prev }; delete next[key]; persistRoadmap(next, nextCustom, prioOrder, filaOrder); return next; });
-  }, [ownsCard, byKeyWithCustom, customEpics, prioOrder, filaOrder, persistRoadmap]);
+    setPositions((prev) => { const next = { ...prev }; delete next[key]; persistRoadmap(next, nextCustom, prioOrder, filaProdutoOrder, filaUxOrder); return next; });
+  }, [ownsCard, byKeyWithCustom, customEpics, prioOrder, filaProdutoOrder, filaUxOrder, persistRoadmap]);
 
   const saveDrawer = useCallback((key, patch) => {
     if (!ownsCard(byKeyWithCustom[key])) return;
     if (key.startsWith("NOVO-")) {
       const nextCustom = customEpics.map((e) => (e.key === key ? { ...e, summary: patch.summary } : e));
       setCustomEpics(nextCustom);
-      setPositions((prev) => { const next = { ...prev, [key]: { roadmapLane: patch.roadmapLane, startWeek: patch.startWeek, durationWeeks: patch.durationWeeks } }; persistRoadmap(next, nextCustom, prioOrder, filaOrder); return next; });
+      setPositions((prev) => { const next = { ...prev, [key]: { roadmapLane: patch.roadmapLane, startWeek: patch.startWeek, durationWeeks: patch.durationWeeks } }; persistRoadmap(next, nextCustom, prioOrder, filaProdutoOrder, filaUxOrder); return next; });
     } else {
       updatePosition(key, { roadmapLane: patch.roadmapLane, startWeek: patch.startWeek, durationWeeks: patch.durationWeeks });
     }
-  }, [ownsCard, byKeyWithCustom, customEpics, prioOrder, filaOrder, persistRoadmap, updatePosition]);
+  }, [ownsCard, byKeyWithCustom, customEpics, prioOrder, filaProdutoOrder, filaUxOrder, persistRoadmap, updatePosition]);
 
   // Janela fixa de semanas pra popular o seletor "Semana inicial" do drawer
   // fora do Roadmap (Projetos não tem Gantt, então não tem zoom pra derivar isso).
@@ -312,11 +318,12 @@ function DataProvider({ children }) {
 
   const value = useMemo(() => ({
     epics, tasks, setEpics, setTasks, syncFromSheet, lastSync, syncStatus,
-    positions, setPositions, customEpics, setCustomEpics, prioOrder, setPrioOrder, filaOrder, setFilaOrder,
+    positions, setPositions, customEpics, setCustomEpics, prioOrder, setPrioOrder,
+    filaProdutoOrder, setFilaProdutoOrder, filaUxOrder, setFilaUxOrder,
     roadmapSaving, persistRoadmap, updatePosition, addEpic, deleteEpic, saveDrawer, roadmapWeeks,
   }), [
     epics, tasks, syncFromSheet, lastSync, syncStatus,
-    positions, customEpics, prioOrder, filaOrder,
+    positions, customEpics, prioOrder, filaProdutoOrder, filaUxOrder,
     roadmapSaving, persistRoadmap, updatePosition, addEpic, deleteEpic, saveDrawer, roadmapWeeks,
   ]);
   return <DataCtx.Provider value={value}>{children}</DataCtx.Provider>;
@@ -1790,7 +1797,7 @@ function layoutLane(epics) {
   return { rowOf, rowCount: Math.max(1, rowEnds.length) };
 }
 
-function PrioCard({ epic, onDragStart, onOpen, onAdd, onMoveToFila, onDragOverCard, onDropOnCard, onDragEndCard, dropIndicator, canDrag }) {
+function PrioCard({ epic, onDragStart, onOpen, onAdd, onMoveToFilaProduto, onMoveToFilaUx, onDragOverCard, onDropOnCard, onDragEndCard, dropIndicator, canDrag }) {
   const { T, PRODUCT_STYLE, TIPO_STYLE } = useTheme();
   const prod = epic.project ? (PRODUCT_STYLE[epic.project] || PRODUCT_STYLE["Backoffice"]) : null;
   const tipo = TIPO_STYLE[layerOf(epic)];
@@ -1821,16 +1828,26 @@ function PrioCard({ epic, onDragStart, onOpen, onAdd, onMoveToFila, onDragOverCa
         </div>
         {prod && <span style={{ width: 6, height: 6, borderRadius: 999, background: prod.primary, display: "inline-block" }} />}
       </div>
-      {(onAdd || onMoveToFila) && (
-        <div className="flex items-center" style={{ gap: 10, marginTop: 3 }}>
-          {onMoveToFila && (
+      {(onAdd || onMoveToFilaProduto || onMoveToFilaUx) && (
+        <div className="flex items-center" style={{ gap: 10, marginTop: 3, flexWrap: "wrap" }}>
+          {onMoveToFilaProduto && (
             <label className="inline-flex items-center" style={{ gap: 3, fontSize: 9, color: T.ink2, fontFamily: "'Inter Tight', sans-serif", cursor: "pointer" }} onClick={(e) => e.stopPropagation()}>
               <input
-                type="checkbox" checked={false} title="Mover para Na fila"
-                onChange={(e) => { e.stopPropagation(); onMoveToFila(epic.key); }}
+                type="checkbox" checked={false} title="Mover para a fila de Produto"
+                onChange={(e) => { e.stopPropagation(); onMoveToFilaProduto(epic.key); }}
                 style={{ accentColor: prod ? prod.primary : "#5166e6", cursor: "pointer", flexShrink: 0 }}
               />
-              Na fila
+              Fila Produto
+            </label>
+          )}
+          {onMoveToFilaUx && (
+            <label className="inline-flex items-center" style={{ gap: 3, fontSize: 9, color: T.ink2, fontFamily: "'Inter Tight', sans-serif", cursor: "pointer" }} onClick={(e) => e.stopPropagation()}>
+              <input
+                type="checkbox" checked={false} title="Mover para a fila de UX"
+                onChange={(e) => { e.stopPropagation(); onMoveToFilaUx(epic.key); }}
+                style={{ accentColor: prod ? prod.primary : "#5166e6", cursor: "pointer", flexShrink: 0 }}
+              />
+              Fila UX
             </label>
           )}
           {onAdd && (
@@ -1894,7 +1911,8 @@ function RoadmapScreen() {
   const { T, PRODUCT_STYLE } = useTheme();
   const {
     epics: EPICS_SEED,
-    positions, setPositions, customEpics, setCustomEpics, prioOrder, setPrioOrder, filaOrder, setFilaOrder,
+    positions, setPositions, customEpics, setCustomEpics, prioOrder, setPrioOrder,
+    filaProdutoOrder, setFilaProdutoOrder, filaUxOrder, setFilaUxOrder,
     roadmapSaving: saving, persistRoadmap: persist, updatePosition, addEpic: addEpicShared, deleteEpic: deleteEpicShared, saveDrawer: saveDrawerShared,
   } = useData();
   // Único lugar onde o admin escreve: cria card e mexe NOS DELE (posição no
@@ -1905,7 +1923,8 @@ function RoadmapScreen() {
   const [openKey, setOpenKey] = useState(null);
   const [dragKey, setDragKey] = useState(null);
   const [prioDropInfo, setPrioDropInfo] = useState(null);
-  const [filaDropInfo, setFilaDropInfo] = useState(null);
+  const [filaProdutoDropInfo, setFilaProdutoDropInfo] = useState(null);
+  const [filaUxDropInfo, setFilaUxDropInfo] = useState(null);
 
   const addEpic = () => { const key = addEpicShared(); if (key) setOpenKey(key); };
   const deleteEpic = (key) => { deleteEpicShared(key); setOpenKey(null); };
@@ -1930,11 +1949,17 @@ function RoadmapScreen() {
 
   const enriched = useMemo(() => allEpics.map((e) => ({ ...e, ...(positions[e.key] || { roadmapLane: null, startWeek: null, durationWeeks: 2 }) })), [allEpics, positions]);
   const backlogItems = enriched.filter((e) => !e.roadmapLane && e.status !== "Done");
-  const filaSet = useMemo(() => new Set(filaOrder), [filaOrder]);
-  const filaItems = useMemo(() => {
-    const byKeyFila = Object.fromEntries(backlogItems.filter((e) => filaSet.has(e.key)).map((e) => [e.key, e]));
-    return filaOrder.map((k) => byKeyFila[k]).filter(Boolean);
-  }, [backlogItems, filaOrder, filaSet]);
+  const filaProdutoSet = useMemo(() => new Set(filaProdutoOrder), [filaProdutoOrder]);
+  const filaUxSet = useMemo(() => new Set(filaUxOrder), [filaUxOrder]);
+  const filaSet = useMemo(() => new Set([...filaProdutoOrder, ...filaUxOrder]), [filaProdutoOrder, filaUxOrder]);
+  const filaProdutoItems = useMemo(() => {
+    const byKeyFila = Object.fromEntries(backlogItems.filter((e) => filaProdutoSet.has(e.key)).map((e) => [e.key, e]));
+    return filaProdutoOrder.map((k) => byKeyFila[k]).filter(Boolean);
+  }, [backlogItems, filaProdutoOrder, filaProdutoSet]);
+  const filaUxItems = useMemo(() => {
+    const byKeyFila = Object.fromEntries(backlogItems.filter((e) => filaUxSet.has(e.key)).map((e) => [e.key, e]));
+    return filaUxOrder.map((k) => byKeyFila[k]).filter(Boolean);
+  }, [backlogItems, filaUxOrder, filaUxSet]);
   const prioItemsRaw = backlogItems.filter((e) => !filaSet.has(e.key));
   const prioItems = useMemo(() => {
     const byKeyPrio = Object.fromEntries(prioItemsRaw.map((e) => [e.key, e]));
@@ -1966,19 +1991,33 @@ function RoadmapScreen() {
     e.preventDefault();
     if (dragKey && ownsCard(byKey[dragKey])) {
       const nextPositions = { ...positions, [dragKey]: { ...(positions[dragKey] || {}), roadmapLane: null, startWeek: null } };
-      const nextFila = filaOrder.filter((k) => k !== dragKey);
+      const nextFilaProduto = filaProdutoOrder.filter((k) => k !== dragKey);
+      const nextFilaUx = filaUxOrder.filter((k) => k !== dragKey);
       setPositions(nextPositions);
-      setFilaOrder(nextFila);
-      persist(nextPositions, customEpics, prioOrder, nextFila);
+      setFilaProdutoOrder(nextFilaProduto);
+      setFilaUxOrder(nextFilaUx);
+      persist(nextPositions, customEpics, prioOrder, nextFilaProduto, nextFilaUx);
     }
     setDragKey(null);
   };
-  const moveToFila = (key) => {
+  // Um épico só fica em uma fila por vez: entrar na de Produto tira da de UX e vice-versa.
+  const moveToFilaProduto = (key) => {
     if (!ownsCard(byKey[key])) return;
-    if (filaOrder.includes(key)) return;
-    const nextFila = [...filaOrder, key];
-    setFilaOrder(nextFila);
-    persist(positions, customEpics, prioOrder, nextFila);
+    if (filaProdutoOrder.includes(key)) return;
+    const nextFilaProduto = [...filaProdutoOrder, key];
+    const nextFilaUx = filaUxOrder.filter((k) => k !== key);
+    setFilaProdutoOrder(nextFilaProduto);
+    setFilaUxOrder(nextFilaUx);
+    persist(positions, customEpics, prioOrder, nextFilaProduto, nextFilaUx);
+  };
+  const moveToFilaUx = (key) => {
+    if (!ownsCard(byKey[key])) return;
+    if (filaUxOrder.includes(key)) return;
+    const nextFilaUx = [...filaUxOrder, key];
+    const nextFilaProduto = filaProdutoOrder.filter((k) => k !== key);
+    setFilaUxOrder(nextFilaUx);
+    setFilaProdutoOrder(nextFilaProduto);
+    persist(positions, customEpics, prioOrder, nextFilaProduto, nextFilaUx);
   };
   const onPrioDragOverCard = (e, overKey) => {
     e.preventDefault(); e.stopPropagation();
@@ -2005,39 +2044,76 @@ function RoadmapScreen() {
     fullOrder.splice(insertAt, 0, key);
     setPositions(nextPositions);
     setPrioOrder(fullOrder);
-    persist(nextPositions, customEpics, fullOrder, filaOrder);
+    persist(nextPositions, customEpics, fullOrder, filaProdutoOrder, filaUxOrder);
   };
 
-  const onFilaDragOverCard = (e, overKey) => {
+  const onFilaProdutoDragOverCard = (e, overKey) => {
     e.preventDefault(); e.stopPropagation();
-    if (!dragKey || overKey === dragKey) { setFilaDropInfo(null); return; }
+    if (!dragKey || overKey === dragKey) { setFilaProdutoDropInfo(null); return; }
     const rect = e.currentTarget.getBoundingClientRect();
-    setFilaDropInfo({ key: overKey, position: e.clientX - rect.left < rect.width / 2 ? "before" : "after" });
+    setFilaProdutoDropInfo({ key: overKey, position: e.clientX - rect.left < rect.width / 2 ? "before" : "after" });
   };
-  const onFilaDropOnCard = (e, overKey) => {
+  const onFilaProdutoDropOnCard = (e, overKey) => {
     e.preventDefault(); e.stopPropagation();
     const key = dragKey;
-    const position = filaDropInfo?.position || "before";
-    setDragKey(null); setFilaDropInfo(null);
+    const position = filaProdutoDropInfo?.position || "before";
+    setDragKey(null); setFilaProdutoDropInfo(null);
     if (!key || key === overKey) return;
     if (!canWriteShared) return;
     const nextPositions = positions[key]?.roadmapLane
       ? { ...positions, [key]: { ...(positions[key] || {}), roadmapLane: null, startWeek: null } }
       : positions;
-    const fullOrder = filaOrder.filter((k) => k !== key);
+    const fullOrder = filaProdutoOrder.filter((k) => k !== key);
     let insertAt = fullOrder.indexOf(overKey);
     if (insertAt === -1) insertAt = fullOrder.length;
     else if (position === "after") insertAt += 1;
     fullOrder.splice(insertAt, 0, key);
+    const nextFilaUx = filaUxOrder.filter((k) => k !== key);
     setPositions(nextPositions);
-    setFilaOrder(fullOrder);
+    setFilaProdutoOrder(fullOrder);
+    setFilaUxOrder(nextFilaUx);
     const nextPrio = prioOrder.filter((k) => k !== key);
     setPrioOrder(nextPrio);
-    persist(nextPositions, customEpics, nextPrio, fullOrder);
+    persist(nextPositions, customEpics, nextPrio, fullOrder, nextFilaUx);
   };
-  const onDropFila = (e) => {
+  const onDropFilaProduto = (e) => {
     e.preventDefault();
-    if (dragKey && !filaOrder.includes(dragKey)) moveToFila(dragKey);
+    if (dragKey && !filaProdutoOrder.includes(dragKey)) moveToFilaProduto(dragKey);
+    setDragKey(null);
+  };
+
+  const onFilaUxDragOverCard = (e, overKey) => {
+    e.preventDefault(); e.stopPropagation();
+    if (!dragKey || overKey === dragKey) { setFilaUxDropInfo(null); return; }
+    const rect = e.currentTarget.getBoundingClientRect();
+    setFilaUxDropInfo({ key: overKey, position: e.clientX - rect.left < rect.width / 2 ? "before" : "after" });
+  };
+  const onFilaUxDropOnCard = (e, overKey) => {
+    e.preventDefault(); e.stopPropagation();
+    const key = dragKey;
+    const position = filaUxDropInfo?.position || "before";
+    setDragKey(null); setFilaUxDropInfo(null);
+    if (!key || key === overKey) return;
+    if (!canWriteShared) return;
+    const nextPositions = positions[key]?.roadmapLane
+      ? { ...positions, [key]: { ...(positions[key] || {}), roadmapLane: null, startWeek: null } }
+      : positions;
+    const fullOrder = filaUxOrder.filter((k) => k !== key);
+    let insertAt = fullOrder.indexOf(overKey);
+    if (insertAt === -1) insertAt = fullOrder.length;
+    else if (position === "after") insertAt += 1;
+    fullOrder.splice(insertAt, 0, key);
+    const nextFilaProduto = filaProdutoOrder.filter((k) => k !== key);
+    setPositions(nextPositions);
+    setFilaUxOrder(fullOrder);
+    setFilaProdutoOrder(nextFilaProduto);
+    const nextPrio = prioOrder.filter((k) => k !== key);
+    setPrioOrder(nextPrio);
+    persist(nextPositions, customEpics, nextPrio, nextFilaProduto, fullOrder);
+  };
+  const onDropFilaUx = (e) => {
+    e.preventDefault();
+    if (dragKey && !filaUxOrder.includes(dragKey)) moveToFilaUx(dragKey);
     setDragKey(null);
   };
   const onDropCell = (e, product, weekIndex) => {
@@ -2131,24 +2207,47 @@ function RoadmapScreen() {
         </div>
       </div>
 
-      <div
-        onDragOver={(e) => e.preventDefault()} onDrop={onDropFila}
-        style={{ padding: "16px 24px", borderBottom: `1px solid ${T.border1}` }}
-      >
-        <p style={{ fontSize: 12.5, fontWeight: 600, color: T.ink0, marginBottom: 3, fontFamily: "'Plus Jakarta Sans', sans-serif" }}>Na fila (Produto e UX) <span style={{ color: T.ink2, fontWeight: 400, fontFamily: "'Inter Tight', sans-serif" }}>({filaItems.length})</span></p>
-        <p style={{ fontSize: 11.5, color: T.ink2, marginBottom: 10, fontFamily: "'Inter Tight', sans-serif" }}>Próximas prioridades, na ordem em que vamos trabalhar</p>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, minHeight: 40, borderRadius: 10, border: `1px dashed ${T.border2}`, padding: 8 }}>
-          {filaItems.length === 0 && <span style={{ fontSize: 11.5, color: T.ink2, fontFamily: "'Inter Tight', sans-serif" }}>Marque "Na fila" num card de priorização pra trazer pra aqui</span>}
-          {filaItems.map((e) => (
-            <PrioCard
-              key={e.key} epic={e} onDragStart={onDragStart} onOpen={() => setOpenKey(e.key)}
-              onAdd={e.project && ownsCard(e) ? addToGantt : undefined}
-              onDragOverCard={onFilaDragOverCard} onDropOnCard={onFilaDropOnCard}
-              onDragEndCard={() => setFilaDropInfo(null)}
-              dropIndicator={filaDropInfo?.key === e.key ? filaDropInfo.position : null}
-              canDrag={ownsCard(e)}
-            />
-          ))}
+      <div className="flex" style={{ borderBottom: `1px solid ${T.border1}` }}>
+        <div
+          onDragOver={(e) => e.preventDefault()} onDrop={onDropFilaProduto}
+          style={{ flex: 1, padding: "16px 24px", borderRight: `1px solid ${T.border1}` }}
+        >
+          <p style={{ fontSize: 12.5, fontWeight: 600, color: T.ink0, marginBottom: 3, fontFamily: "'Plus Jakarta Sans', sans-serif" }}>Na fila (Produto) <span style={{ color: T.ink2, fontWeight: 400, fontFamily: "'Inter Tight', sans-serif" }}>({filaProdutoItems.length})</span></p>
+          <p style={{ fontSize: 11.5, color: T.ink2, marginBottom: 10, fontFamily: "'Inter Tight', sans-serif" }}>Próximas prioridades de Produto, na ordem em que vamos trabalhar</p>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, minHeight: 40, borderRadius: 10, border: `1px dashed ${T.border2}`, padding: 8 }}>
+            {filaProdutoItems.length === 0 && <span style={{ fontSize: 11.5, color: T.ink2, fontFamily: "'Inter Tight', sans-serif" }}>Marque "Fila Produto" num card de priorização pra trazer pra aqui</span>}
+            {filaProdutoItems.map((e) => (
+              <PrioCard
+                key={e.key} epic={e} onDragStart={onDragStart} onOpen={() => setOpenKey(e.key)}
+                onAdd={e.project && ownsCard(e) ? addToGantt : undefined}
+                onDragOverCard={onFilaProdutoDragOverCard} onDropOnCard={onFilaProdutoDropOnCard}
+                onDragEndCard={() => setFilaProdutoDropInfo(null)}
+                dropIndicator={filaProdutoDropInfo?.key === e.key ? filaProdutoDropInfo.position : null}
+                canDrag={ownsCard(e)}
+              />
+            ))}
+          </div>
+        </div>
+
+        <div
+          onDragOver={(e) => e.preventDefault()} onDrop={onDropFilaUx}
+          style={{ flex: 1, padding: "16px 24px" }}
+        >
+          <p style={{ fontSize: 12.5, fontWeight: 600, color: T.ink0, marginBottom: 3, fontFamily: "'Plus Jakarta Sans', sans-serif" }}>Na fila (UX) <span style={{ color: T.ink2, fontWeight: 400, fontFamily: "'Inter Tight', sans-serif" }}>({filaUxItems.length})</span></p>
+          <p style={{ fontSize: 11.5, color: T.ink2, marginBottom: 10, fontFamily: "'Inter Tight', sans-serif" }}>Próximas prioridades de UX, na ordem em que vamos trabalhar</p>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, minHeight: 40, borderRadius: 10, border: `1px dashed ${T.border2}`, padding: 8 }}>
+            {filaUxItems.length === 0 && <span style={{ fontSize: 11.5, color: T.ink2, fontFamily: "'Inter Tight', sans-serif" }}>Marque "Fila UX" num card de priorização pra trazer pra aqui</span>}
+            {filaUxItems.map((e) => (
+              <PrioCard
+                key={e.key} epic={e} onDragStart={onDragStart} onOpen={() => setOpenKey(e.key)}
+                onAdd={e.project && ownsCard(e) ? addToGantt : undefined}
+                onDragOverCard={onFilaUxDragOverCard} onDropOnCard={onFilaUxDropOnCard}
+                onDragEndCard={() => setFilaUxDropInfo(null)}
+                dropIndicator={filaUxDropInfo?.key === e.key ? filaUxDropInfo.position : null}
+                canDrag={ownsCard(e)}
+              />
+            ))}
+          </div>
         </div>
       </div>
 
@@ -2172,7 +2271,8 @@ function RoadmapScreen() {
                   <PrioCard
                     key={e.key} epic={e} onDragStart={onDragStart} onOpen={() => setOpenKey(e.key)}
                     onAdd={e.project && ownsCard(e) ? addToGantt : undefined}
-                    onMoveToFila={ownsCard(e) ? moveToFila : undefined}
+                    onMoveToFilaProduto={ownsCard(e) ? moveToFilaProduto : undefined}
+                    onMoveToFilaUx={ownsCard(e) ? moveToFilaUx : undefined}
                     onDragOverCard={onPrioDragOverCard} onDropOnCard={onPrioDropOnCard}
                     onDragEndCard={() => setPrioDropInfo(null)}
                     dropIndicator={prioDropInfo?.key === e.key ? prioDropInfo.position : null}
