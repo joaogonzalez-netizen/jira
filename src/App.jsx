@@ -9,7 +9,10 @@ const TASKS_SEED_INITIAL = [{"key": "SELLER-254", "project": "STL Seller", "type
 
 const STAGES = ["Backlog", "Em design", "Em produto", "Análise técnica", "Pronta pra dev", "Em dev", "Em rollout", "Concluído"];
 const TASK_STAGES = STAGES.filter((s) => s !== "Em rollout");
-const EPIC_COLUMNS = ["Backlog", "Produto", "Em refinamento Técnico", "Pronto P/ DEV", "Em DEV", "Em rollout", "Done"];
+// Nomes literais do campo "Status" da planilha/Jira para épicos — batem 1:1 com
+// o que a planilha usa hoje. Faltava "Em design" aqui: qualquer épico nesse
+// status (ex.: IA-144) não caía em nenhuma coluna e sumia do board sem aviso.
+const EPIC_COLUMNS = ["Backlog", "Em design", "Produto", "Em refinamento Técnico", "Pronto P/ DEV", "Em DEV", "Em rollout", "Done"];
 const PRODUCTS = ["STLFLIX", "STL IA", "STL Seller", "STL Loja", "Backoffice", "STL Academy"];
 const LAYERS = ["Inovação", "Melhoria", "Sustentação", "Sem classificação"];
 const ACTIVE_STAGES = ["Em design", "Em produto", "Análise técnica", "Pronta pra dev", "Em dev", "Em rollout"];
