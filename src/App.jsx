@@ -343,6 +343,13 @@ function initials(name) {
   const p = name.trim().split(/\s+/);
   return (p[0]?.[0] || "") + (p[1]?.[0] || "");
 }
+// Primeiro nome + inicial do segundo — pro rótulo do eixo de categoria não
+// quebrar linha em nomes longos (ex.: "Caroline Araújo da Silva" → "Caroline A.").
+function shortName(name) {
+  if (!name) return name;
+  const p = name.trim().split(/\s+/);
+  return p.length > 1 ? `${p[0]} ${p[1][0]}.` : p[0];
+}
 function parseBRDate(str) {
   if (!str) return null;
   const datePart = str.trim().split(" ")[0];
@@ -1701,7 +1708,7 @@ function SemanalScreen() {
                 <BarChart data={data} layout="vertical" margin={{ left: 10 }}>
                   <CartesianGrid stroke={T.border2} horizontal={false} />
                   <XAxis type="number" tick={rcAxis} axisLine={{ stroke: T.border2 }} tickLine={false} allowDecimals={false} />
-                  <YAxis type="category" dataKey="name" tick={rcAxis} axisLine={{ stroke: T.border2 }} tickLine={false} width={100} />
+                  <YAxis type="category" dataKey="name" tickFormatter={shortName} tick={rcAxis} axisLine={{ stroke: T.border2 }} tickLine={false} width={80} interval={0} />
                   <Tooltip {...rcTooltip} formatter={(v) => [`${v} tarefas`, ""]} />
                   <Bar dataKey="count" radius={[3, 3, 3, 3]} maxBarSize={14}>
                     {data.map((_, i) => <Cell key={i} fill={i === 0 ? palette.highlightColor : palette.neutralBarColor} />)}
