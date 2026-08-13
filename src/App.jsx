@@ -1584,6 +1584,10 @@ function SemanalScreen() {
       .forEach((t) => { if (c[t.project] !== undefined) c[t.project] += 1; });
     return c;
   }, [weekTasksAll, tipoFilter]);
+  // Denominador único pro card "Total" e pro % dos cards de tipo e de produto —
+  // os dois totalizam o mesmo recorte (weekTasksAll), então compartilham a base.
+  const totalsGrandTotal = totals["Sustentação"] + totals["Melhoria"] + totals["Inovação"];
+  const pctOfTotal = (n) => (totalsGrandTotal ? Math.round((n / totalsGrandTotal) * 100) : 0);
 
   // Capacity por pessoa vem de 3 campos diferentes da issue (responsável,
   // desenvolvedor, quem testou) — cada um pode apontar pra alguém diferente.
@@ -1732,6 +1736,10 @@ function SemanalScreen() {
         )}
       </div>
       <div className="flex flex-wrap" style={{ gap: 10 }}>
+        <div style={{ flex: 1, minWidth: 140, borderRadius: 12, border: `1px solid ${T.border2}`, background: T.bg1, padding: 14 }}>
+          <span style={{ fontSize: 12, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>Total</span>
+          <p style={{ marginTop: 6, fontSize: 24, fontWeight: 700, color: T.ink0, fontFamily: "'Plus Jakarta Sans', sans-serif" }}>{totalsGrandTotal}</p>
+        </div>
         {["Sustentação", "Melhoria", "Inovação"].map((tipo) => {
           const style = TIPO_STYLE[tipo];
           const active = tipoFilter === tipo;
@@ -1743,7 +1751,9 @@ function SemanalScreen() {
               <span className="inline-flex items-center" style={{ gap: 6, fontSize: 12, color: style.text, fontFamily: "'Inter Tight', sans-serif" }}>
                 <span style={{ width: 7, height: 7, borderRadius: 999, background: style.dot, display: "inline-block" }} />{tipo}
               </span>
-              <p style={{ marginTop: 6, fontSize: 24, fontWeight: 700, color: T.ink0, fontFamily: "'Plus Jakarta Sans', sans-serif" }}>{totals[tipo]}</p>
+              <p style={{ marginTop: 6, fontSize: 24, fontWeight: 700, color: T.ink0, fontFamily: "'Plus Jakarta Sans', sans-serif" }}>
+                {totals[tipo]} <span style={{ fontSize: 12, fontWeight: 500, color: T.ink2 }}>({pctOfTotal(totals[tipo])}%)</span>
+              </p>
             </div>
           );
         })}
@@ -1761,7 +1771,9 @@ function SemanalScreen() {
               <span className="inline-flex items-center" style={{ gap: 6, fontSize: 11, color: style.text, fontFamily: "'Inter Tight', sans-serif" }}>
                 <span style={{ width: 6, height: 6, borderRadius: 999, background: style.primary, display: "inline-block" }} />{p}
               </span>
-              <p style={{ marginTop: 4, fontSize: 20, fontWeight: 700, color: T.ink0, fontFamily: "'Plus Jakarta Sans', sans-serif" }}>{totalsByProduct[p]}</p>
+              <p style={{ marginTop: 4, fontSize: 20, fontWeight: 700, color: T.ink0, fontFamily: "'Plus Jakarta Sans', sans-serif" }}>
+                {totalsByProduct[p]} <span style={{ fontSize: 11, fontWeight: 500, color: T.ink2 }}>({pctOfTotal(totalsByProduct[p])}%)</span>
+              </p>
             </div>
           );
         })}
