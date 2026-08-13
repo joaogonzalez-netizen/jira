@@ -1488,8 +1488,10 @@ function SemanalDropGrid({ tasks, emptyLabel, onOpen, onDragStart, onDrop, accen
 }
 
 function SemanalScreen() {
-  const { T, TIPO_STYLE, PRODUCT_STYLE } = useTheme();
+  const { T, TIPO_STYLE, PRODUCT_STYLE, palette } = useTheme();
   const { tasks: TASKS_SEED } = useData();
+  const rcAxis = { fill: T.ink1, fontSize: 11.5, fontFamily: "'Inter Tight', sans-serif" };
+  const rcTooltip = { contentStyle: { background: T.bg1, border: `1px solid ${T.border2}`, borderRadius: 8, fontSize: 12, fontFamily: "'Inter Tight', sans-serif" }, labelStyle: { color: T.ink0 }, itemStyle: { color: T.ink0 } };
   // Os destaques da semana são a leitura do time sobre a semana: escrita do super.
   const { canWriteShared } = useAuth();
   const [openTask, setOpenTask] = useState(null);
@@ -1575,16 +1577,18 @@ function SemanalScreen() {
     return c;
   }, [weekTasksAll, tipoFilter]);
 
-  const totalsByPerson = useMemo(() => {
+  // Capacity por pessoa vem de 3 campos diferentes da issue (responsável,
+  // desenvolvedor, quem testou) — cada um pode apontar pra alguém diferente.
+  const capacityByField = useCallback((field) => {
     const c = {};
     weekTasksAll
       .filter((t) => (!tipoFilter || layerOf(t) === tipoFilter) && (!produtoFilter || t.project === produtoFilter))
-      .forEach((t) => {
-        const name = t.assignee || "Sem responsável";
-        c[name] = (c[name] || 0) + 1;
-      });
-    return Object.entries(c).sort((a, b) => b[1] - a[1]);
+      .forEach((t) => { if (t[field]) c[t[field]] = (c[t[field]] || 0) + 1; });
+    return Object.entries(c).sort((a, b) => b[1] - a[1]).map(([name, count]) => ({ name, count }));
   }, [weekTasksAll, tipoFilter, produtoFilter]);
+  const totalsByAssignee = useMemo(() => capacityByField("assignee"), [capacityByField]);
+  const totalsByDeveloper = useMemo(() => capacityByField("developer"), [capacityByField]);
+  const totalsByTester = useMemo(() => capacityByField("tester"), [capacityByField]);
 
   const onDragStart = (e, key) => { setDragKey(key); e.dataTransfer.effectAllowed = "move"; };
   const setHighlighted = (key, isHighlighted) => {
@@ -1684,14 +1688,27 @@ function SemanalScreen() {
       </div>
 
       <p style={{ marginTop: 18, marginBottom: 8, fontSize: 12, fontWeight: 600, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>Capacity — tarefas por pessoa</p>
-      <div className="pp-scroll flex" style={{ gap: 6, overflowX: "auto", paddingBottom: 2 }}>
-        {totalsByPerson.map(([name, count]) => (
-          <div key={name} className="inline-flex items-center" style={{ gap: 6, flexShrink: 0, borderRadius: 999, border: `1px solid ${T.border2}`, background: T.bg1, padding: "4px 10px 4px 4px" }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 18, height: 18, borderRadius: 999, background: T.bg2, color: T.ink0, fontSize: 9, fontWeight: 700, textTransform: "uppercase", border: `1px solid ${T.border2}`, fontFamily: "'Inter Tight', sans-serif", flexShrink: 0 }}>
-              {initials(name === "Sem responsável" ? null : name)}
+      <div className="flex flex-wrap" style={{ gap: 16 }}>
+        {[
+          { title: "Responsável", data: totalsByAssignee },
+          { title: "Desenvolvedor", data: totalsByDeveloper },
+          { title: "Quem testou", data: totalsByTester },
+        ].map(({ title, data }) => (
+          <div key={title} style={{ flex: "1 1 260px", minWidth: 240 }}>
+            <p style={{ fontSize: 11, fontWeight: 600, color: T.ink1, marginBottom: 6, fontFamily: "'Inter Tight', sans-serif" }}>{title}</p>
+            <div style={{ height: 220 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={data} layout="vertical" margin={{ left: 10 }}>
+                  <CartesianGrid stroke={T.border2} horizontal={false} />
+                  <XAxis type="number" tick={rcAxis} axisLine={{ stroke: T.border2 }} tickLine={false} allowDecimals={false} />
+                  <YAxis type="category" dataKey="name" tick={rcAxis} axisLine={{ stroke: T.border2 }} tickLine={false} width={100} />
+                  <Tooltip {...rcTooltip} formatter={(v) => [`${v} tarefas`, ""]} />
+                  <Bar dataKey="count" radius={[3, 3, 3, 3]} maxBarSize={14}>
+                    {data.map((_, i) => <Cell key={i} fill={i === 0 ? palette.highlightColor : palette.neutralBarColor} />)}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
             </div>
-            <span style={{ fontSize: 11.5, color: T.ink0, fontFamily: "'Inter Tight', sans-serif", whiteSpace: "nowrap" }}>{name}</span>
-            <span style={{ fontSize: 11, fontWeight: 700, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>{count}</span>
           </div>
         ))}
       </div>
