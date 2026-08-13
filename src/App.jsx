@@ -1593,6 +1593,7 @@ function SemanalScreen() {
       .forEach((t) => { if (t[field]) c[t[field]] = (c[t[field]] || 0) + 1; });
     return Object.entries(c).sort((a, b) => b[1] - a[1]).map(([name, count]) => ({ name, count }));
   }, [weekTasksAll, tipoFilter, produtoFilter]);
+  const totalsByReporter = useMemo(() => capacityByField("reporter"), [capacityByField]);
   const totalsByAssignee = useMemo(() => capacityByField("assignee"), [capacityByField]);
   const totalsByDeveloper = useMemo(() => capacityByField("developer"), [capacityByField]);
   const totalsByTester = useMemo(() => capacityByField("tester"), [capacityByField]);
@@ -1695,30 +1696,31 @@ function SemanalScreen() {
       </div>
 
       <p style={{ marginTop: 18, marginBottom: 8, fontSize: 12, fontWeight: 600, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>Capacity — tarefas por pessoa</p>
-      <div className="flex flex-wrap" style={{ gap: 16 }}>
-        {[
-          { title: "Responsável", data: totalsByAssignee },
-          { title: "Desenvolvedor", data: totalsByDeveloper },
-          { title: "Quem testou", data: totalsByTester },
-        ].map(({ title, data }) => (
-          <div key={title} style={{ flex: "1 1 260px", minWidth: 240 }}>
-            <p style={{ fontSize: 11, fontWeight: 600, color: T.ink1, marginBottom: 6, fontFamily: "'Inter Tight', sans-serif" }}>{title}</p>
-            <div style={{ height: 220 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={data} layout="vertical" margin={{ left: 10 }}>
-                  <CartesianGrid stroke={T.border2} horizontal={false} />
-                  <XAxis type="number" tick={rcAxis} axisLine={{ stroke: T.border2 }} tickLine={false} allowDecimals={false} />
-                  <YAxis type="category" dataKey="name" tickFormatter={shortName} tick={rcAxis} axisLine={{ stroke: T.border2 }} tickLine={false} width={80} interval={0} />
-                  <Tooltip {...rcTooltip} formatter={(v) => [`${v} tarefas`, ""]} />
-                  <Bar dataKey="count" radius={[3, 3, 3, 3]} maxBarSize={14}>
-                    {data.map((_, i) => <Cell key={i} fill={i === 0 ? palette.highlightColor : palette.neutralBarColor} />)}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
+      {[
+        [{ title: "Reporter", data: totalsByReporter }, { title: "Responsável", data: totalsByAssignee }],
+        [{ title: "Desenvolvedor", data: totalsByDeveloper }, { title: "Quem testou", data: totalsByTester }],
+      ].map((row, i) => (
+        <div key={i} className="flex flex-wrap" style={{ gap: 16, marginTop: i > 0 ? 16 : 0 }}>
+          {row.map(({ title, data }) => (
+            <div key={title} style={{ flex: "1 1 45%", minWidth: 260 }}>
+              <p style={{ fontSize: 11, fontWeight: 600, color: T.ink1, marginBottom: 6, fontFamily: "'Inter Tight', sans-serif" }}>{title}</p>
+              <div style={{ height: 220 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={data} layout="vertical" margin={{ left: 10 }}>
+                    <CartesianGrid stroke={T.border2} horizontal={false} />
+                    <XAxis type="number" tick={rcAxis} axisLine={{ stroke: T.border2 }} tickLine={false} allowDecimals={false} />
+                    <YAxis type="category" dataKey="name" tickFormatter={shortName} tick={rcAxis} axisLine={{ stroke: T.border2 }} tickLine={false} width={80} interval={0} />
+                    <Tooltip {...rcTooltip} formatter={(v) => [`${v} tarefas`, ""]} />
+                    <Bar dataKey="count" radius={[3, 3, 3, 3]} maxBarSize={14}>
+                      {data.map((_, idx) => <Cell key={idx} fill={idx === 0 ? palette.highlightColor : palette.neutralBarColor} />)}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
             </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      ))}
 
       <div style={{ marginTop: 24, marginBottom: 10 }} className="flex items-center justify-between">
         <p style={{ fontSize: 14, fontWeight: 700, color: T.ink0, fontFamily: "'Plus Jakarta Sans', sans-serif" }}>Destaques</p>
