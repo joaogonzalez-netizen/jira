@@ -80,6 +80,14 @@ function jiraUrl(key) { return `${JIRA_BASE_URL}/browse/${key}`; }
 const SHEET_SYNC_URL = import.meta.env.VITE_SHEET_SYNC_URL || "";
 const DATA_OVERRIDE_KEY = "jira-data-override-v1";
 
+// `resumo` é escrito à mão no seed (ver commit efd899f) e não vem da planilha
+// nem do sync — sem isso, qualquer dado carregado do storage (override salvo
+// antes do campo existir, ou vindo de um sync novo) apaga o resumo em produção.
+const RESUMO_BY_KEY = Object.fromEntries(EPICS_SEED_INITIAL.filter((e) => e.resumo).map((e) => [e.key, e.resumo]));
+function withResumoFallback(epicsList) {
+  return epicsList.map((e) => (e.resumo ? e : (RESUMO_BY_KEY[e.key] ? { ...e, resumo: RESUMO_BY_KEY[e.key] } : e)));
+}
+
 const STAGE_MAP_JS = {
   "Backlog": "Backlog", "Candidato Próximo Trimestre": "Backlog",
   "Em design": "Em design", "Design ready": "Em design",
@@ -147,7 +155,7 @@ function DataProvider({ children }) {
         const res = await storage.get(DATA_OVERRIDE_KEY, true);
         if (res && res.value) {
           const saved = JSON.parse(res.value);
-          if (saved.epics) setEpics(saved.epics);
+          if (saved.epics) setEpics(withResumoFallback(saved.epics));
           if (saved.tasks) setTasks(saved.tasks);
           if (saved.syncedAt) setLastSync(saved.syncedAt);
         }
@@ -287,7 +295,7 @@ function DataProvider({ children }) {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const rows = await res.json();
       const transformed = rows.map(transformSheetRow).filter(Boolean);
-      const nextEpics = transformed.filter((r) => r.epic);
+      const nextEpics = withResumoFallback(transformed.filter((r) => r.epic));
       const nextTasks = transformed.filter((r) => !r.epic);
       const syncedAt = new Date().toISOString();
       setEpics(nextEpics);
