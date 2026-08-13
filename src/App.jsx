@@ -1496,7 +1496,7 @@ function SemanalDropGrid({ tasks, emptyLabel, onOpen, onDragStart, onDrop, accen
 
 function SemanalScreen() {
   const { T, TIPO_STYLE, PRODUCT_STYLE, palette } = useTheme();
-  const { tasks: TASKS_SEED } = useData();
+  const { tasks: TASKS_SEED, epics } = useData();
   const rcAxis = { fill: T.ink1, fontSize: 11.5, fontFamily: "'Inter Tight', sans-serif" };
   const rcTooltip = { contentStyle: { background: T.bg1, border: `1px solid ${T.border2}`, borderRadius: 8, fontSize: 12, fontFamily: "'Inter Tight', sans-serif" }, labelStyle: { color: T.ink0 }, itemStyle: { color: T.ink0 } };
   // Os destaques da semana são a leitura do time sobre a semana: escrita do super.
@@ -1598,6 +1598,58 @@ function SemanalScreen() {
   const totalsByDeveloper = useMemo(() => capacityByField("developer"), [capacityByField]);
   const totalsByTester = useMemo(() => capacityByField("tester"), [capacityByField]);
 
+  // Panorama macro: o mesmo recorte de tipo/produto do resto da tela, só que
+  // fatiado pelas 3 perguntas que importam pro time — o que saiu, o que
+  // atrapalhou (Sustentação, trabalho não planejado) e o que está rodando agora.
+  const weekTasksFiltered = useMemo(
+    () => weekTasksAll.filter((t) => (!tipoFilter || layerOf(t) === tipoFilter) && (!produtoFilter || t.project === produtoFilter)),
+    [weekTasksAll, tipoFilter, produtoFilter]
+  );
+  // Agrupa por rótulo (tema ou épico) e garante que Seller apareça mesmo
+  // quando não é o grupo mais numeroso — Seller é o produto que João mais
+  // acompanha de perto, então o panorama não pode deixá-lo de fora por acaso.
+  const buildHighlights = useCallback((tasks, groupFn, limit = 3) => {
+    const groups = {};
+    tasks.forEach((t) => {
+      const label = groupFn(t);
+      if (!label) return;
+      if (!groups[label]) groups[label] = { label, count: 0, hasSeller: false };
+      groups[label].count += 1;
+      if (t.project === "STL Seller") groups[label].hasSeller = true;
+    });
+    const all = Object.values(groups).sort((a, b) => b.count - a.count);
+    const top = all.slice(0, limit);
+    if (top.length && !top.some((g) => g.hasSeller)) {
+      const sellerTop = all.find((g) => g.hasSeller);
+      if (sellerTop) top[top.length - 1] = sellerTop;
+    }
+    return top.map((g) => g.label);
+  }, []);
+
+  const insights = useMemo(() => {
+    const done = weekTasksFiltered.filter(isRecentlyDone);
+    const sustentacao = weekTasksFiltered.filter((t) => layerOf(t) === "Sustentação");
+    const emDev = weekTasksFiltered.filter((t) => t.stage === "Em dev");
+    // Sustentação (Intercom, incidentes, pedidos manuais) costuma repetir o
+    // mesmo título literal pra cada caso — o título sem o prefixo "[Tag]" já
+    // nomeia o motivo. "Concluído" cai pro mesmo critério quando o item não
+    // tem épico (ex.: os mesmos pedidos avulsos de Sustentação).
+    const themeOf = (t) => (t.summary || "").replace(/^\[[^\]]+\]\s*/, "").trim() || "Sem título";
+    const epicOf = (t) => (t.parent ? epicLabel(epics, t.parent) : null);
+    return {
+      done, sustentacao, emDev,
+      doneHighlights: buildHighlights(done, (t) => epicOf(t) || themeOf(t)),
+      sustentacaoHighlights: buildHighlights(sustentacao, themeOf),
+      emDevHighlights: buildHighlights(emDev, epicOf),
+    };
+  }, [weekTasksFiltered, isRecentlyDone, epics, buildHighlights]);
+
+  const joinNatural = (labels) => {
+    if (labels.length === 0) return "";
+    if (labels.length === 1) return labels[0];
+    return `${labels.slice(0, -1).join(", ")} e ${labels[labels.length - 1]}`;
+  };
+
   const onDragStart = (e, key) => { setDragKey(key); e.dataTransfer.effectAllowed = "move"; };
   const setHighlighted = (key, isHighlighted) => {
     if (!canWriteShared) return;
@@ -1649,6 +1701,25 @@ function SemanalScreen() {
             </div>
           )}
         </div>
+      </div>
+
+      <p style={{ marginTop: 20, marginBottom: 8, fontSize: 14, fontWeight: 700, color: T.ink0, fontFamily: "'Plus Jakarta Sans', sans-serif" }}>Panorama da semana</p>
+      <div style={{ borderRadius: 10, border: `1px solid ${palette.insightBorder}`, background: palette.insightBg, padding: "12px 16px", fontSize: 13, lineHeight: 1.6, color: palette.insightText, fontFamily: "'Inter Tight', sans-serif" }}>
+        <p>
+          {insights.doneHighlights.length > 0
+            ? <>O time concluiu tarefas como {joinNatural(insights.doneHighlights)}.</>
+            : "Nada concluído nesse recorte."}
+        </p>
+        <p style={{ marginTop: 8 }}>
+          {insights.sustentacaoHighlights.length > 0
+            ? <>Sustentação atrapalhou o planejado com bastante {joinNatural(insights.sustentacaoHighlights)}.</>
+            : "Sem Sustentação relevante nesse recorte."}
+        </p>
+        <p style={{ marginTop: 8 }}>
+          {insights.emDevHighlights.length > 0
+            ? <>Em desenvolvimento, o foco está no épico {joinNatural(insights.emDevHighlights)}.</>
+            : "Nada em desenvolvimento nesse recorte."}
+        </p>
       </div>
 
       <div style={{ marginTop: 20, marginBottom: 10 }} className="flex items-center justify-between">
