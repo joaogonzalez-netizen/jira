@@ -17,6 +17,24 @@ const PRODUCTS = ["STLFLIX", "STL IA", "STL Seller", "STL Loja", "Backoffice", "
 const LAYERS = ["Inovação", "Melhoria", "Sustentação", "Sem classificação"];
 const ACTIVE_STAGES = ["Em design", "Em produto", "Análise técnica", "Pronta pra dev", "Em dev", "Em rollout"];
 const NOW_DATE = (() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; })();
+function todayMidnight() { const d = new Date(); d.setHours(0, 0, 0, 0); return d; }
+// NOW_DATE só é calculado uma vez, quando o bundle carrega — numa aba deixada
+// aberta de um dia pro outro ele fica parado no dia antigo (é o que fazia a
+// linha pontilhada do Gantt não acompanhar o dia atual em produção). Esse hook
+// reavalia a data e só causa um re-render quando o dia realmente muda.
+function useNow() {
+  const [now, setNow] = useState(todayMidnight);
+  useEffect(() => {
+    const tick = () => setNow((prev) => {
+      const next = todayMidnight();
+      return next.getTime() === prev.getTime() ? prev : next;
+    });
+    const interval = setInterval(tick, 60000);
+    window.addEventListener("focus", tick);
+    return () => { clearInterval(interval); window.removeEventListener("focus", tick); };
+  }, []);
+  return now;
+}
 
 /* =====================================================================
    TOKENS — Design Tokens STLFLIX v5.3, modo dark e modo light
@@ -2022,6 +2040,9 @@ function EpicBar({ epic, onDragStart, onOpen, onResize, onRemove, canEdit }) {
 
 function RoadmapScreen() {
   const { T, PRODUCT_STYLE } = useTheme();
+  // Sombra o NOW_DATE fixo do módulo por um valor vivo, senão a linha de "hoje"
+  // (e as próprias semanas do Gantt) travam no dia em que a aba foi aberta.
+  const NOW_DATE = useNow();
   const {
     epics: EPICS_SEED,
     positions, setPositions, customEpics, setCustomEpics, prioOrder, setPrioOrder,
@@ -2051,7 +2072,7 @@ function RoadmapScreen() {
   const weeks = useMemo(() => {
     const start = addDays(startOfWeek(NOW_DATE), -PAST_WEEKS * 7);
     return Array.from({ length: weekCount + PAST_WEEKS }, (_, i) => ({ index: i - PAST_WEEKS, start: addDays(start, i * 7) }));
-  }, [weekCount]);
+  }, [weekCount, NOW_DATE]);
   const currentWeekIndex = 0;
   const colOf = (index) => index + PAST_WEEKS + 2;
 
