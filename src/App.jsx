@@ -2071,7 +2071,7 @@ function RoadmapScreen() {
 
   const PAST_WEEKS = 4; // ~1 mês antes de hoje, sempre visível pra trás
   // Marcos fixos (linha vermelha pontilhada) que não acompanham o dia atual.
-  const GANTT_MARKERS = useMemo(() => [new Date(2026, 9, 22), new Date(2026, 7, 1)], []);
+  const GANTT_MARKERS = useMemo(() => [new Date(2026, 9, 22), new Date(2026, 8, 1)], []);
 
   const weeks = useMemo(() => {
     const start = addDays(startOfWeek(NOW_DATE), -PAST_WEEKS * 7);
