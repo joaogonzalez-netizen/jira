@@ -2070,6 +2070,7 @@ function RoadmapScreen() {
   const byKey = useMemo(() => Object.fromEntries(allEpics.map((e) => [e.key, e])), [allEpics]);
 
   const PAST_WEEKS = 4; // ~1 mês antes de hoje, sempre visível pra trás
+  const GANTT_DEADLINE = useMemo(() => new Date(2026, 9, 22), []); // linha vermelha fixa em 22/10
 
   const weeks = useMemo(() => {
     const start = addDays(startOfWeek(NOW_DATE), -PAST_WEEKS * 7);
@@ -2338,6 +2339,13 @@ function RoadmapScreen() {
               position: "absolute", top: 0, bottom: 0,
               left: `calc(160px + (${PAST_WEEKS + Math.min(daysBetween(startOfWeek(NOW_DATE), NOW_DATE), 4) / 5}) * (100% - 160px) / ${weekCount + PAST_WEEKS})`,
               borderLeft: "1.5px dashed #5166e6", opacity: 0.7, zIndex: 2, pointerEvents: "none",
+            }}
+          />
+          <div
+            style={{
+              position: "absolute", top: 0, bottom: 0,
+              left: `calc(160px + (${PAST_WEEKS + daysBetween(startOfWeek(NOW_DATE), startOfWeek(GANTT_DEADLINE)) / 7 + Math.min(daysBetween(startOfWeek(GANTT_DEADLINE), GANTT_DEADLINE), 4) / 5}) * (100% - 160px) / ${weekCount + PAST_WEEKS})`,
+              borderLeft: "1.5px dashed #e5484d", opacity: 0.8, zIndex: 2, pointerEvents: "none",
             }}
           />
         </div>
