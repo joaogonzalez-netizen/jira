@@ -510,7 +510,7 @@ function EpicDrawer({ epic, onClose, weeks, onSave, onDelete, canEdit }) {
               <>
                 <p style={{ marginTop: 16, marginBottom: 6, fontSize: 12, fontWeight: 500, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>Semana inicial</p>
                 <select value={startWeek} onChange={(e) => setStartWeek(Number(e.target.value))} disabled={!canEdit} style={{ width: "100%", borderRadius: 8, border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink0, fontSize: 13, padding: "7px 8px", fontFamily: "'Inter Tight', sans-serif" }}>
-                  {weeks.map((w) => <option key={w.index} value={w.index}>Semana de {fmtWeek(w.start)}</option>)}
+                  {weeks.map((w) => <option key={w.index} value={w.index}>Semana de {fmtWeekRange(w.start)}</option>)}
                 </select>
 
                 <p style={{ marginTop: 16, marginBottom: 6, fontSize: 12, fontWeight: 500, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>Duração (semanas)</p>
@@ -1914,6 +1914,10 @@ function addDays(d, n) { const r = new Date(d); r.setDate(r.getDate() + n); retu
 function fmtWeek(d) {
   return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "short" }).replace(".", "");
 }
+// Semana útil: sempre seg-sex (start já é uma segunda-feira, vinda de startOfWeek).
+function fmtWeekRange(start) {
+  return `${fmtWeek(start)} a ${fmtWeek(addDays(start, 4))}`;
+}
 function layoutLane(epics) {
   const sorted = [...epics].sort((a, b) => a.startWeek - b.startWeek);
   const rowEnds = [];
@@ -2303,7 +2307,7 @@ function RoadmapScreen() {
           <div style={{ gridColumn: 1, gridRow: 1 }} />
           {weeks.map((w) => (
             <div key={w.index} style={{ gridColumn: colOf(w.index), gridRow: 1, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: w.index === currentWeekIndex ? 700 : 500, color: w.index === currentWeekIndex ? "#5166e6" : T.ink1, borderBottom: `1px solid ${T.border2}`, fontFamily: "'Inter Tight', sans-serif" }}>
-              {fmtWeek(w.start)}
+              {fmtWeekRange(w.start)}
             </div>
           ))}
 
@@ -2334,7 +2338,7 @@ function RoadmapScreen() {
           <div
             style={{
               position: "absolute", top: 0, bottom: 0,
-              left: `calc(160px + (${PAST_WEEKS + daysBetween(startOfWeek(NOW_DATE), NOW_DATE) / 7}) * (100% - 160px) / ${weekCount + PAST_WEEKS})`,
+              left: `calc(160px + (${PAST_WEEKS + Math.min(daysBetween(startOfWeek(NOW_DATE), NOW_DATE), 4) / 5}) * (100% - 160px) / ${weekCount + PAST_WEEKS})`,
               borderLeft: "1.5px dashed #5166e6", opacity: 0.7, zIndex: 2, pointerEvents: "none",
             }}
           />
