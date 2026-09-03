@@ -96,9 +96,6 @@ const SHEET_ID = "1HteBrBkY4XCkmXGMTJIuA2EXAraZsDKw_xjZu0xoUgw";
 const SHEET_GID = "0";
 const JIRA_BASE_URL = "https://joaogonzalezstlflix.atlassian.net";
 function jiraUrl(key) { return `${JIRA_BASE_URL}/browse/${key}`; }
-// URL do deployment do Apps Script (termina em /exec). Veja apps-script/sync.gs.js.
-// Fica em .env.local (fora do git) porque dá acesso de leitura à planilha pra quem tiver o link.
-const SHEET_SYNC_URL = import.meta.env.VITE_SHEET_SYNC_URL || "";
 const DATA_OVERRIDE_KEY = "jira-data-override-v1";
 
 // `resumo` é escrito à mão no seed (ver commit efd899f) e não vem da planilha
@@ -170,6 +167,7 @@ function DataProvider({ children }) {
   const [tasks, setTasks] = useState(TASKS_SEED_INITIAL);
   const [lastSync, setLastSync] = useState(null);
   const [syncStatus, setSyncStatus] = useState("idle"); // idle | loading | error
+  const [syncError, setSyncError] = useState(null);
 
   useEffect(() => {
     (async () => {
@@ -313,18 +311,23 @@ function DataProvider({ children }) {
     // O botão já é só do super; o gate aqui é o que vale — a função vive no
     // contexto e qualquer tela nova poderia chamá-la.
     if (!canWriteShared) return { ok: false, reason: "forbidden" };
-    if (!SHEET_SYNC_URL) {
-      setSyncStatus("error");
-      return { ok: false, reason: "no-url" };
-    }
     setSyncStatus("loading");
+    setSyncError(null);
     try {
-      const res = await fetch(SHEET_SYNC_URL);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const res = await fetch("/api/sheet/sync");
       const rows = await res.json();
+      if (!res.ok) throw new Error(rows?.message || `HTTP ${res.status}`);
       const transformed = rows.map(transformSheetRow).filter(Boolean);
       const nextEpics = withResumoFallback(transformed.filter((r) => r.epic));
       const nextTasks = transformed.filter((r) => !r.epic);
+      // A planilha sempre teve dezenas de épicos; se a resposta vier com linhas
+      // mas nenhuma reconhecida como épico, é sinal de dado incompleto ou de
+      // desalinhamento de colunas — melhor falhar alto do que esvaziar o
+      // Roadmap silenciosamente (posições agendadas ficam órfãs sem épico pra
+      // exibir, mesmo continuando salvas no navegador).
+      if (rows.length > 0 && nextEpics.length === 0) {
+        throw new Error("A planilha voltou sem nenhum épico — mantendo os dados anteriores.");
+      }
       const syncedAt = new Date().toISOString();
       setEpics(nextEpics);
       setTasks(nextTasks);
@@ -334,17 +337,18 @@ function DataProvider({ children }) {
       return { ok: true };
     } catch (e) {
       setSyncStatus("error");
+      setSyncError(e.message);
       return { ok: false, reason: e.message };
     }
   }, [canWriteShared]);
 
   const value = useMemo(() => ({
-    epics, tasks, setEpics, setTasks, syncFromSheet, lastSync, syncStatus,
+    epics, tasks, setEpics, setTasks, syncFromSheet, lastSync, syncStatus, syncError,
     positions, setPositions, customEpics, setCustomEpics, prioOrder, setPrioOrder,
     filaProdutoOrder, setFilaProdutoOrder, filaUxOrder, setFilaUxOrder,
     roadmapSaving, persistRoadmap, updatePosition, addEpic, deleteEpic, saveDrawer, roadmapWeeks,
   }), [
-    epics, tasks, syncFromSheet, lastSync, syncStatus,
+    epics, tasks, syncFromSheet, lastSync, syncStatus, syncError,
     positions, customEpics, prioOrder, filaProdutoOrder, filaUxOrder,
     roadmapSaving, persistRoadmap, updatePosition, addEpic, deleteEpic, saveDrawer, roadmapWeeks,
   ]);
@@ -2523,7 +2527,7 @@ function AuthGate({ children }) {
 
 function AppShell() {
   const { T, theme, toggleTheme } = useTheme();
-  const { syncFromSheet, lastSync, syncStatus } = useData();
+  const { syncFromSheet, lastSync, syncStatus, syncError } = useData();
   const { user, role, logout, canWriteShared } = useAuth();
   const [menu, setMenu] = useState("roadmap");
 
@@ -2560,8 +2564,8 @@ function AppShell() {
         </div>
         <div className="flex items-center" style={{ gap: 8 }}>
           {syncStatus === "error" && (
-            <span style={{ fontSize: 11, color: "#e08585", fontFamily: "'Inter Tight', sans-serif" }}>
-              {SHEET_SYNC_URL ? "Falha ao atualizar" : "Sincronização não configurada"}
+            <span style={{ fontSize: 11, color: "#e08585", fontFamily: "'Inter Tight', sans-serif" }} title={syncError || ""}>
+              {syncError || "Falha ao atualizar"}
             </span>
           )}
           {lastSync && syncStatus !== "error" && (
