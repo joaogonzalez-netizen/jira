@@ -2074,6 +2074,7 @@ function RoadmapScreen() {
   const byKey = useMemo(() => Object.fromEntries(allEpics.map((e) => [e.key, e])), [allEpics]);
 
   const PAST_WEEKS = 4; // ~1 mês antes de hoje, sempre visível pra trás
+  const WEEK_COL_PX = 150; // largura mínima de cada coluna de semana, pra caber mais texto na barra do épico
   // Marcos fixos (linha vermelha pontilhada) que não acompanham o dia atual.
   const GANTT_MARKERS = useMemo(() => [new Date(2026, 9, 22), new Date(2026, 8, 1)], []);
 
@@ -2086,7 +2087,7 @@ function RoadmapScreen() {
 
   const scrollRef = useRef(null);
   useEffect(() => {
-    if (scrollRef.current) scrollRef.current.scrollLeft = PAST_WEEKS * 84;
+    if (scrollRef.current) scrollRef.current.scrollLeft = PAST_WEEKS * WEEK_COL_PX;
   }, []);
 
   const enriched = useMemo(() => allEpics.map((e) => ({ ...e, ...(positions[e.key] || { roadmapLane: null, startWeek: null, durationWeeks: 2 }) })), [allEpics, positions]);
@@ -2307,7 +2308,7 @@ function RoadmapScreen() {
       </div>
 
       <div ref={scrollRef} className="pp-scroll" style={{ overflow: "auto", padding: "16px 24px", borderBottom: `1px solid ${T.border1}` }}>
-        <div style={{ position: "relative", display: "grid", gridTemplateColumns: `160px repeat(${weekCount + PAST_WEEKS}, minmax(84px, 1fr))`, gridTemplateRows: `32px repeat(${totalRows - 1}, 32px)`, minWidth: 160 + (weekCount + PAST_WEEKS) * 84 }}>
+        <div style={{ position: "relative", display: "grid", gridTemplateColumns: `160px repeat(${weekCount + PAST_WEEKS}, minmax(${WEEK_COL_PX}px, 1fr))`, gridTemplateRows: `32px repeat(${totalRows - 1}, 32px)`, minWidth: 160 + (weekCount + PAST_WEEKS) * WEEK_COL_PX }}>
           <div style={{ gridColumn: 1, gridRow: 1 }} />
           {weeks.map((w) => (
             <div key={w.index} style={{ gridColumn: colOf(w.index), gridRow: 1, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: w.index === currentWeekIndex ? 700 : 500, color: w.index === currentWeekIndex ? "#5166e6" : T.ink1, borderBottom: `1px solid ${T.border2}`, fontFamily: "'Inter Tight', sans-serif" }}>
