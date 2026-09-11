@@ -14,33 +14,43 @@
  * de `auth-core.js` — porque aqui, ao contrário do sync da planilha, existe
  * escrita real: o gate não pode viver só no cliente.
  *
- * Usa `@upstash/redis` (e não `@vercel/kv`, descontinuado) contra a mesma API
- * REST do KV/Redis conectado ao projeto — `KV_REST_API_URL`/`KV_REST_API_TOKEN`
- * são o par de variáveis que a integração da Vercel injeta de qualquer forma.
+ * Usa `redis` (node-redis v4), conectando direto por `REDIS_URL` — a
+ * variável que a integração "Redis" da Vercel (marketplace) injeta no
+ * projeto. O cliente é criado uma vez por cold start (`loadConfig` roda no
+ * escopo do módulo, não por request) e a conexão é aberta de forma
+ * preguiçosa e só uma vez, reaproveitada entre invocações warm.
  */
-import { Redis } from "@upstash/redis";
+import { createClient } from "redis";
 import { loadConfig as loadAuthConfig, readCookie, resolveSession, AUTH_COOKIE } from "./auth-core.js";
 
 const KV_KEY = "jira:initiatives";
 
 export function loadConfig(env) {
-  const url = String(env.KV_REST_API_URL || "");
-  const token = String(env.KV_REST_API_TOKEN || "");
+  const url = String(env.REDIS_URL || "");
   const missing = [];
-  if (!url) missing.push("KV_REST_API_URL");
-  if (!token) missing.push("KV_REST_API_TOKEN");
+  if (!url) missing.push("REDIS_URL");
   if (missing.length) return { missing };
 
   const authConfig = loadAuthConfig(env);
-  return { missing: [], kv: new Redis({ url, token }), authConfig };
+  const client = createClient({ url });
+  client.on("error", (err) => console.error("[initiatives] erro de conexão com o Redis:", err));
+  return { missing: [], kv: client, kvReady: null, authConfig };
 }
 
 export function configError(config) {
   if (!config.missing.length) return null;
   return {
     status: 503,
-    body: { message: `Iniciativas não configuradas: defina ${config.missing.join(" e ")} (Vercel KV)` },
+    body: { message: `Iniciativas não configuradas: defina ${config.missing.join(" e ")} (Redis, Vercel Storage)` },
   };
+}
+
+/** Garante que o client conectou antes de usar — só chama `.connect()` uma
+    vez mesmo com requests concorrentes na mesma instância (cold start). */
+async function ensureConnected(config) {
+  if (!config.kvReady) config.kvReady = config.kv.connect();
+  await config.kvReady;
+  return config.kv;
 }
 
 /** Sessão do request a partir do cookie — `null` quando não configurado ou
@@ -61,12 +71,20 @@ function forbidden() {
 }
 
 async function readAll(config) {
-  const list = await config.kv.get(KV_KEY);
-  return Array.isArray(list) ? list : [];
+  const client = await ensureConnected(config);
+  const raw = await client.get(KV_KEY);
+  if (!raw) return [];
+  try {
+    const list = JSON.parse(raw);
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
 }
 
 async function writeAll(config, list) {
-  await config.kv.set(KV_KEY, list);
+  const client = await ensureConnected(config);
+  await client.set(KV_KEY, JSON.stringify(list));
 }
 
 function genId() {
