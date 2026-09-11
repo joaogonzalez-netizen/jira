@@ -2218,8 +2218,13 @@ function RoadmapScreen() {
   // Gantt, fila, nome, duração, exclusão). Épico da planilha não tem dono, então
   // só o super o move. Reordenar as listas mexe na ordem de todo mundo: super.
   const { user, canCreateCard, ownsCard, canWriteShared } = useAuth();
+  const { initiatives, createInitiative } = useInitiatives();
   const [weekCount, setWeekCount] = useState(13);
   const [openKey, setOpenKey] = useState(null);
+  const [showAddInitiative, setShowAddInitiative] = useState(false);
+  const [newInitName, setNewInitName] = useState("");
+  const [newInitProduct, setNewInitProduct] = useState(PRODUCTS[0]);
+  const [newInitError, setNewInitError] = useState(null);
   const [dragKey, setDragKey] = useState(null);
   const [prioDropInfo, setPrioDropInfo] = useState(null);
   const [filaProdutoDropInfo, setFilaProdutoDropInfo] = useState(null);
@@ -2276,16 +2281,35 @@ function RoadmapScreen() {
     return groups;
   }, [prioItems]);
 
+  // Cada iniciativa vira uma "layer" própria dentro da camada do produto: uma
+  // barra colorida de cabeçalho, com só os épicos daquela iniciativa embaixo.
+  // Épicos sem iniciativa continuam soltos na lane, como antes.
   const laneMeta = useMemo(() => {
     let rowCursor = 2;
     return PRODUCTS.map((p) => {
       const scheduled = enriched.filter((e) => e.roadmapLane === p && e.startWeek !== null);
-      const { rowOf, rowCount } = layoutLane(scheduled);
-      const startRow = rowCursor;
-      rowCursor += rowCount;
-      return { product: p, scheduled, rowOf, rowCount, startRow };
+      const prodInitiatives = initiatives.filter((i) => i.product === p);
+      const assignedKeys = new Set();
+      const startRowForLabel = rowCursor;
+      const groups = prodInitiatives.map((init) => {
+        const items = scheduled.filter((e) => (init.epicKeys || []).includes(e.key));
+        items.forEach((e) => assignedKeys.add(e.key));
+        const headerRow = rowCursor;
+        rowCursor += 1;
+        const bodyStartRow = rowCursor;
+        const { rowOf, rowCount } = items.length ? layoutLane(items) : { rowOf: {}, rowCount: 0 };
+        rowCursor += rowCount;
+        return { initiative: init, headerRow, items, rowOf, bodyStartRow };
+      });
+      const unassigned = scheduled.filter((e) => !assignedKeys.has(e.key));
+      const unassignedStartRow = rowCursor;
+      const { rowOf: unassignedRowOf, rowCount: unassignedRowCount } = unassigned.length ? layoutLane(unassigned) : { rowOf: {}, rowCount: 0 };
+      rowCursor += unassignedRowCount;
+      const rowCount = Math.max(1, rowCursor - startRowForLabel);
+      rowCursor = startRowForLabel + rowCount;
+      return { product: p, scheduled, groups, unassigned, unassignedStartRow, unassignedRowOf, startRow: startRowForLabel, rowCount };
     });
-  }, [enriched]);
+  }, [enriched, initiatives]);
   const totalRows = laneMeta.reduce((s, l) => s + l.rowCount, 2);
 
   const onDragStart = (e, key) => { setDragKey(key); e.dataTransfer.effectAllowed = "move"; };
@@ -2457,6 +2481,11 @@ function RoadmapScreen() {
                 <Plus size={12} /> Novo épico
               </button>
             )}
+            {canCreateCard && (
+              <button onClick={() => { setNewInitError(null); setShowAddInitiative(true); }} style={{ display: "flex", alignItems: "center", gap: 5, borderRadius: 8, padding: "6px 10px", fontSize: 12, fontWeight: 500, border: `1px solid ${T.border2}`, cursor: "pointer", background: T.bg1, color: T.ink0, fontFamily: "'Inter Tight', sans-serif" }}>
+                <Layers size={12} /> Nova iniciativa
+              </button>
+            )}
             <div className="flex items-center" style={{ gap: 4 }}>
               <button onClick={() => setWeekCount((w) => Math.max(6, w - 4))} style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 26, height: 26, borderRadius: 6, border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink0, cursor: "pointer" }}><Minus size={12} /></button>
               <span style={{ fontSize: 12, color: T.ink1, minWidth: 70, textAlign: "center", fontFamily: "'Inter Tight', sans-serif" }}>{weekCount} semanas</span>
@@ -2490,8 +2519,20 @@ function RoadmapScreen() {
                     style={{ gridColumn: colOf(w.index), gridRow: `${lane.startRow} / span ${lane.rowCount}`, borderRight: `1px solid ${T.border1}`, borderBottom: `1px solid ${T.border1}` }}
                   />
                 ))}
-                {lane.scheduled.map((e) => (
-                  <div key={e.key} style={{ gridColumn: `${colOf(e.startWeek)} / span ${e.durationWeeks}`, gridRow: lane.startRow + lane.rowOf[e.key], display: "flex", alignItems: "center", zIndex: 1 }}>
+                {lane.groups.map((g) => (
+                  <React.Fragment key={g.initiative.id}>
+                    <div style={{ gridColumn: `2 / span ${weekCount + PAST_WEEKS}`, gridRow: g.headerRow, display: "flex", alignItems: "center", padding: "0 8px", margin: "2px 2px 0", borderRadius: 4, background: style.primary, color: "#fff", fontSize: 11.5, fontWeight: 700, fontFamily: "'Inter Tight', sans-serif", zIndex: 1 }}>
+                      {g.initiative.name}
+                    </div>
+                    {g.items.map((e) => (
+                      <div key={e.key} style={{ gridColumn: `${colOf(e.startWeek)} / span ${e.durationWeeks}`, gridRow: g.bodyStartRow + g.rowOf[e.key], display: "flex", alignItems: "center", zIndex: 1 }}>
+                        <EpicBar epic={e} onDragStart={onDragStart} onOpen={() => setOpenKey(e.key)} onResize={resizeEpic} onRemove={removeFromGantt} canEdit={ownsCard(e)} />
+                      </div>
+                    ))}
+                  </React.Fragment>
+                ))}
+                {lane.unassigned.map((e) => (
+                  <div key={e.key} style={{ gridColumn: `${colOf(e.startWeek)} / span ${e.durationWeeks}`, gridRow: lane.unassignedStartRow + lane.unassignedRowOf[e.key], display: "flex", alignItems: "center", zIndex: 1 }}>
                     <EpicBar epic={e} onDragStart={onDragStart} onOpen={() => setOpenKey(e.key)} onResize={resizeEpic} onRemove={removeFromGantt} canEdit={ownsCard(e)} />
                   </div>
                 ))}
@@ -2598,6 +2639,47 @@ function RoadmapScreen() {
       </div>
 
       <EpicDrawer epic={openEpic} weeks={weeks} onClose={() => setOpenKey(null)} onSave={saveDrawer} onDelete={deleteEpic} canEdit={ownsCard(openEpic)} />
+
+      {showAddInitiative && (
+        <div onClick={() => setShowAddInitiative(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50 }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: T.bg1, border: `1px solid ${T.border2}`, borderRadius: 12, padding: 20, width: 320, boxShadow: T.cardShadow }}>
+            <h3 style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", fontWeight: 700, fontSize: 15, color: T.ink0, marginBottom: 14 }}>Nova iniciativa</h3>
+
+            <p style={{ fontSize: 12, fontWeight: 500, color: T.ink1, marginBottom: 6, fontFamily: "'Inter Tight', sans-serif" }}>Nome</p>
+            <input
+              autoFocus value={newInitName} onChange={(e) => setNewInitName(e.target.value)}
+              placeholder="Nome da iniciativa"
+              style={{ width: "100%", borderRadius: 8, border: `1px solid ${T.border2}`, background: T.bg0, color: T.ink0, fontSize: 13, padding: "8px 10px", fontFamily: "'Inter Tight', sans-serif" }}
+            />
+
+            <p style={{ fontSize: 12, fontWeight: 500, color: T.ink1, marginTop: 14, marginBottom: 6, fontFamily: "'Inter Tight', sans-serif" }}>Produto</p>
+            <select
+              value={newInitProduct} onChange={(e) => setNewInitProduct(e.target.value)}
+              style={{ width: "100%", borderRadius: 8, border: `1px solid ${T.border2}`, background: T.bg0, color: T.ink0, fontSize: 13, padding: "7px 8px", fontFamily: "'Inter Tight', sans-serif" }}
+            >
+              {PRODUCTS.map((p) => <option key={p} value={p}>{p}</option>)}
+            </select>
+
+            {newInitError && <p style={{ marginTop: 10, fontSize: 12, color: "#e08585" }}>{newInitError}</p>}
+
+            <div className="flex items-center justify-between" style={{ marginTop: 20 }}>
+              <button onClick={() => setShowAddInitiative(false)} style={{ fontSize: 12, color: T.ink1, background: "none", border: "none", cursor: "pointer", fontFamily: "'Inter Tight', sans-serif" }}>Cancelar</button>
+              <button
+                onClick={async () => {
+                  const name = newInitName.trim();
+                  if (!name) return;
+                  const r = await createInitiative(name, newInitProduct);
+                  if (r.ok) { setShowAddInitiative(false); setNewInitName(""); }
+                  else setNewInitError(r.message || "Não foi possível criar a iniciativa.");
+                }}
+                style={{ borderRadius: 8, padding: "7px 14px", fontSize: 12.5, fontWeight: 600, border: "none", cursor: "pointer", background: "#5166e6", color: "#fff", fontFamily: "'Inter Tight', sans-serif" }}
+              >
+                Criar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
