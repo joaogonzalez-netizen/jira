@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { ChevronUp, ChevronDown, ChevronRight, ChevronLeft, X, Users, Tag, FolderKanban, ListChecks, BarChart3, Sun, Moon, Calendar, Plus, Minus, TrendingUp, RefreshCw, LogOut, Lock } from "lucide-react";
+import { ChevronUp, ChevronDown, ChevronRight, ChevronLeft, X, Users, Tag, FolderKanban, ListChecks, BarChart3, Sun, Moon, Calendar, Plus, Minus, TrendingUp, RefreshCw, LogOut, Lock, Layers, Trash2 } from "lucide-react";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell } from "recharts";
 import storage from "./lib/storage";
 import { AuthProvider, useAuth } from "./lib/auth-context";
@@ -355,6 +355,116 @@ function DataProvider({ children }) {
   return <DataCtx.Provider value={value}>{children}</DataCtx.Provider>;
 }
 
+/* =====================================================================
+   INICIATIVAS — camada Produto → Iniciativa → Épico, guardada só neste app
+   (não vem da planilha) via /api/initiatives (Vercel KV/Redis).
+   ===================================================================== */
+
+const InitiativesCtx = createContext(null);
+function useInitiatives() { return useContext(InitiativesCtx); }
+
+function InitiativesProvider({ children }) {
+  const { canCreateCard } = useAuth();
+  const [initiatives, setInitiatives] = useState([]);
+  const [status, setStatus] = useState("loading"); // loading | idle | error
+  const [error, setError] = useState(null);
+
+  const reload = useCallback(async () => {
+    setStatus("loading");
+    try {
+      const res = await fetch("/api/initiatives", { credentials: "same-origin" });
+      const data = await res.json().catch(() => []);
+      if (!res.ok) throw new Error((data && data.message) || `HTTP ${res.status}`);
+      setInitiatives(Array.isArray(data) ? data : []);
+      setStatus("idle");
+      setError(null);
+    } catch (e) {
+      setStatus("error");
+      setError(e.message);
+    }
+  }, []);
+
+  useEffect(() => { reload(); }, [reload]);
+
+  const createInitiative = useCallback(async (name, product) => {
+    if (!canCreateCard) return { ok: false };
+    try {
+      const res = await fetch("/api/initiatives", {
+        method: "POST", credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, product }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { ok: false, message: data.message };
+      setInitiatives((prev) => [...prev, data]);
+      return { ok: true, initiative: data };
+    } catch (e) {
+      return { ok: false, message: e.message };
+    }
+  }, [canCreateCard]);
+
+  const updateInitiative = useCallback(async (id, patch) => {
+    if (!canCreateCard) return { ok: false };
+    try {
+      const res = await fetch("/api/initiatives", {
+        method: "PATCH", credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, ...patch }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { ok: false, message: data.message };
+      setInitiatives((prev) => prev.map((i) => (i.id === id ? data : i)));
+      return { ok: true, initiative: data };
+    } catch (e) {
+      return { ok: false, message: e.message };
+    }
+  }, [canCreateCard]);
+
+  const deleteInitiative = useCallback(async (id) => {
+    if (!canCreateCard) return { ok: false };
+    try {
+      const res = await fetch(`/api/initiatives?id=${encodeURIComponent(id)}`, { method: "DELETE", credentials: "same-origin" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        return { ok: false, message: data.message };
+      }
+      setInitiatives((prev) => prev.filter((i) => i.id !== id));
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, message: e.message };
+    }
+  }, [canCreateCard]);
+
+  const initiativeByEpicKey = useMemo(() => {
+    const map = {};
+    initiatives.forEach((init) => { (init.epicKeys || []).forEach((k) => { map[k] = init; }); });
+    return map;
+  }, [initiatives]);
+
+  // Um épico pertence no máximo a uma iniciativa: tira da anterior (se houver)
+  // antes de gravar na nova. `initiativeId` nulo só remove.
+  const assignEpicToInitiative = useCallback(async (epicKey, initiativeId) => {
+    if (!canCreateCard) return { ok: false };
+    const current = initiativeByEpicKey[epicKey];
+    if ((current ? current.id : null) === initiativeId) return { ok: true };
+    if (current) {
+      const r = await updateInitiative(current.id, { epicKeys: current.epicKeys.filter((k) => k !== epicKey) });
+      if (!r.ok) return r;
+    }
+    if (!initiativeId) return { ok: true };
+    const target = initiatives.find((i) => i.id === initiativeId);
+    if (!target) return { ok: false, message: "Iniciativa não encontrada" };
+    return updateInitiative(initiativeId, { epicKeys: [...target.epicKeys, epicKey] });
+  }, [canCreateCard, initiativeByEpicKey, initiatives, updateInitiative]);
+
+  const value = useMemo(() => ({
+    initiatives, status, error, reload, createInitiative, updateInitiative, deleteInitiative,
+    initiativeByEpicKey, assignEpicToInitiative,
+  }), [initiatives, status, error, reload, createInitiative, updateInitiative, deleteInitiative, initiativeByEpicKey, assignEpicToInitiative]);
+
+  return <InitiativesCtx.Provider value={value}>{children}</InitiativesCtx.Provider>;
+}
+
 function layerOf(t) { return t.tipo || "Sem classificação"; }
 function epicLabel(epics, parentKey) {
   if (!parentKey) return null;
@@ -445,6 +555,8 @@ function EpicCard({ epic, isFirst, isLast, onUp, onDown, onDragStart, onDragOver
  */
 function EpicDrawer({ epic, onClose, weeks, onSave, onDelete, canEdit }) {
   const { T, PRODUCT_STYLE } = useTheme();
+  const { canCreateCard } = useAuth();
+  const { initiatives, initiativeByEpicKey, assignEpicToInitiative } = useInitiatives();
   const schedulable = !!(weeks && onSave);
   const [summary, setSummary] = useState(epic?.summary || "");
   const [lane, setLane] = useState(epic?.roadmapLane || PRIORIZACAO_KEY);
@@ -485,6 +597,18 @@ function EpicDrawer({ epic, onClose, weeks, onSave, onDelete, canEdit }) {
               {epic.tipo && <Badge bg={T.bg2} color={T.ink1}>{epic.tipo}</Badge>}
               {epic.priority && <Badge bg={T.bg2} color={T.ink2}>{epic.priority}</Badge>}
             </div>
+
+            <p style={{ marginTop: 14, marginBottom: 6, fontSize: 12, fontWeight: 500, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>Iniciativa</p>
+            <select
+              value={initiativeByEpicKey[epic.key]?.id || ""}
+              onChange={(e) => assignEpicToInitiative(epic.key, e.target.value || null)}
+              disabled={!canCreateCard}
+              style={{ width: "100%", borderRadius: 8, border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink0, fontSize: 13, padding: "7px 8px", fontFamily: "'Inter Tight', sans-serif" }}
+            >
+              <option value="">Nenhuma</option>
+              {initiatives.filter((i) => i.product === epic.project).map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
+            </select>
+
             <dl style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 8, fontSize: 12.5, fontFamily: "'Inter Tight', sans-serif" }}>
               {[
                 ["Responsável", epic.assignee],
@@ -557,10 +681,12 @@ function ProjetosScreen() {
   // que o time lê. Só o superusuário escreve (o admin escreve nos cards dele, no
   // Roadmap).
   const { canWriteShared, ownsCard } = useAuth();
+  const { initiatives, initiativeByEpicKey } = useInitiatives();
   const STORAGE_KEY = "fila-projetos-order-v2";
   const [order, setOrder] = useState(EPICS_SEED.map((e) => e.key));
   const [statusOf, setStatusOf] = useState(() => Object.fromEntries(EPICS_SEED.map((e) => [e.key, e.status])));
   const [productFilter, setProductFilter] = useState("Todos");
+  const [initiativeFilter, setInitiativeFilter] = useState("Todas"); // "Todas" | "Nenhuma" | id da iniciativa
   const [openKey, setOpenKey] = useState(null);
   const [dragKey, setDragKey] = useState(null);
   const [dropInfo, setDropInfo] = useState(null);
@@ -607,7 +733,18 @@ function ProjetosScreen() {
     setSaving(false);
   }, []);
 
-  const visibleOrder = useMemo(() => (productFilter === "Todos" ? order : order.filter((k) => byKey[k].project === productFilter)), [order, productFilter, byKey]);
+  // Iniciativas visíveis no filtro: do produto ativo, ou de todos os produtos em "Todos".
+  const initiativesForFilter = useMemo(
+    () => (productFilter === "Todos" ? initiatives : initiatives.filter((i) => i.product === productFilter)),
+    [initiatives, productFilter]
+  );
+
+  const visibleOrder = useMemo(() => {
+    let list = productFilter === "Todos" ? order : order.filter((k) => byKey[k].project === productFilter);
+    if (initiativeFilter === "Nenhuma") list = list.filter((k) => !initiativeByEpicKey[k]);
+    else if (initiativeFilter !== "Todas") list = list.filter((k) => initiativeByEpicKey[k]?.id === initiativeFilter);
+    return list;
+  }, [order, productFilter, byKey, initiativeFilter, initiativeByEpicKey]);
 
   const columnKeys = useMemo(() => {
     const map = {};
@@ -615,6 +752,12 @@ function ProjetosScreen() {
     visibleOrder.forEach((k) => { const s = statusOf[k]; if (map[s]) map[s].push(k); });
     return map;
   }, [visibleOrder, statusOf]);
+
+  // Se o produto mudar e a iniciativa selecionada não pertencer mais a ele, volta pra "Todas".
+  useEffect(() => {
+    if (initiativeFilter === "Todas" || initiativeFilter === "Nenhuma") return;
+    if (!initiativesForFilter.some((i) => i.id === initiativeFilter)) setInitiativeFilter("Todas");
+  }, [initiativesForFilter, initiativeFilter]);
 
   const moveWithinColumn = useCallback((key, dir) => {
     if (!canWriteShared) return;
@@ -694,6 +837,22 @@ function ProjetosScreen() {
             );
           })}
         </div>
+        {initiativesForFilter.length > 0 && (
+          <div className="flex" style={{ gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+            {[{ id: "Todas", name: "Todas as iniciativas" }, ...initiativesForFilter, { id: "Nenhuma", name: "Sem iniciativa" }].map((i) => {
+              const active = initiativeFilter === i.id;
+              return (
+                <button
+                  key={i.id}
+                  onClick={() => setInitiativeFilter(i.id)}
+                  style={{ borderRadius: 8, padding: "4px 9px", fontSize: 11.5, fontWeight: 500, border: `1px solid ${active ? T.borderStrong : T.border2}`, cursor: "pointer", background: active ? T.bg2 : "transparent", color: active ? T.ink0 : T.ink1, fontFamily: "'Inter Tight', sans-serif" }}
+                >
+                  {i.name}
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       <div className="pp-scroll flex" style={{ gap: 16, overflowX: "auto", padding: "20px 24px", flex: 1 }}>
@@ -2526,6 +2685,137 @@ function AuthGate({ children }) {
   return children;
 }
 
+/* =====================================================================
+   INICIATIVAS — árvore Produto → Iniciativa → Épico
+   ===================================================================== */
+
+function IniciativasScreen() {
+  const { T, PRODUCT_STYLE } = useTheme();
+  const { epics } = useData();
+  const { canCreateCard } = useAuth();
+  const { initiatives, status, error, createInitiative, updateInitiative, deleteInitiative, assignEpicToInitiative } = useInitiatives();
+  const [newNameByProduct, setNewNameByProduct] = useState({});
+
+  const epicsByProduct = useMemo(() => {
+    const map = {};
+    PRODUCTS.forEach((p) => { map[p] = []; });
+    epics.forEach((e) => { if (map[e.project]) map[e.project].push(e); });
+    return map;
+  }, [epics]);
+
+  if (status === "error") {
+    return (
+      <div style={{ padding: 24, fontSize: 13, color: T.ink1 }}>
+        Não foi possível carregar as iniciativas{error ? `: ${error}` : ""}.
+      </div>
+    );
+  }
+
+  return (
+    <div className="pp-scroll" style={{ overflowY: "auto", flex: 1, padding: "20px 24px" }}>
+      <h1 style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", fontWeight: 700, fontSize: 18, color: T.ink0, marginBottom: 16 }}>Iniciativas</h1>
+
+      {PRODUCTS.map((product) => {
+        const prodInitiatives = initiatives.filter((i) => i.product === product);
+        const prodEpics = epicsByProduct[product] || [];
+        const assignedKeys = new Set(prodInitiatives.flatMap((i) => i.epicKeys || []));
+        const unassigned = prodEpics.filter((e) => !assignedKeys.has(e.key));
+        const style = PRODUCT_STYLE[product];
+        if (prodEpics.length === 0 && prodInitiatives.length === 0) return null;
+
+        return (
+          <div key={product} style={{ marginBottom: 28 }}>
+            <div className="flex items-center justify-between" style={{ marginBottom: 10 }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: style ? style.text : T.ink0 }}>{product}</span>
+              {canCreateCard && (
+                <div className="flex items-center" style={{ gap: 6 }}>
+                  <input
+                    placeholder="Nova iniciativa"
+                    value={newNameByProduct[product] || ""}
+                    onChange={(e) => setNewNameByProduct((prev) => ({ ...prev, [product]: e.target.value }))}
+                    style={{ borderRadius: 8, border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink0, fontSize: 12.5, padding: "6px 8px", fontFamily: "'Inter Tight', sans-serif" }}
+                  />
+                  <button
+                    onClick={async () => {
+                      const name = (newNameByProduct[product] || "").trim();
+                      if (!name) return;
+                      const r = await createInitiative(name, product);
+                      if (r.ok) setNewNameByProduct((prev) => ({ ...prev, [product]: "" }));
+                    }}
+                    style={{ borderRadius: 8, padding: "6px 10px", fontSize: 12, fontWeight: 500, border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink0, cursor: "pointer", fontFamily: "'Inter Tight', sans-serif" }}
+                  >
+                    Criar
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {prodInitiatives.map((init) => {
+                const initEpics = (init.epicKeys || []).map((k) => prodEpics.find((e) => e.key === k)).filter(Boolean);
+                return (
+                  <div key={init.id} style={{ border: `1px solid ${T.border2}`, borderRadius: 10, padding: 12 }}>
+                    <div className="flex items-center justify-between">
+                      <span style={{ fontSize: 13, fontWeight: 500, color: T.ink0 }}>{init.name}</span>
+                      <div className="flex items-center" style={{ gap: 6 }}>
+                        <span style={{ fontSize: 11, color: T.ink2 }}>{initEpics.length} épico{initEpics.length === 1 ? "" : "s"}</span>
+                        {canCreateCard && (
+                          <button onClick={() => deleteInitiative(init.id)} title="Excluir iniciativa" style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 22, height: 22, borderRadius: 6, border: "none", background: "transparent", color: T.ink1, cursor: "pointer" }}><Trash2 size={13} /></button>
+                        )}
+                      </div>
+                    </div>
+
+                    <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
+                      {initEpics.map((e) => (
+                        <div key={e.key} className="flex items-center justify-between" style={{ fontSize: 12, color: T.ink1 }}>
+                          <span>{e.key} — {e.summary}</span>
+                          {canCreateCard && (
+                            <button
+                              onClick={() => assignEpicToInitiative(e.key, null)}
+                              style={{ border: "none", background: "transparent", color: T.ink2, cursor: "pointer", fontSize: 11, fontFamily: "'Inter Tight', sans-serif" }}
+                            >
+                              remover
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                      {initEpics.length === 0 && <span style={{ fontSize: 12, color: T.ink2 }}>Sem épicos ainda.</span>}
+                    </div>
+
+                    {canCreateCard && unassigned.length > 0 && (
+                      <div style={{ marginTop: 8 }}>
+                        <select
+                          value=""
+                          onChange={(e) => { if (e.target.value) assignEpicToInitiative(e.target.value, init.id); }}
+                          style={{ width: "100%", borderRadius: 8, border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink0, fontSize: 12.5, padding: "6px 8px", fontFamily: "'Inter Tight', sans-serif" }}
+                        >
+                          <option value="">Adicionar épico…</option>
+                          {unassigned.map((e) => <option key={e.key} value={e.key}>{e.key} — {e.summary}</option>)}
+                        </select>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {unassigned.length > 0 && (
+              <div style={{ marginTop: 10 }}>
+                <p style={{ fontSize: 11.5, fontWeight: 500, color: T.ink2, marginBottom: 4 }}>Sem iniciativa</p>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  {unassigned.map((e) => (
+                    <span key={e.key} style={{ fontSize: 12, color: T.ink1 }}>{e.key} — {e.summary}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function AppShell() {
   const { T, theme, toggleTheme } = useTheme();
   const { syncFromSheet, lastSync, syncStatus, syncError } = useData();
@@ -2545,7 +2835,7 @@ function AppShell() {
 
       <div style={{ borderBottom: `1px solid ${T.border1}`, padding: "0 20px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 4, height: 46 }}>
         <div className="flex" style={{ alignItems: "center", gap: 4, height: 46 }}>
-          {[["roadmap", "Roadmap", Calendar], ["semanal", "Semanal", TrendingUp], ["projetos", "Projetos", FolderKanban], ["tarefas", "Tarefas", ListChecks], ["analises", "Análises", BarChart3]].map(([key, label, Icon]) => {
+          {[["roadmap", "Roadmap", Calendar], ["semanal", "Semanal", TrendingUp], ["projetos", "Projetos", FolderKanban], ["iniciativas", "Iniciativas", Layers], ["tarefas", "Tarefas", ListChecks], ["analises", "Análises", BarChart3]].map(([key, label, Icon]) => {
             const active = menu === key;
             return (
               <button
@@ -2612,7 +2902,7 @@ function AppShell() {
         </div>
       </div>
 
-      {menu === "projetos" ? <ProjetosScreen /> : menu === "tarefas" ? <TarefasScreen /> : menu === "analises" ? <AnaliseScreen /> : menu === "semanal" ? <SemanalScreen /> : <RoadmapScreen />}
+      {menu === "projetos" ? <ProjetosScreen /> : menu === "iniciativas" ? <IniciativasScreen /> : menu === "tarefas" ? <TarefasScreen /> : menu === "analises" ? <AnaliseScreen /> : menu === "semanal" ? <SemanalScreen /> : <RoadmapScreen />}
     </div>
   );
 }
@@ -2626,7 +2916,9 @@ export default function App() {
       <AuthProvider>
         <AuthGate>
           <DataProvider>
-            <AppShell />
+            <InitiativesProvider>
+              <AppShell />
+            </InitiativesProvider>
           </DataProvider>
         </AuthGate>
       </AuthProvider>
