@@ -2250,7 +2250,7 @@ function RoadmapScreen() {
   const byKey = useMemo(() => Object.fromEntries(allEpics.map((e) => [e.key, e])), [allEpics]);
 
   const PAST_WEEKS = 4; // ~1 mês antes de hoje, sempre visível pra trás
-  const WEEK_COL_PX = 150; // largura mínima de cada coluna de semana, pra caber mais texto na barra do épico
+  const WEEK_COL_PX = 200; // largura mínima de cada coluna de semana — mais larga pra caber ~6 semanas por tela em vez de 8
   // Marcos fixos (linha vermelha pontilhada) que não acompanham o dia atual.
   const GANTT_MARKERS = useMemo(() => [new Date(2026, 9, 22), new Date(2026, 8, 1)], []);
 
