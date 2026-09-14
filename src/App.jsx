@@ -2223,7 +2223,7 @@ function RoadmapScreen() {
   // Gantt, fila, nome, duração, exclusão). Épico da planilha não tem dono, então
   // só o super o move. Reordenar as listas mexe na ordem de todo mundo: super.
   const { user, canCreateCard, ownsCard, canWriteShared } = useAuth();
-  const { initiatives, createInitiative, deleteInitiative } = useInitiatives();
+  const { initiatives, createInitiative, deleteInitiative, assignEpicToInitiative } = useInitiatives();
   const [weekCount, setWeekCount] = useState(13);
   const [openKey, setOpenKey] = useState(null);
   const [showAddInitiative, setShowAddInitiative] = useState(false);
@@ -2233,6 +2233,7 @@ function RoadmapScreen() {
   const [newInitEnd, setNewInitEnd] = useState("");
   const [newInitError, setNewInitError] = useState(null);
   const [dragKey, setDragKey] = useState(null);
+  const [dragOverInitId, setDragOverInitId] = useState(null);
   const [prioDropInfo, setPrioDropInfo] = useState(null);
   const [filaProdutoDropInfo, setFilaProdutoDropInfo] = useState(null);
   const [filaUxDropInfo, setFilaUxDropInfo] = useState(null);
@@ -2476,6 +2477,21 @@ function RoadmapScreen() {
     updatePosition(dragKey, { roadmapLane: product, startWeek: weekIndex, durationWeeks: cur.durationWeeks || 2 });
     setDragKey(null);
   };
+  // Soltar um épico em cima da barra tracejada da iniciativa vincula os dois.
+  // Se o épico ainda não estava agendado nessa lane (produto), agenda na
+  // semana atual — senão mantém onde já estava, só troca a iniciativa.
+  const onDropOnInitiative = (e, product, initiativeId) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOverInitId(null);
+    if (!dragKey) return;
+    const cur = positions[dragKey];
+    if (!cur || cur.roadmapLane !== product || cur.startWeek === null) {
+      updatePosition(dragKey, { roadmapLane: product, startWeek: 0, durationWeeks: (cur && cur.durationWeeks) || 2 });
+    }
+    assignEpicToInitiative(dragKey, initiativeId);
+    setDragKey(null);
+  };
   const resizeEpic = (key, delta) => {
     const cur = positions[key] || { durationWeeks: 2 };
     updatePosition(key, { durationWeeks: Math.max(1, Math.min(12, (cur.durationWeeks || 2) + delta)) });
@@ -2560,9 +2576,15 @@ function RoadmapScreen() {
                   const dateLabel = g.initiative.startDate && g.initiative.endDate
                     ? `${fmtShortDate(g.initiative.startDate)} – ${fmtShortDate(g.initiative.endDate)}`
                     : null;
+                  const isDragOver = dragOverInitId === g.initiative.id;
                   return (
                   <React.Fragment key={g.initiative.id}>
-                    <div style={{ gridColumn, gridRow: g.headerRow, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, padding: "0 8px", margin: "2px 2px 0", borderRadius: 4, background: "transparent", border: `1.5px dashed ${style.primary}`, color: style.text, fontSize: 11.5, fontWeight: 700, fontFamily: "'Inter Tight', sans-serif", zIndex: 1, overflow: "hidden" }}>
+                    <div
+                      onDragOver={(e) => { e.preventDefault(); if (dragKey && dragOverInitId !== g.initiative.id) setDragOverInitId(g.initiative.id); }}
+                      onDragLeave={() => setDragOverInitId((id) => (id === g.initiative.id ? null : id))}
+                      onDrop={(e) => onDropOnInitiative(e, lane.product, g.initiative.id)}
+                      style={{ gridColumn, gridRow: g.headerRow, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, padding: "0 8px", margin: "2px 2px 0", borderRadius: 4, background: isDragOver ? style.subtle : "transparent", border: `1.5px dashed ${style.primary}`, color: style.text, fontSize: 11.5, fontWeight: 700, fontFamily: "'Inter Tight', sans-serif", zIndex: 1, overflow: "hidden", transition: "background 0.1s" }}
+                    >
                       <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                         {g.initiative.name}
                         {dateLabel && <span style={{ fontWeight: 500, opacity: 0.8 }}> · {dateLabel}</span>}
