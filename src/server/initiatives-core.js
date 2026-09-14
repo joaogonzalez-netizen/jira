@@ -101,17 +101,12 @@ export async function handleCreate(input, session, config) {
   const product = typeof input.product === "string" ? input.product.trim() : "";
   if (!name || !product) return { status: 400, body: { message: "Nome e produto são obrigatórios" } };
 
-  const startDate = typeof input.startDate === "string" && input.startDate.trim() ? input.startDate.trim() : null;
-  const endDate = typeof input.endDate === "string" && input.endDate.trim() ? input.endDate.trim() : null;
-
   const list = await readAll(config);
   const initiative = {
     id: genId(),
     name,
     product,
     epicKeys: [],
-    startDate,
-    endDate,
     createdBy: session.user.email || null,
     createdAt: new Date().toISOString(),
   };
@@ -131,10 +126,6 @@ export async function handleUpdate(id, patch, session, config) {
   if (typeof patch.name === "string" && patch.name.trim()) next.name = patch.name.trim();
   if (typeof patch.product === "string" && patch.product.trim()) next.product = patch.product.trim();
   if (Array.isArray(patch.epicKeys)) next.epicKeys = patch.epicKeys.filter((k) => typeof k === "string");
-  // `startDate`/`endDate` aceitam string (nova data) ou `null` explícito (limpar) —
-  // só `undefined` (campo ausente do patch) deixa o valor atual intacto.
-  if (patch.startDate !== undefined) next.startDate = typeof patch.startDate === "string" && patch.startDate.trim() ? patch.startDate.trim() : null;
-  if (patch.endDate !== undefined) next.endDate = typeof patch.endDate === "string" && patch.endDate.trim() ? patch.endDate.trim() : null;
 
   // Um épico pertence no máximo a uma iniciativa: ao gravar `epicKeys` aqui,
   // remove esses épicos de qualquer outra iniciativa que os tivesse.

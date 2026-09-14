@@ -386,13 +386,13 @@ function InitiativesProvider({ children }) {
 
   useEffect(() => { reload(); }, [reload]);
 
-  const createInitiative = useCallback(async (name, product, extra) => {
+  const createInitiative = useCallback(async (name, product) => {
     if (!canCreateCard) return { ok: false };
     try {
       const res = await fetch("/api/initiatives", {
         method: "POST", credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, product, startDate: extra?.startDate || null, endDate: extra?.endDate || null }),
+        body: JSON.stringify({ name, product }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) return { ok: false, message: data.message };
@@ -2074,11 +2074,6 @@ function startOfWeek(d) {
   return monday;
 }
 function addDays(d, n) { const r = new Date(d); r.setDate(r.getDate() + n); return r; }
-// "YYYY-MM-DD" (formato do <input type="date">) -> "dd/mm", só pra exibição.
-function fmtShortDate(isoDate) {
-  const [y, m, d] = String(isoDate).split("-");
-  return d && m ? `${d}/${m}` : isoDate;
-}
 function fmtWeek(d) {
   const day = d.toLocaleDateString("pt-BR", { day: "2-digit" });
   const month = d.toLocaleDateString("pt-BR", { month: "short" }).replace(".", "");
@@ -2229,14 +2224,23 @@ function RoadmapScreen() {
   const [showAddInitiative, setShowAddInitiative] = useState(false);
   const [newInitName, setNewInitName] = useState("");
   const [newInitProduct, setNewInitProduct] = useState(PRODUCTS[0]);
-  const [newInitStart, setNewInitStart] = useState("");
-  const [newInitEnd, setNewInitEnd] = useState("");
   const [newInitError, setNewInitError] = useState(null);
   const [dragKey, setDragKey] = useState(null);
   const [dragOverInitId, setDragOverInitId] = useState(null);
   const [prioDropInfo, setPrioDropInfo] = useState(null);
   const [filaProdutoDropInfo, setFilaProdutoDropInfo] = useState(null);
   const [filaUxDropInfo, setFilaUxDropInfo] = useState(null);
+  // Recolher/expandir: quais produtos e iniciativas estão com os épicos
+  // escondidos no Gantt. Não persiste entre sessões de propósito — é um
+  // estado de visualização, não um dado do board.
+  const [collapsedProducts, setCollapsedProducts] = useState(() => new Set());
+  const [collapsedInitiatives, setCollapsedInitiatives] = useState(() => new Set());
+  const toggleProductCollapsed = useCallback((p) => {
+    setCollapsedProducts((prev) => { const next = new Set(prev); next.has(p) ? next.delete(p) : next.add(p); return next; });
+  }, []);
+  const toggleInitiativeCollapsed = useCallback((id) => {
+    setCollapsedInitiatives((prev) => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
+  }, []);
 
   const addEpic = () => { const key = addEpicShared(); if (key) setOpenKey(key); };
   const deleteEpic = (key) => { deleteEpicShared(key); setOpenKey(null); };
@@ -2290,54 +2294,48 @@ function RoadmapScreen() {
   }, [prioItems]);
 
   // Cada iniciativa vira uma "layer" própria dentro da camada do produto: uma
-  // barra colorida de cabeçalho, com só os épicos daquela iniciativa embaixo.
-  // Épicos sem iniciativa continuam soltos na lane, como antes.
-  // Data (calendário) -> índice de semana, na mesma base que `weeks`/`colOf`
-  // usam pros épicos: semana 0 é a semana de hoje, independente do zoom
-  // (weekCount) — por isso não precisa de `weeks` como dependência aqui.
-  const ganttOrigin = useMemo(() => addDays(startOfWeek(NOW_DATE), -PAST_WEEKS * 7), []);
-  const dateToWeekIndex = useCallback((dateStr) => {
-    const d = new Date(`${dateStr}T00:00:00`);
-    if (isNaN(d.getTime())) return null;
-    return Math.round(daysBetween(ganttOrigin, d) / 7) - PAST_WEEKS;
-  }, [ganttOrigin]);
-
+  // barra tracejada de cabeçalho, com só os épicos daquela iniciativa embaixo.
+  // Épicos sem iniciativa continuam soltos na lane, como antes. Produto e
+  // iniciativa podem ser recolhidos — recolhido, a "layer" ocupa só a própria
+  // linha de cabeçalho, escondendo o que tem dentro (sem apagar o dado).
   const laneMeta = useMemo(() => {
     let rowCursor = 2;
     return PRODUCTS.map((p) => {
       const scheduled = enriched.filter((e) => e.roadmapLane === p && e.startWeek !== null);
       const prodInitiatives = initiatives.filter((i) => i.product === p);
-      const assignedKeys = new Set();
       const startRowForLabel = rowCursor;
-      const groups = prodInitiatives.map((init) => {
-        const items = scheduled.filter((e) => (init.epicKeys || []).includes(e.key));
-        items.forEach((e) => assignedKeys.add(e.key));
-        const headerRow = rowCursor;
-        rowCursor += 1;
-        const bodyStartRow = rowCursor;
-        const { rowOf, rowCount } = items.length ? layoutLane(items) : { rowOf: {}, rowCount: 0 };
-        rowCursor += rowCount;
-        // Se a iniciativa tem início e fim, a barra de cabeçalho ocupa só o
-        // intervalo real no Gantt em vez de esticar por todas as semanas
-        // visíveis — é o ponto inteiro de ter as datas numa ferramenta de linha
-        // do tempo.
-        let dateCols = null;
-        const startIdx = init.startDate ? dateToWeekIndex(init.startDate) : null;
-        const endIdx = init.endDate ? dateToWeekIndex(init.endDate) : null;
-        if (startIdx !== null && endIdx !== null && endIdx >= startIdx) {
-          dateCols = { colStart: colOf(startIdx), span: Math.max(1, endIdx - startIdx + 1) };
-        }
-        return { initiative: init, headerRow, items, rowOf, bodyStartRow, dateCols };
-      });
-      const unassigned = scheduled.filter((e) => !assignedKeys.has(e.key));
-      const unassignedStartRow = rowCursor;
-      const { rowOf: unassignedRowOf, rowCount: unassignedRowCount } = unassigned.length ? layoutLane(unassigned) : { rowOf: {}, rowCount: 0 };
-      rowCursor += unassignedRowCount;
+      const productCollapsed = collapsedProducts.has(p);
+
+      let groups = [];
+      let unassigned = [];
+      let unassignedStartRow = rowCursor;
+      let unassignedRowOf = {};
+
+      if (!productCollapsed) {
+        const assignedKeys = new Set();
+        groups = prodInitiatives.map((init) => {
+          const items = scheduled.filter((e) => (init.epicKeys || []).includes(e.key));
+          items.forEach((e) => assignedKeys.add(e.key));
+          const initCollapsed = collapsedInitiatives.has(init.id);
+          const headerRow = rowCursor;
+          rowCursor += 1;
+          const bodyStartRow = rowCursor;
+          const { rowOf, rowCount } = !initCollapsed && items.length ? layoutLane(items) : { rowOf: {}, rowCount: 0 };
+          rowCursor += rowCount;
+          return { initiative: init, headerRow, items: initCollapsed ? [] : items, itemCount: items.length, collapsed: initCollapsed, rowOf, bodyStartRow };
+        });
+        unassigned = scheduled.filter((e) => !assignedKeys.has(e.key));
+        unassignedStartRow = rowCursor;
+        const r = unassigned.length ? layoutLane(unassigned) : { rowOf: {}, rowCount: 0 };
+        unassignedRowOf = r.rowOf;
+        rowCursor += r.rowCount;
+      }
+
       const rowCount = Math.max(1, rowCursor - startRowForLabel);
       rowCursor = startRowForLabel + rowCount;
-      return { product: p, scheduled, groups, unassigned, unassignedStartRow, unassignedRowOf, startRow: startRowForLabel, rowCount };
+      return { product: p, scheduled, groups, unassigned, unassignedStartRow, unassignedRowOf, startRow: startRowForLabel, rowCount, collapsed: productCollapsed };
     });
-  }, [enriched, initiatives, dateToWeekIndex]);
+  }, [enriched, initiatives, collapsedProducts, collapsedInitiatives]);
   const totalRows = laneMeta.reduce((s, l) => s + l.rowCount, 2);
 
   const onDragStart = (e, key) => { setDragKey(key); e.dataTransfer.effectAllowed = "move"; };
@@ -2551,7 +2549,14 @@ function RoadmapScreen() {
             const style = PRODUCT_STYLE[lane.product];
             return (
               <React.Fragment key={lane.product}>
-                <div style={{ gridColumn: 1, gridRow: `${lane.startRow} / span ${lane.rowCount}`, display: "flex", alignItems: "center", gap: 6, borderRight: `1px solid ${T.border2}`, paddingRight: 8, position: "sticky", left: 0, zIndex: 3, background: T.bg0 }}>
+                <div style={{ gridColumn: 1, gridRow: `${lane.startRow} / span ${lane.rowCount}`, display: "flex", alignItems: "center", gap: 4, borderRight: `1px solid ${T.border2}`, paddingRight: 8, position: "sticky", left: 0, zIndex: 3, background: T.bg0 }}>
+                  <button
+                    onClick={() => toggleProductCollapsed(lane.product)}
+                    title={lane.collapsed ? "Expandir" : "Recolher"}
+                    style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 16, height: 16, flexShrink: 0, border: "none", background: "transparent", color: T.ink1, cursor: "pointer", padding: 0 }}
+                  >
+                    {lane.collapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
+                  </button>
                   <span style={{ width: 7, height: 7, borderRadius: 999, background: style.primary, flexShrink: 0 }} />
                   <span style={{ fontSize: 12, fontWeight: 600, color: T.ink0, fontFamily: "'Inter Tight', sans-serif" }}>{lane.product}</span>
                 </div>
@@ -2563,19 +2568,6 @@ function RoadmapScreen() {
                   />
                 ))}
                 {lane.groups.map((g) => {
-                  // Sem datas, a barra ocupa a largura toda visível (como antes).
-                  // Com datas, ocupa só o intervalo real — recortado pro que está
-                  // visível no zoom atual, pra não estourar o grid.
-                  let gridColumn = `2 / span ${weekCount + PAST_WEEKS}`;
-                  if (g.dateCols) {
-                    const minCol = 2, maxColExclusive = 2 + weekCount + PAST_WEEKS;
-                    const colStart = Math.max(minCol, g.dateCols.colStart);
-                    const colEnd = Math.min(maxColExclusive, g.dateCols.colStart + g.dateCols.span);
-                    if (colEnd > colStart) gridColumn = `${colStart} / ${colEnd}`;
-                  }
-                  const dateLabel = g.initiative.startDate && g.initiative.endDate
-                    ? `${fmtShortDate(g.initiative.startDate)} – ${fmtShortDate(g.initiative.endDate)}`
-                    : null;
                   const isDragOver = dragOverInitId === g.initiative.id;
                   return (
                   <React.Fragment key={g.initiative.id}>
@@ -2583,11 +2575,20 @@ function RoadmapScreen() {
                       onDragOver={(e) => { e.preventDefault(); if (dragKey && dragOverInitId !== g.initiative.id) setDragOverInitId(g.initiative.id); }}
                       onDragLeave={() => setDragOverInitId((id) => (id === g.initiative.id ? null : id))}
                       onDrop={(e) => onDropOnInitiative(e, lane.product, g.initiative.id)}
-                      style={{ gridColumn, gridRow: g.headerRow, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, padding: "0 8px", margin: "2px 2px 0", borderRadius: 4, background: isDragOver ? style.subtle : "transparent", border: `1.5px dashed ${style.primary}`, color: style.text, fontSize: 11.5, fontWeight: 700, fontFamily: "'Inter Tight', sans-serif", zIndex: 1, overflow: "hidden", transition: "background 0.1s" }}
+                      style={{ gridColumn: `2 / span ${weekCount + PAST_WEEKS}`, gridRow: g.headerRow, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, padding: "0 8px", margin: "2px 2px 0", borderRadius: 4, background: isDragOver ? style.subtle : "transparent", border: `1.5px dashed ${style.primary}`, color: style.text, fontSize: 11.5, fontWeight: 700, fontFamily: "'Inter Tight', sans-serif", zIndex: 1, overflow: "hidden", transition: "background 0.1s" }}
                     >
-                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {g.initiative.name}
-                        {dateLabel && <span style={{ fontWeight: 500, opacity: 0.8 }}> · {dateLabel}</span>}
+                      <span className="flex items-center" style={{ gap: 5, overflow: "hidden", minWidth: 0 }}>
+                        <button
+                          onClick={() => toggleInitiativeCollapsed(g.initiative.id)}
+                          title={g.collapsed ? "Expandir" : "Recolher"}
+                          style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 14, height: 14, flexShrink: 0, border: "none", background: "transparent", color: style.text, cursor: "pointer", padding: 0 }}
+                        >
+                          {g.collapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
+                        </button>
+                        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {g.initiative.name}
+                          {g.collapsed && g.itemCount > 0 && <span style={{ fontWeight: 500, opacity: 0.8 }}> ({g.itemCount})</span>}
+                        </span>
                       </span>
                       {canCreateCard && (
                         <button
@@ -2736,23 +2737,6 @@ function RoadmapScreen() {
               {PRODUCTS.map((p) => <option key={p} value={p}>{p}</option>)}
             </select>
 
-            <div className="flex items-center" style={{ gap: 10, marginTop: 14 }}>
-              <div style={{ flex: 1 }}>
-                <p style={{ fontSize: 12, fontWeight: 500, color: T.ink1, marginBottom: 6, fontFamily: "'Inter Tight', sans-serif" }}>Início</p>
-                <input
-                  type="date" value={newInitStart} onChange={(e) => setNewInitStart(e.target.value)}
-                  style={{ width: "100%", borderRadius: 8, border: `1px solid ${T.border2}`, background: T.bg0, color: T.ink0, fontSize: 13, padding: "7px 8px", fontFamily: "'Inter Tight', sans-serif" }}
-                />
-              </div>
-              <div style={{ flex: 1 }}>
-                <p style={{ fontSize: 12, fontWeight: 500, color: T.ink1, marginBottom: 6, fontFamily: "'Inter Tight', sans-serif" }}>Fim</p>
-                <input
-                  type="date" value={newInitEnd} min={newInitStart || undefined} onChange={(e) => setNewInitEnd(e.target.value)}
-                  style={{ width: "100%", borderRadius: 8, border: `1px solid ${T.border2}`, background: T.bg0, color: T.ink0, fontSize: 13, padding: "7px 8px", fontFamily: "'Inter Tight', sans-serif" }}
-                />
-              </div>
-            </div>
-
             {newInitError && <p style={{ marginTop: 10, fontSize: 12, color: "#e08585" }}>{newInitError}</p>}
 
             <div className="flex items-center justify-between" style={{ marginTop: 20 }}>
@@ -2761,9 +2745,8 @@ function RoadmapScreen() {
                 onClick={async () => {
                   const name = newInitName.trim();
                   if (!name) return;
-                  if (newInitStart && newInitEnd && newInitEnd < newInitStart) { setNewInitError("A data de fim não pode ser antes da de início."); return; }
-                  const r = await createInitiative(name, newInitProduct, { startDate: newInitStart || null, endDate: newInitEnd || null });
-                  if (r.ok) { setShowAddInitiative(false); setNewInitName(""); setNewInitStart(""); setNewInitEnd(""); }
+                  const r = await createInitiative(name, newInitProduct);
+                  if (r.ok) { setShowAddInitiative(false); setNewInitName(""); }
                   else setNewInitError(r.message || "Não foi possível criar a iniciativa.");
                 }}
                 style={{ borderRadius: 8, padding: "7px 14px", fontSize: 12.5, fontWeight: 600, border: "none", cursor: "pointer", background: "#5166e6", color: "#fff", fontFamily: "'Inter Tight', sans-serif" }}
@@ -2939,25 +2922,6 @@ function IniciativasScreen() {
                           <button onClick={() => deleteInitiative(init.id)} title="Excluir iniciativa" style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 22, height: 22, borderRadius: 6, border: "none", background: "transparent", color: T.ink1, cursor: "pointer" }}><Trash2 size={13} /></button>
                         )}
                       </div>
-                    </div>
-
-                    <div className="flex items-center" style={{ gap: 8, marginTop: 8 }}>
-                      <input
-                        type="date"
-                        value={init.startDate || ""}
-                        disabled={!canCreateCard}
-                        onChange={(e) => updateInitiative(init.id, { startDate: e.target.value || null })}
-                        style={{ borderRadius: 6, border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink0, fontSize: 11.5, padding: "4px 6px", fontFamily: "'Inter Tight', sans-serif" }}
-                      />
-                      <span style={{ fontSize: 11, color: T.ink2 }}>até</span>
-                      <input
-                        type="date"
-                        value={init.endDate || ""}
-                        min={init.startDate || undefined}
-                        disabled={!canCreateCard}
-                        onChange={(e) => updateInitiative(init.id, { endDate: e.target.value || null })}
-                        style={{ borderRadius: 6, border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink0, fontSize: 11.5, padding: "4px 6px", fontFamily: "'Inter Tight', sans-serif" }}
-                      />
                     </div>
 
                     <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
