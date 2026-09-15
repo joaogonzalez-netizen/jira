@@ -1551,6 +1551,7 @@ function RoadmapScreen() {
                       <span style={{ width: 7, height: 7, borderRadius: 2, background: style.primary, flexShrink: 0, marginTop: 3 }} />
                       <span style={{ fontSize: 11.5, fontWeight: 600, color: T.ink0, fontFamily: "'Inter Tight', sans-serif", overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical" }}>
                         {g.initiative.name}
+                        {g.collapsed && g.itemCount > 0 && <span style={{ fontWeight: 500, opacity: 0.7 }}> ({g.itemCount})</span>}
                       </span>
                     </div>
                   );
@@ -1589,21 +1590,8 @@ function RoadmapScreen() {
                         onDragOver={(e) => { e.preventDefault(); if (dragKey && dragOverInitId !== g.initiative.id) setDragOverInitId(g.initiative.id); }}
                         onDragLeave={() => setDragOverInitId((id) => (id === g.initiative.id ? null : id))}
                         onDrop={(e) => onDropOnInitiative(e, lane.product, g.initiative.id)}
-                        style={{ gridColumn: `1 / span ${weekCount + PAST_WEEKS}`, gridRow: g.headerRow, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, padding: "0 8px", margin: "2px 2px 0", borderRadius: 4, background: isDragOver ? style.subtle : "transparent", color: style.text, fontSize: 11.5, fontWeight: 700, fontFamily: "'Inter Tight', sans-serif", zIndex: 1, overflow: "hidden", transition: "background 0.1s" }}
+                        style={{ gridColumn: `1 / span ${weekCount + PAST_WEEKS}`, gridRow: g.headerRow, display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 6, padding: "0 8px", margin: "2px 2px 0", borderRadius: 4, background: isDragOver ? style.subtle : "transparent", color: style.text, fontSize: 11.5, fontWeight: 700, fontFamily: "'Inter Tight', sans-serif", zIndex: 1, overflow: "hidden", transition: "background 0.1s" }}
                       >
-                        <span className="flex items-center" style={{ gap: 5, overflow: "hidden", minWidth: 0 }}>
-                          <button
-                            onClick={() => toggleInitiativeCollapsed(g.initiative.id)}
-                            title={g.collapsed ? "Expandir" : "Recolher"}
-                            style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 14, height: 14, flexShrink: 0, border: "none", background: "transparent", color: style.text, cursor: "pointer", padding: 0 }}
-                          >
-                            {g.collapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
-                          </button>
-                          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                            {g.initiative.name}
-                            {g.collapsed && g.itemCount > 0 && <span style={{ fontWeight: 500, opacity: 0.8 }}> ({g.itemCount})</span>}
-                          </span>
-                        </span>
                         {canCreateCard && (
                           <button
                             onClick={() => deleteInitiative(g.initiative.id)}
