@@ -1238,8 +1238,9 @@ function RoadmapScreen() {
     return Array.from({ length: weekCount + PAST_WEEKS }, (_, i) => ({ index: i - PAST_WEEKS, start: addDays(start, i * 7) }));
   }, [weekCount, NOW_DATE]);
   const currentWeekIndex = 0;
-  const colOf = (index) => index + PAST_WEEKS + 3;
+  const colOf = (index) => index + PAST_WEEKS + 1;
   const INIT_COL_PX = 170;
+  const PROD_COL_PX = 160;
 
   const scrollRef = useRef(null);
   useEffect(() => {
@@ -1516,22 +1517,18 @@ function RoadmapScreen() {
         </div>
       </div>
 
-      <div ref={scrollRef} className="pp-scroll" style={{ overflow: "auto", padding: "16px 24px", borderBottom: `1px solid ${T.border1}` }}>
-        <div style={{ position: "relative", display: "grid", gridTemplateColumns: `160px ${INIT_COL_PX}px repeat(${weekCount + PAST_WEEKS}, minmax(${WEEK_COL_PX}px, 1fr))`, gridTemplateRows: `32px repeat(${totalRows - 1}, 32px)`, minWidth: 160 + INIT_COL_PX + (weekCount + PAST_WEEKS) * WEEK_COL_PX }}>
-          <div style={{ gridColumn: "1 / span 2", gridRow: `1 / span ${totalRows}`, position: "sticky", left: 0, zIndex: 2, background: T.bg0 }} />
-          <div style={{ gridColumn: "1 / span 2", gridRow: 1, position: "sticky", left: 0, zIndex: 3, background: T.bg0, borderBottom: `1px solid ${T.border2}` }} />
-          <div style={{ gridColumn: 2, gridRow: 1, position: "sticky", left: 160, display: "flex", alignItems: "center", fontSize: 11, fontWeight: 600, color: T.ink1, fontFamily: "'Inter Tight', sans-serif", zIndex: 3 }}>Iniciativa</div>
-          {weeks.map((w) => (
-            <div key={w.index} style={{ gridColumn: colOf(w.index), gridRow: 1, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: w.index === currentWeekIndex ? 700 : 500, color: w.index === currentWeekIndex ? "#5166e6" : T.ink1, borderBottom: `1px solid ${T.border2}`, fontFamily: "'Inter Tight', sans-serif" }}>
-              {fmtWeek(w.start)}
-            </div>
-          ))}
+      <div className="flex" style={{ padding: "16px 24px", borderBottom: `1px solid ${T.border1}` }}>
+        {/* Painel fixo (produto + iniciativa) — nunca rola horizontalmente, então
+            não depende de position:sticky sobre um grid rolável (fonte dos vazamentos). */}
+        <div style={{ flexShrink: 0, display: "grid", gridTemplateColumns: `${PROD_COL_PX}px ${INIT_COL_PX}px`, gridTemplateRows: `32px repeat(${totalRows - 1}, 32px)`, borderRight: `1px solid ${T.border2}` }}>
+          <div style={{ gridColumn: 1, gridRow: 1, borderBottom: `1px solid ${T.border2}` }} />
+          <div style={{ gridColumn: 2, gridRow: 1, borderBottom: `1px solid ${T.border2}`, display: "flex", alignItems: "center", fontSize: 11, fontWeight: 600, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>Iniciativa</div>
 
           {laneMeta.map((lane) => {
             const style = PRODUCT_STYLE[lane.product];
             return (
               <React.Fragment key={lane.product}>
-                <div style={{ gridColumn: 1, gridRow: `${lane.startRow} / span ${lane.rowCount}`, display: "flex", alignItems: "center", gap: 4, borderRight: `1px solid ${T.border2}`, boxShadow: `inset 0 1.5px 0 0 ${T.border2}`, paddingRight: 8, position: "sticky", left: 0, zIndex: 3, background: T.bg0 }}>
+                <div style={{ gridColumn: 1, gridRow: `${lane.startRow} / span ${lane.rowCount}`, display: "flex", alignItems: "center", gap: 4, borderRight: `1px solid ${T.border2}`, borderTop: `1.5px solid ${T.border2}`, paddingRight: 8 }}>
                   <button
                     onClick={() => toggleProductCollapsed(lane.product)}
                     title={lane.collapsed ? "Expandir" : "Recolher"}
@@ -1542,92 +1539,117 @@ function RoadmapScreen() {
                   <span style={{ width: 7, height: 7, borderRadius: 999, background: style.primary, flexShrink: 0 }} />
                   <span style={{ fontSize: 12, fontWeight: 600, color: T.ink0, fontFamily: "'Inter Tight', sans-serif" }}>{lane.product}</span>
                 </div>
-                {weeks.map((w) => (
-                  <div
-                    key={w.index}
-                    onDragOver={(e) => e.preventDefault()} onDrop={(e) => onDropCell(e, lane.product, w.index)}
-                    style={{ gridColumn: colOf(w.index), gridRow: `${lane.startRow} / span ${lane.rowCount}`, borderRight: `1px solid ${T.border1}`, borderBottom: `1px solid ${T.border1}`, boxShadow: `inset 0 1.5px 0 0 ${T.border2}` }}
-                  />
-                ))}
                 {lane.groups.map((g) => {
-                  const isDragOver = dragOverInitId === g.initiative.id;
                   const initRowSpan = 1 + (g.collapsed ? 0 : g.bodyRowCount);
                   return (
-                  <React.Fragment key={g.initiative.id}>
                     <div
+                      key={g.initiative.id}
                       onClick={() => toggleInitiativeCollapsed(g.initiative.id)}
                       title={g.initiative.name}
-                      style={{ gridColumn: 2, gridRow: `${g.headerRow} / span ${initRowSpan}`, display: "flex", alignItems: "flex-start", gap: 5, padding: "6px 8px", borderRight: `1px solid ${T.border2}`, borderBottom: `1.5px dashed ${style.primary}`, boxShadow: `inset 0 1.5px 0 0 ${T.border2}`, position: "sticky", left: 160, zIndex: 3, background: T.bg0, cursor: "pointer" }}
+                      style={{ gridColumn: 2, gridRow: `${g.headerRow} / span ${initRowSpan}`, display: "flex", alignItems: "flex-start", gap: 5, padding: "6px 8px", borderBottom: `1.5px dashed ${style.primary}`, cursor: "pointer" }}
                     >
                       <span style={{ width: 7, height: 7, borderRadius: 2, background: style.primary, flexShrink: 0, marginTop: 3 }} />
                       <span style={{ fontSize: 11.5, fontWeight: 600, color: T.ink0, fontFamily: "'Inter Tight', sans-serif", overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical" }}>
                         {g.initiative.name}
                       </span>
                     </div>
-                    <div
-                      onDragOver={(e) => { e.preventDefault(); if (dragKey && dragOverInitId !== g.initiative.id) setDragOverInitId(g.initiative.id); }}
-                      onDragLeave={() => setDragOverInitId((id) => (id === g.initiative.id ? null : id))}
-                      onDrop={(e) => onDropOnInitiative(e, lane.product, g.initiative.id)}
-                      style={{ gridColumn: `3 / span ${weekCount + PAST_WEEKS}`, gridRow: g.headerRow, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, padding: "0 8px", margin: "2px 2px 0", borderRadius: 4, background: isDragOver ? style.subtle : "transparent", color: style.text, fontSize: 11.5, fontWeight: 700, fontFamily: "'Inter Tight', sans-serif", zIndex: 1, overflow: "hidden", transition: "background 0.1s" }}
-                    >
-                      <span className="flex items-center" style={{ gap: 5, overflow: "hidden", minWidth: 0 }}>
-                        <button
-                          onClick={() => toggleInitiativeCollapsed(g.initiative.id)}
-                          title={g.collapsed ? "Expandir" : "Recolher"}
-                          style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 14, height: 14, flexShrink: 0, border: "none", background: "transparent", color: style.text, cursor: "pointer", padding: 0 }}
-                        >
-                          {g.collapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
-                        </button>
-                        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {g.initiative.name}
-                          {g.collapsed && g.itemCount > 0 && <span style={{ fontWeight: 500, opacity: 0.8 }}> ({g.itemCount})</span>}
-                        </span>
-                      </span>
-                      {canCreateCard && (
-                        <button
-                          onClick={() => deleteInitiative(g.initiative.id)}
-                          title="Excluir iniciativa"
-                          style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 16, height: 16, flexShrink: 0, borderRadius: 4, border: "none", background: "transparent", color: style.text, cursor: "pointer", opacity: 0.8 }}
-                        >
-                          <X size={11} />
-                        </button>
-                      )}
-                    </div>
-                    {g.items.map((e) => (
-                      <div key={e.key} style={{ gridColumn: `${colOf(e.startWeek)} / span ${e.durationWeeks}`, gridRow: g.bodyStartRow + g.rowOf[e.key], display: "flex", alignItems: "center", zIndex: 1 }}>
-                        <EpicBar epic={e} onDragStart={onDragStart} onOpen={() => setOpenKey(e.key)} onResize={resizeEpic} onRemove={removeFromGantt} canEdit={ownsCard(e)} />
-                      </div>
-                    ))}
-                    <div style={{ gridColumn: "1 / -1", gridRow: g.headerRow + initRowSpan, borderTop: `1.5px dashed ${style.primary}`, pointerEvents: "none" }} />
-                  </React.Fragment>
                   );
                 })}
-                {lane.unassigned.map((e) => (
-                  <div key={e.key} style={{ gridColumn: `${colOf(e.startWeek)} / span ${e.durationWeeks}`, gridRow: lane.unassignedStartRow + lane.unassignedRowOf[e.key], display: "flex", alignItems: "center", zIndex: 1 }}>
-                    <EpicBar epic={e} onDragStart={onDragStart} onOpen={() => setOpenKey(e.key)} onResize={resizeEpic} onRemove={removeFromGantt} canEdit={ownsCard(e)} />
-                  </div>
-                ))}
               </React.Fragment>
             );
           })}
+        </div>
 
-          <div
-            style={{
-              position: "absolute", top: 0, bottom: 0,
-              left: `calc(${160 + INIT_COL_PX}px + (${PAST_WEEKS + Math.min(daysBetween(startOfWeek(NOW_DATE), NOW_DATE), 4) / 5}) * (100% - ${160 + INIT_COL_PX}px) / ${weekCount + PAST_WEEKS})`,
-              borderLeft: "1.5px dashed #5166e6", opacity: 0.7, zIndex: 2, pointerEvents: "none",
-            }}
-          />
-          {GANTT_MARKERS.map((date, i) => (
+        {/* Painel rolável — só as semanas. */}
+        <div ref={scrollRef} className="pp-scroll" style={{ overflowX: "auto", overflowY: "hidden", flex: 1, minWidth: 0 }}>
+          <div style={{ position: "relative", display: "grid", gridTemplateColumns: `repeat(${weekCount + PAST_WEEKS}, minmax(${WEEK_COL_PX}px, 1fr))`, gridTemplateRows: `32px repeat(${totalRows - 1}, 32px)`, minWidth: (weekCount + PAST_WEEKS) * WEEK_COL_PX }}>
+            {weeks.map((w) => (
+              <div key={w.index} style={{ gridColumn: colOf(w.index), gridRow: 1, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: w.index === currentWeekIndex ? 700 : 500, color: w.index === currentWeekIndex ? "#5166e6" : T.ink1, borderBottom: `1px solid ${T.border2}`, fontFamily: "'Inter Tight', sans-serif" }}>
+                {fmtWeek(w.start)}
+              </div>
+            ))}
+
+            {laneMeta.map((lane) => {
+              const style = PRODUCT_STYLE[lane.product];
+              return (
+                <React.Fragment key={lane.product}>
+                  {weeks.map((w) => (
+                    <div
+                      key={w.index}
+                      onDragOver={(e) => e.preventDefault()} onDrop={(e) => onDropCell(e, lane.product, w.index)}
+                      style={{ gridColumn: colOf(w.index), gridRow: `${lane.startRow} / span ${lane.rowCount}`, borderRight: `1px solid ${T.border1}`, borderBottom: `1px solid ${T.border1}`, borderTop: `1.5px solid ${T.border2}` }}
+                    />
+                  ))}
+                  {lane.groups.map((g) => {
+                    const isDragOver = dragOverInitId === g.initiative.id;
+                    const initRowSpan = 1 + (g.collapsed ? 0 : g.bodyRowCount);
+                    return (
+                    <React.Fragment key={g.initiative.id}>
+                      <div
+                        onDragOver={(e) => { e.preventDefault(); if (dragKey && dragOverInitId !== g.initiative.id) setDragOverInitId(g.initiative.id); }}
+                        onDragLeave={() => setDragOverInitId((id) => (id === g.initiative.id ? null : id))}
+                        onDrop={(e) => onDropOnInitiative(e, lane.product, g.initiative.id)}
+                        style={{ gridColumn: `1 / span ${weekCount + PAST_WEEKS}`, gridRow: g.headerRow, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, padding: "0 8px", margin: "2px 2px 0", borderRadius: 4, background: isDragOver ? style.subtle : "transparent", color: style.text, fontSize: 11.5, fontWeight: 700, fontFamily: "'Inter Tight', sans-serif", zIndex: 1, overflow: "hidden", transition: "background 0.1s" }}
+                      >
+                        <span className="flex items-center" style={{ gap: 5, overflow: "hidden", minWidth: 0 }}>
+                          <button
+                            onClick={() => toggleInitiativeCollapsed(g.initiative.id)}
+                            title={g.collapsed ? "Expandir" : "Recolher"}
+                            style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 14, height: 14, flexShrink: 0, border: "none", background: "transparent", color: style.text, cursor: "pointer", padding: 0 }}
+                          >
+                            {g.collapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
+                          </button>
+                          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {g.initiative.name}
+                            {g.collapsed && g.itemCount > 0 && <span style={{ fontWeight: 500, opacity: 0.8 }}> ({g.itemCount})</span>}
+                          </span>
+                        </span>
+                        {canCreateCard && (
+                          <button
+                            onClick={() => deleteInitiative(g.initiative.id)}
+                            title="Excluir iniciativa"
+                            style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 16, height: 16, flexShrink: 0, borderRadius: 4, border: "none", background: "transparent", color: style.text, cursor: "pointer", opacity: 0.8 }}
+                          >
+                            <X size={11} />
+                          </button>
+                        )}
+                      </div>
+                      {g.items.map((e) => (
+                        <div key={e.key} style={{ gridColumn: `${colOf(e.startWeek)} / span ${e.durationWeeks}`, gridRow: g.bodyStartRow + g.rowOf[e.key], display: "flex", alignItems: "center", zIndex: 1 }}>
+                          <EpicBar epic={e} onDragStart={onDragStart} onOpen={() => setOpenKey(e.key)} onResize={resizeEpic} onRemove={removeFromGantt} canEdit={ownsCard(e)} />
+                        </div>
+                      ))}
+                      <div style={{ gridColumn: "1 / -1", gridRow: g.headerRow + initRowSpan, borderTop: `1.5px dashed ${style.primary}`, pointerEvents: "none" }} />
+                    </React.Fragment>
+                    );
+                  })}
+                  {lane.unassigned.map((e) => (
+                    <div key={e.key} style={{ gridColumn: `${colOf(e.startWeek)} / span ${e.durationWeeks}`, gridRow: lane.unassignedStartRow + lane.unassignedRowOf[e.key], display: "flex", alignItems: "center", zIndex: 1 }}>
+                      <EpicBar epic={e} onDragStart={onDragStart} onOpen={() => setOpenKey(e.key)} onResize={resizeEpic} onRemove={removeFromGantt} canEdit={ownsCard(e)} />
+                    </div>
+                  ))}
+                </React.Fragment>
+              );
+            })}
+
             <div
-              key={i}
               style={{
                 position: "absolute", top: 0, bottom: 0,
-                left: `calc(${160 + INIT_COL_PX}px + (${PAST_WEEKS + daysBetween(startOfWeek(NOW_DATE), startOfWeek(date)) / 7 + Math.min(daysBetween(startOfWeek(date), date), 4) / 5}) * (100% - ${160 + INIT_COL_PX}px) / ${weekCount + PAST_WEEKS})`,
-                borderLeft: "1.5px dashed #e5484d", opacity: 0.8, zIndex: 2, pointerEvents: "none",
+                left: `calc((${PAST_WEEKS + Math.min(daysBetween(startOfWeek(NOW_DATE), NOW_DATE), 4) / 5}) * 100% / ${weekCount + PAST_WEEKS})`,
+                borderLeft: "1.5px dashed #5166e6", opacity: 0.7, zIndex: 2, pointerEvents: "none",
               }}
             />
-          ))}
+            {GANTT_MARKERS.map((date, i) => (
+              <div
+                key={i}
+                style={{
+                  position: "absolute", top: 0, bottom: 0,
+                  left: `calc((${PAST_WEEKS + daysBetween(startOfWeek(NOW_DATE), startOfWeek(date)) / 7 + Math.min(daysBetween(startOfWeek(date), date), 4) / 5}) * 100% / ${weekCount + PAST_WEEKS})`,
+                  borderLeft: "1.5px dashed #e5484d", opacity: 0.8, zIndex: 2, pointerEvents: "none",
+                }}
+              />
+            ))}
+          </div>
         </div>
       </div>
 
