@@ -1546,7 +1546,7 @@ function RoadmapScreen() {
                       key={g.initiative.id}
                       onClick={() => toggleInitiativeCollapsed(g.initiative.id)}
                       title={g.initiative.name}
-                      style={{ gridColumn: 2, gridRow: `${g.headerRow} / span ${initRowSpan}`, display: "flex", alignItems: "flex-start", gap: 5, padding: "6px 8px", borderBottom: `1.5px dashed ${style.primary}`, cursor: "pointer" }}
+                      style={{ gridColumn: 2, gridRow: `${g.headerRow} / span ${initRowSpan}`, display: "flex", alignItems: "flex-start", gap: 5, padding: "6px 8px", borderBottom: `1.5px solid ${style.primary}`, cursor: "pointer" }}
                     >
                       <span style={{ width: 7, height: 7, borderRadius: 2, background: style.primary, flexShrink: 0, marginTop: 3 }} />
                       <span style={{ fontSize: 11.5, fontWeight: 600, color: T.ink0, fontFamily: "'Inter Tight', sans-serif", overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical" }}>
