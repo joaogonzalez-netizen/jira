@@ -678,7 +678,16 @@ function AnaliseScreen() {
   const [issueType, setIssueType] = useState("all");
   const [origem, setOrigem] = useState("all");
   const [tipoEntrega, setTipoEntrega] = useState("all");
+  const [assignee, setAssignee] = useState("all");
+  const [reporter, setReporter] = useState("all");
   const [selectedProducts, setSelectedProducts] = useState(() => new Set(PRODUCTS));
+
+  const assigneeOptions = useMemo(() => (
+    [...new Set(TASKS_SEED.filter((t) => t.assignee).map((t) => t.assignee))].sort()
+  ), [TASKS_SEED]);
+  const reporterOptions = useMemo(() => (
+    [...new Set(TASKS_SEED.filter((t) => t.reporter).map((t) => t.reporter))].sort()
+  ), [TASKS_SEED]);
 
   const toggleProduct = (p) => setSelectedProducts((prev) => {
     const n = new Set(prev);
@@ -687,6 +696,7 @@ function AnaliseScreen() {
   });
   const resetFilters = () => {
     setPeriod("all"); setEtapa("all"); setIssueType("all"); setOrigem("all"); setTipoEntrega("all");
+    setAssignee("all"); setReporter("all");
     setSelectedProducts(new Set(PRODUCTS));
   };
 
@@ -698,6 +708,8 @@ function AnaliseScreen() {
       if (origem === "yes" && !t.intercom) return false;
       if (origem === "no" && t.intercom) return false;
       if (tipoEntrega !== "all" && layerOf(t) !== tipoEntrega) return false;
+      if (assignee !== "all" && t.assignee !== assignee) return false;
+      if (reporter !== "all" && t.reporter !== reporter) return false;
       if (period !== "all") {
         const d = parseBRDate(t.created);
         if (!d) return false;
@@ -707,7 +719,7 @@ function AnaliseScreen() {
       }
       return true;
     });
-  }, [period, etapa, issueType, origem, tipoEntrega, selectedProducts, TASKS_SEED]);
+  }, [period, etapa, issueType, origem, tipoEntrega, assignee, reporter, selectedProducts, TASKS_SEED]);
 
   const stats = useMemo(() => {
     const total = tasks.length;
@@ -798,6 +810,8 @@ function AnaliseScreen() {
           { value: "no", label: "Excluir Intercom" },
         ]} />
         <FilterSelect T={T} value={tipoEntrega} onChange={setTipoEntrega} options={[{ value: "all", label: "Todos os tipos de entrega" }, ...LAYERS.map((s) => ({ value: s, label: s }))]} />
+        <FilterSelect T={T} value={assignee} onChange={setAssignee} options={[{ value: "all", label: "Todos os responsáveis" }, ...assigneeOptions.map((s) => ({ value: s, label: s }))]} />
+        <FilterSelect T={T} value={reporter} onChange={setReporter} options={[{ value: "all", label: "Todos os reporters" }, ...reporterOptions.map((s) => ({ value: s, label: s }))]} />
         <button onClick={resetFilters} style={{ fontSize: 12, color: T.ink1, background: "none", border: "none", cursor: "pointer", textDecoration: "underline", fontFamily: "'Inter Tight', sans-serif" }}>Limpar filtros</button>
       </div>
 
