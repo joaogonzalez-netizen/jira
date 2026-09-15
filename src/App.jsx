@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { ChevronUp, ChevronDown, ChevronRight, ChevronLeft, X, BarChart3, Sun, Moon, Calendar, Plus, Minus, RefreshCw, LogOut, Lock, Layers, Trash2 } from "lucide-react";
-import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell } from "recharts";
+import { BarChart, Bar, LineChart, Line, PieChart, Pie, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell, LabelList } from "recharts";
 import storage from "./lib/storage";
 import { AuthProvider, useAuth } from "./lib/auth-context";
 
@@ -667,11 +667,59 @@ function FilterSelect({ value, onChange, options, T }) {
   );
 }
 
+function AllocationDonut({ title, data, T, TIPO_STYLE, rcTooltip }) {
+  const total = data.reduce((a, d) => a + d.value, 0);
+  const RADIAN = Math.PI / 180;
+  const renderLabel = (props) => {
+    const { cx, cy, midAngle, outerRadius, value } = props;
+    if (!value) return null;
+    const radius = outerRadius + 14;
+    const x = cx + radius * Math.cos(-midAngle * RADIAN);
+    const y = cy + radius * Math.sin(-midAngle * RADIAN);
+    const pct = total ? Math.round((100 * value) / total) : 0;
+    return (
+      <text x={x} y={y} fill={T.ink1} fontSize={10.5} fontFamily="'Inter Tight', sans-serif" textAnchor={x > cx ? "start" : "end"} dominantBaseline="central">
+        {`${value} (${pct}%)`}
+      </text>
+    );
+  };
+  return (
+    <div style={{ width: 230 }}>
+      <p style={{ fontSize: 12.5, fontWeight: 600, color: T.ink0, textAlign: "center", marginBottom: 2, fontFamily: "'Inter Tight', sans-serif" }}>{title}</p>
+      <div style={{ height: 210, position: "relative" }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <PieChart>
+            <Pie data={data} dataKey="value" nameKey="name" innerRadius={48} outerRadius={72} paddingAngle={2} label={renderLabel} labelLine={false}>
+              {data.map((d, i) => <Cell key={i} fill={TIPO_STYLE[d.name].dot} />)}
+            </Pie>
+            <Tooltip {...rcTooltip} formatter={(v, n) => [`${v} (${total ? Math.round((100 * v) / total) : 0}%)`, n]} />
+          </PieChart>
+        </ResponsiveContainer>
+        <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", pointerEvents: "none" }}>
+          <span style={{ fontSize: 17, fontWeight: 700, color: T.ink0, fontFamily: "'Plus Jakarta Sans', sans-serif" }}>{total}</span>
+          <span style={{ fontSize: 9.5, color: T.ink2, fontFamily: "'Inter Tight', sans-serif" }}>issues</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AnaliseScreen() {
   const { T, PRODUCT_STYLE, TIPO_STYLE, theme, palette } = useTheme();
   const { tasks: TASKS_SEED } = useData();
   const rcAxis = { fill: T.ink1, fontSize: 11.5, fontFamily: "'Inter Tight', sans-serif" };
   const rcTooltip = { contentStyle: { background: T.bg1, border: `1px solid ${T.border2}`, borderRadius: 8, fontSize: 12, fontFamily: "'Inter Tight', sans-serif" }, labelStyle: { color: T.ink0 }, itemStyle: { color: T.ink0 } };
+  const countPctLabel = (total) => (props) => {
+    const { x, y, width, height, value } = props;
+    if (!value) return null;
+    const pct = total ? Math.round((100 * value) / total) : 0;
+    return (
+      <text x={x + width + 6} y={y + height / 2} dy={4} fontSize={11} fill={T.ink1} fontFamily="'Inter Tight', sans-serif">
+        {value} ({pct}%)
+      </text>
+    );
+  };
+  const sum = (arr, key) => arr.reduce((a, o) => a + (o[key] || 0), 0);
 
   const [period, setPeriod] = useState("all");
   const [etapa, setEtapa] = useState("all");
@@ -851,25 +899,34 @@ function AnaliseScreen() {
       </div>
 
       <SectionTitle title="Onde a aposta estratégica está concentrada" sub="Quantidade de issues por tipo de entrega, por produto" />
-      <div style={{ height: 260 }}>
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={stats.allocation} layout="vertical" margin={{ left: 10 }}>
-            <CartesianGrid stroke={T.border2} horizontal={false} />
-            <XAxis type="number" tick={rcAxis} axisLine={{ stroke: T.border2 }} tickLine={false} />
-            <YAxis type="category" dataKey="project" tick={rcAxis} axisLine={{ stroke: T.border2 }} tickLine={false} width={90} />
-            <Tooltip {...rcTooltip} />
-            <Legend wrapperStyle={{ fontSize: 11, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }} />
-            {stats.dtOrder.map((dt) => (
-              <Bar key={dt} dataKey={dt} stackId="a" fill={TIPO_STYLE[dt].dot} radius={[3, 3, 3, 3]} />
-            ))}
-          </BarChart>
-        </ResponsiveContainer>
+      <div className="flex flex-wrap items-center" style={{ gap: 6, marginBottom: 4 }}>
+        {stats.dtOrder.map((dt) => (
+          <span key={dt} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>
+            <span style={{ width: 8, height: 8, borderRadius: 999, background: TIPO_STYLE[dt].dot, display: "inline-block" }} />
+            {dt}
+          </span>
+        ))}
+      </div>
+      <div className="flex flex-wrap" style={{ gap: 8 }}>
+        <AllocationDonut
+          title="Geral — todos os produtos"
+          data={stats.dtOrder.map((dt) => ({ name: dt, value: stats.allocation.reduce((a, row) => a + (row[dt] || 0), 0) }))}
+          T={T} TIPO_STYLE={TIPO_STYLE} rcTooltip={rcTooltip}
+        />
+        {stats.allocation.map((row) => (
+          <AllocationDonut
+            key={row.project}
+            title={row.project}
+            data={stats.dtOrder.map((dt) => ({ name: dt, value: row[dt] || 0 }))}
+            T={T} TIPO_STYLE={TIPO_STYLE} rcTooltip={rcTooltip}
+          />
+        ))}
       </div>
 
       <SectionTitle title="Onde o trabalho está, pelas 8 etapas mapeadas" sub="Volume org-wide em cada etapa do fluxo (Backlog → Em design → ... → Concluído)" />
       <div style={{ height: 260 }}>
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={stats.stageDist} layout="vertical" margin={{ left: 10 }}>
+          <BarChart data={stats.stageDist} layout="vertical" margin={{ left: 10, right: 50 }}>
             <CartesianGrid stroke={T.border2} horizontal={false} />
             <XAxis type="number" tick={rcAxis} axisLine={{ stroke: T.border2 }} tickLine={false} />
             <YAxis type="category" dataKey="stage" tick={rcAxis} axisLine={{ stroke: T.border2 }} tickLine={false} width={110} />
@@ -878,6 +935,7 @@ function AnaliseScreen() {
               {stats.stageDist.map((entry, i) => (
                 <Cell key={i} fill={entry.stage === "Concluído" ? palette.stageDoneColor : palette.stageBarColor} />
               ))}
+              <LabelList dataKey="count" content={countPctLabel(sum(stats.stageDist, "count"))} />
             </Bar>
           </BarChart>
         </ResponsiveContainer>
@@ -886,13 +944,14 @@ function AnaliseScreen() {
       <SectionTitle title="Quem está sobrecarregado" sub="Issues em andamento agora, por responsável (todos os produtos)" />
       <div style={{ height: 260 }}>
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={stats.wipEntries} layout="vertical" margin={{ left: 10 }}>
+          <BarChart data={stats.wipEntries} layout="vertical" margin={{ left: 10, right: 50 }}>
             <CartesianGrid stroke={T.border2} horizontal={false} />
             <XAxis type="number" tick={rcAxis} axisLine={{ stroke: T.border2 }} tickLine={false} allowDecimals={false} />
             <YAxis type="category" dataKey="name" tick={rcAxis} axisLine={{ stroke: T.border2 }} tickLine={false} width={110} />
             <Tooltip {...rcTooltip} formatter={(v) => [`${v} issues em andamento`, ""]} />
             <Bar dataKey="count" radius={[3, 3, 3, 3]} maxBarSize={16}>
               {stats.wipEntries.map((_, i) => <Cell key={i} fill={i === 0 ? palette.highlightColor : palette.neutralBarColor} />)}
+              <LabelList dataKey="count" content={countPctLabel(sum(stats.wipEntries, "count"))} />
             </Bar>
           </BarChart>
         </ResponsiveContainer>
@@ -938,12 +997,14 @@ function AnaliseScreen() {
           <p style={{ fontSize: 12.5, color: T.ink1, margin: "10px 0 4px", fontFamily: "'Inter Tight', sans-serif" }}>{title}</p>
           <div style={{ height: 200 }}>
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={data} layout="vertical" margin={{ left: 10 }}>
+              <BarChart data={data} layout="vertical" margin={{ left: 10, right: 50 }}>
                 <CartesianGrid stroke={T.border2} horizontal={false} />
                 <XAxis type="number" tick={rcAxis} axisLine={{ stroke: T.border2 }} tickLine={false} allowDecimals={false} />
                 <YAxis type="category" dataKey="name" tick={rcAxis} axisLine={{ stroke: T.border2 }} tickLine={false} width={110} />
                 <Tooltip {...rcTooltip} formatter={(v) => [`${v} issues`, ""]} />
-                <Bar dataKey="count" fill={color} radius={[3, 3, 3, 3]} maxBarSize={14} />
+                <Bar dataKey="count" fill={color} radius={[3, 3, 3, 3]} maxBarSize={14}>
+                  <LabelList dataKey="count" content={countPctLabel(sum(data, "count"))} />
+                </Bar>
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -960,12 +1021,14 @@ function AnaliseScreen() {
       </div>
       <div style={{ height: 200, marginTop: 14 }}>
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={stats.supportByProject} layout="vertical" margin={{ left: 10 }}>
+          <BarChart data={stats.supportByProject} layout="vertical" margin={{ left: 10, right: 50 }}>
             <CartesianGrid stroke={T.border2} horizontal={false} />
             <XAxis type="number" tick={rcAxis} axisLine={{ stroke: T.border2 }} tickLine={false} allowDecimals={false} />
             <YAxis type="category" dataKey="project" tick={rcAxis} axisLine={{ stroke: T.border2 }} tickLine={false} width={90} />
             <Tooltip {...rcTooltip} formatter={(v) => [`${v} issues`, ""]} />
-            <Bar dataKey="count" fill={palette.lineCreated} radius={[3, 3, 3, 3]} maxBarSize={16} />
+            <Bar dataKey="count" fill={palette.lineCreated} radius={[3, 3, 3, 3]} maxBarSize={16}>
+              <LabelList dataKey="count" content={countPctLabel(sum(stats.supportByProject, "count"))} />
+            </Bar>
           </BarChart>
         </ResponsiveContainer>
       </div>
