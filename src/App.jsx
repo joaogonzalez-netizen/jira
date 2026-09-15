@@ -1531,7 +1531,7 @@ function RoadmapScreen() {
             const style = PRODUCT_STYLE[lane.product];
             return (
               <React.Fragment key={lane.product}>
-                <div style={{ gridColumn: 1, gridRow: `${lane.startRow} / span ${lane.rowCount}`, display: "flex", alignItems: "center", gap: 4, borderRight: `1px solid ${T.border2}`, borderTop: `1.5px solid ${T.border2}`, paddingRight: 8, position: "sticky", left: 0, zIndex: 3, background: T.bg0 }}>
+                <div style={{ gridColumn: 1, gridRow: `${lane.startRow} / span ${lane.rowCount}`, display: "flex", alignItems: "center", gap: 4, borderRight: `1px solid ${T.border2}`, boxShadow: `inset 0 1.5px 0 0 ${T.border2}`, paddingRight: 8, position: "sticky", left: 0, zIndex: 3, background: T.bg0 }}>
                   <button
                     onClick={() => toggleProductCollapsed(lane.product)}
                     title={lane.collapsed ? "Expandir" : "Recolher"}
@@ -1546,7 +1546,7 @@ function RoadmapScreen() {
                   <div
                     key={w.index}
                     onDragOver={(e) => e.preventDefault()} onDrop={(e) => onDropCell(e, lane.product, w.index)}
-                    style={{ gridColumn: colOf(w.index), gridRow: `${lane.startRow} / span ${lane.rowCount}`, borderRight: `1px solid ${T.border1}`, borderBottom: `1px solid ${T.border1}`, borderTop: `1.5px solid ${T.border2}` }}
+                    style={{ gridColumn: colOf(w.index), gridRow: `${lane.startRow} / span ${lane.rowCount}`, borderRight: `1px solid ${T.border1}`, borderBottom: `1px solid ${T.border1}`, boxShadow: `inset 0 1.5px 0 0 ${T.border2}` }}
                   />
                 ))}
                 {lane.groups.map((g) => {
@@ -1557,7 +1557,7 @@ function RoadmapScreen() {
                     <div
                       onClick={() => toggleInitiativeCollapsed(g.initiative.id)}
                       title={g.initiative.name}
-                      style={{ gridColumn: 2, gridRow: `${g.headerRow} / span ${initRowSpan}`, display: "flex", alignItems: "flex-start", gap: 5, padding: "6px 8px", borderRight: `1px solid ${T.border2}`, borderTop: `1.5px solid ${T.border2}`, position: "sticky", left: 160, zIndex: 3, background: T.bg0, cursor: "pointer" }}
+                      style={{ gridColumn: 2, gridRow: `${g.headerRow} / span ${initRowSpan}`, display: "flex", alignItems: "flex-start", gap: 5, padding: "6px 8px", borderRight: `1px solid ${T.border2}`, boxShadow: `inset 0 1.5px 0 0 ${T.border2}`, position: "sticky", left: 160, zIndex: 3, background: T.bg0, cursor: "pointer" }}
                     >
                       <span style={{ width: 7, height: 7, borderRadius: 2, background: style.primary, flexShrink: 0, marginTop: 3 }} />
                       <span style={{ fontSize: 11.5, fontWeight: 600, color: T.ink0, fontFamily: "'Inter Tight', sans-serif", overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical" }}>
