@@ -1557,7 +1557,7 @@ function RoadmapScreen() {
                     <div
                       onClick={() => toggleInitiativeCollapsed(g.initiative.id)}
                       title={g.initiative.name}
-                      style={{ gridColumn: 2, gridRow: `${g.headerRow} / span ${initRowSpan}`, display: "flex", alignItems: "flex-start", gap: 5, padding: "6px 8px", borderRight: `1px solid ${T.border2}`, boxShadow: `inset 0 1.5px 0 0 ${T.border2}`, position: "sticky", left: 160, zIndex: 3, background: T.bg0, cursor: "pointer" }}
+                      style={{ gridColumn: 2, gridRow: `${g.headerRow} / span ${initRowSpan}`, display: "flex", alignItems: "flex-start", gap: 5, padding: "6px 8px", borderRight: `1px solid ${T.border2}`, borderBottom: `1.5px dashed ${style.primary}`, boxShadow: `inset 0 1.5px 0 0 ${T.border2}`, position: "sticky", left: 160, zIndex: 3, background: T.bg0, cursor: "pointer" }}
                     >
                       <span style={{ width: 7, height: 7, borderRadius: 2, background: style.primary, flexShrink: 0, marginTop: 3 }} />
                       <span style={{ fontSize: 11.5, fontWeight: 600, color: T.ink0, fontFamily: "'Inter Tight', sans-serif", overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical" }}>
@@ -1976,7 +1976,7 @@ function AppShell() {
   const [menu, setMenu] = useState("roadmap");
 
   return (
-    <div style={{ minHeight: "100vh", background: T.bg0, color: T.ink0, fontFamily: "'Inter Tight', sans-serif", display: "flex", flexDirection: "column" }}>
+    <div style={{ minHeight: "100vh", background: T.bg0, color: T.ink0, fontFamily: "'Inter Tight', sans-serif", display: "flex", flexDirection: "column", overflowX: "hidden" }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@700&family=Inter+Tight:wght@400;500;600;700&display=swap');
         .pp-card:hover { background: ${T.bg2} !important; border-color: ${T.borderStrong} !important; }
