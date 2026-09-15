@@ -1454,7 +1454,8 @@ function RoadmapScreen() {
 
       <div ref={scrollRef} className="pp-scroll" style={{ overflow: "auto", padding: "16px 24px", borderBottom: `1px solid ${T.border1}` }}>
         <div style={{ position: "relative", display: "grid", gridTemplateColumns: `160px repeat(${weekCount + PAST_WEEKS}, minmax(${WEEK_COL_PX}px, 1fr))`, gridTemplateRows: `32px repeat(${totalRows - 1}, 32px)`, minWidth: 160 + (weekCount + PAST_WEEKS) * WEEK_COL_PX }}>
-          <div style={{ gridColumn: 1, gridRow: 1 }} />
+          <div style={{ gridColumn: 1, gridRow: `1 / span ${totalRows}`, position: "sticky", left: 0, zIndex: 2, background: T.bg0 }} />
+          <div style={{ gridColumn: 1, gridRow: 1, position: "sticky", left: 0, zIndex: 3, background: T.bg0 }} />
           {weeks.map((w) => (
             <div key={w.index} style={{ gridColumn: colOf(w.index), gridRow: 1, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: w.index === currentWeekIndex ? 700 : 500, color: w.index === currentWeekIndex ? "#5166e6" : T.ink1, borderBottom: `1px solid ${T.border2}`, fontFamily: "'Inter Tight', sans-serif" }}>
               {fmtWeek(w.start)}
@@ -1465,7 +1466,7 @@ function RoadmapScreen() {
             const style = PRODUCT_STYLE[lane.product];
             return (
               <React.Fragment key={lane.product}>
-                <div style={{ gridColumn: 1, gridRow: `${lane.startRow} / span ${lane.rowCount}`, display: "flex", alignItems: "center", gap: 4, borderRight: `1px solid ${T.border2}`, paddingRight: 8, position: "sticky", left: 0, zIndex: 3, background: T.bg0 }}>
+                <div style={{ gridColumn: 1, gridRow: `${lane.startRow} / span ${lane.rowCount}`, display: "flex", alignItems: "center", gap: 4, borderRight: `1px solid ${T.border2}`, borderTop: `1.5px solid ${T.border2}`, paddingRight: 8, position: "sticky", left: 0, zIndex: 3, background: T.bg0 }}>
                   <button
                     onClick={() => toggleProductCollapsed(lane.product)}
                     title={lane.collapsed ? "Expandir" : "Recolher"}
@@ -1480,7 +1481,7 @@ function RoadmapScreen() {
                   <div
                     key={w.index}
                     onDragOver={(e) => e.preventDefault()} onDrop={(e) => onDropCell(e, lane.product, w.index)}
-                    style={{ gridColumn: colOf(w.index), gridRow: `${lane.startRow} / span ${lane.rowCount}`, borderRight: `1px solid ${T.border1}`, borderBottom: `1px solid ${T.border1}` }}
+                    style={{ gridColumn: colOf(w.index), gridRow: `${lane.startRow} / span ${lane.rowCount}`, borderRight: `1px solid ${T.border1}`, borderBottom: `1px solid ${T.border1}`, borderTop: `1.5px solid ${T.border2}` }}
                   />
                 ))}
                 {lane.groups.map((g) => {
