@@ -1568,7 +1568,7 @@ function RoadmapScreen() {
                       onDragOver={(e) => { e.preventDefault(); if (dragKey && dragOverInitId !== g.initiative.id) setDragOverInitId(g.initiative.id); }}
                       onDragLeave={() => setDragOverInitId((id) => (id === g.initiative.id ? null : id))}
                       onDrop={(e) => onDropOnInitiative(e, lane.product, g.initiative.id)}
-                      style={{ gridColumn: `3 / span ${weekCount + PAST_WEEKS}`, gridRow: g.headerRow, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, padding: "0 8px", margin: "2px 2px 0", borderRadius: 4, background: isDragOver ? style.subtle : "transparent", border: `1.5px dashed ${style.primary}`, color: style.text, fontSize: 11.5, fontWeight: 700, fontFamily: "'Inter Tight', sans-serif", zIndex: 1, overflow: "hidden", transition: "background 0.1s" }}
+                      style={{ gridColumn: `3 / span ${weekCount + PAST_WEEKS}`, gridRow: g.headerRow, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, padding: "0 8px", margin: "2px 2px 0", borderRadius: 4, background: isDragOver ? style.subtle : "transparent", color: style.text, fontSize: 11.5, fontWeight: 700, fontFamily: "'Inter Tight', sans-serif", zIndex: 1, overflow: "hidden", transition: "background 0.1s" }}
                     >
                       <span className="flex items-center" style={{ gap: 5, overflow: "hidden", minWidth: 0 }}>
                         <button
@@ -1598,6 +1598,7 @@ function RoadmapScreen() {
                         <EpicBar epic={e} onDragStart={onDragStart} onOpen={() => setOpenKey(e.key)} onResize={resizeEpic} onRemove={removeFromGantt} canEdit={ownsCard(e)} />
                       </div>
                     ))}
+                    <div style={{ gridColumn: "1 / -1", gridRow: g.headerRow + initRowSpan, borderTop: `1.5px dashed ${style.primary}`, pointerEvents: "none" }} />
                   </React.Fragment>
                   );
                 })}
