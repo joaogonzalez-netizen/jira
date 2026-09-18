@@ -584,6 +584,21 @@ function EpicDrawer({ epic, onClose, weeks, onSave, onDelete, canEdit }) {
 
             {lane !== PRIORIZACAO_KEY && (
               <>
+                {isCustom && (
+                  <>
+                    <p style={{ marginTop: 16, marginBottom: 6, fontSize: 12, fontWeight: 500, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>Iniciativa</p>
+                    <select
+                      value={initiativeByEpicKey[epic.key]?.id || ""}
+                      onChange={(e) => assignEpicToInitiative(epic.key, e.target.value || null)}
+                      disabled={!canCreateCard}
+                      style={{ width: "100%", borderRadius: 8, border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink0, fontSize: 13, padding: "7px 8px", fontFamily: "'Inter Tight', sans-serif" }}
+                    >
+                      <option value="">Nenhuma</option>
+                      {initiatives.filter((i) => i.product === lane).map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
+                    </select>
+                  </>
+                )}
+
                 <p style={{ marginTop: 16, marginBottom: 6, fontSize: 12, fontWeight: 500, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>Semana inicial</p>
                 <select value={startWeek} onChange={(e) => setStartWeek(Number(e.target.value))} disabled={!canEdit} style={{ width: "100%", borderRadius: 8, border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink0, fontSize: 13, padding: "7px 8px", fontFamily: "'Inter Tight', sans-serif" }}>
                   {weeks.map((w) => <option key={w.index} value={w.index}>Semana de {fmtWeek(w.start)}</option>)}
