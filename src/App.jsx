@@ -1458,6 +1458,7 @@ function DevelopersScreen() {
                       </div>
                       <div className="flex items-center" style={{ gap: 6, flexShrink: 0 }}>
                         <Badge bg={prod.subtle} color={prod.text}>{t.project}</Badge>
+                        {t.type && <Badge bg={T.bg2} color={T.ink2}>{t.type}</Badge>}
                         <Badge bg={T.bg2} color={T.ink1}>{t.stage || t.status}</Badge>
                       </div>
                     </div>
