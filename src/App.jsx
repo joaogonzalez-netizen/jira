@@ -1214,14 +1214,14 @@ function DevelopersScreen() {
 
   const tasks = useMemo(() => {
     return TASKS_SEED.filter((t) => {
-      if (period !== "all") {
-        const d = parseBRDate(t.created);
-        if (!d) return false;
-        if (period === "month" && monthKey(d) !== monthKey(NOW_DATE)) return false;
-        if (period === "10" && daysBetween(d, NOW_DATE) > 10) return false;
-        if (period === "30" && daysBetween(d, NOW_DATE) > 30) return false;
-        if (period === "90" && daysBetween(d, NOW_DATE) > 90) return false;
-      }
+      if (t.stage !== "Concluído") return true; // status em andamento: sempre aparece, sem filtro de data
+      if (period === "all") return true;
+      const d = parseBRDate(t.dataConcl);
+      if (!d) return false;
+      if (period === "month" && monthKey(d) !== monthKey(NOW_DATE)) return false;
+      if (period === "10" && daysBetween(d, NOW_DATE) > 10) return false;
+      if (period === "30" && daysBetween(d, NOW_DATE) > 30) return false;
+      if (period === "90" && daysBetween(d, NOW_DATE) > 90) return false;
       return true;
     });
   }, [period, TASKS_SEED]);
@@ -1285,12 +1285,13 @@ function DevelopersScreen() {
 
       <div className="flex flex-wrap items-center" style={{ gap: 8, marginTop: 14 }}>
         <FilterSelect T={T} value={period} onChange={setPeriod} options={[
-          { value: "all", label: "Todo o período" },
-          { value: "month", label: "Mês atual" },
-          { value: "10", label: "Últimos 10 dias" },
-          { value: "30", label: "Últimos 30 dias" },
-          { value: "90", label: "Últimos 90 dias" },
+          { value: "all", label: "Concluídos: todo o período" },
+          { value: "month", label: "Concluídos no mês atual" },
+          { value: "10", label: "Concluídos nos últ. 10 dias" },
+          { value: "30", label: "Concluídos nos últ. 30 dias" },
+          { value: "90", label: "Concluídos nos últ. 90 dias" },
         ]} />
+        <span style={{ fontSize: 11, color: T.ink2, fontFamily: "'Inter Tight', sans-serif" }}>Filtra só quem está Concluído — os demais status sempre aparecem</span>
       </div>
 
       <SectionTitle title="Visão geral — todos os desenvolvedores" sub="Totalizadores do recorte atual, sem precisar selecionar ninguém" />
