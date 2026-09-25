@@ -1230,14 +1230,32 @@ function DevelopersScreen() {
     const map = {};
     tasks.forEach((t) => { if (t.developer) (map[t.developer] || (map[t.developer] = [])).push(t); });
     return Object.entries(map)
-      .map(([name, list]) => ({
-        name,
-        count: list.length,
-        ativoCount: list.filter((t) => ACTIVE_STAGES.includes(t.stage)).length,
-        doneCount: list.filter((t) => t.stage === "Concluído").length,
-      }))
+      .map(([name, list]) => {
+        const ativo = list.filter((t) => ACTIVE_STAGES.includes(t.stage));
+        const agingArr = ativo.map((t) => daysBetween(parseBRDate(t.created), NOW_DATE)).filter((v) => v !== null);
+        return {
+          name,
+          count: list.length,
+          ativoCount: ativo.length,
+          doneCount: list.filter((t) => t.stage === "Concluído").length,
+          avgAging: agingArr.length ? Math.round(agingArr.reduce((a, b) => a + b, 0) / agingArr.length) : 0,
+        };
+      })
       .sort((a, b) => b.count - a.count);
   }, [tasks]);
+
+  const totals = useMemo(() => {
+    const withDev = tasks.filter((t) => t.developer);
+    const ativo = withDev.filter((t) => ACTIVE_STAGES.includes(t.stage));
+    const agingArr = ativo.map((t) => daysBetween(parseBRDate(t.created), NOW_DATE)).filter((v) => v !== null);
+    return {
+      devCount: devs.length,
+      total: withDev.length,
+      ativoCount: ativo.length,
+      doneCount: withDev.filter((t) => t.stage === "Concluído").length,
+      avgAging: agingArr.length ? Math.round(agingArr.reduce((a, b) => a + b, 0) / agingArr.length) : 0,
+    };
+  }, [tasks, devs]);
 
   useEffect(() => {
     if (selectedDev && !devs.some((d) => d.name === selectedDev)) setSelectedDev(null);
@@ -1275,7 +1293,49 @@ function DevelopersScreen() {
         ]} />
       </div>
 
-      <div className="flex" style={{ gap: 20, marginTop: 18, alignItems: "flex-start" }}>
+      <SectionTitle title="Visão geral — todos os desenvolvedores" sub="Totalizadores do recorte atual, sem precisar selecionar ninguém" />
+      <div className="flex flex-wrap" style={{ gap: 10 }}>
+        <AnaliseKpi label="Desenvolvedores ativos" value={totals.devCount} />
+        <AnaliseKpi label="Total de cards" value={totals.total} />
+        <AnaliseKpi label="Em andamento agora" value={totals.ativoCount} tone="sky" />
+        <AnaliseKpi label="Concluídos no recorte" value={totals.doneCount} tone="emerald" />
+        <AnaliseKpi label="Aging médio geral" value={`${totals.avgAging} dias`} tone="amber" />
+      </div>
+
+      <div style={{ marginTop: 14, borderRadius: 12, border: `1px solid ${T.border2}`, overflow: "hidden" }}>
+        <div className="flex items-center" style={{ padding: "8px 12px", background: T.bg2, fontSize: 11, fontWeight: 600, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>
+          <span style={{ flex: 1 }}>Desenvolvedor</span>
+          <span style={{ width: 80, textAlign: "right" }}>Total</span>
+          <span style={{ width: 100, textAlign: "right" }}>Em andamento</span>
+          <span style={{ width: 100, textAlign: "right" }}>Concluídos</span>
+          <span style={{ width: 110, textAlign: "right" }}>Aging médio</span>
+        </div>
+        {devs.length === 0 && (
+          <p style={{ padding: 14, fontSize: 12, color: T.ink2, fontFamily: "'Inter Tight', sans-serif", background: T.bg1 }}>Nenhum card com desenvolvedor no recorte atual.</p>
+        )}
+        {devs.map((d, i) => (
+          <button
+            key={d.name}
+            onClick={() => setSelectedDev(d.name)}
+            className="flex items-center"
+            style={{ width: "100%", padding: "8px 12px", background: d.name === selectedDev ? palette.insightBg : T.bg1, borderTop: i === 0 ? "none" : `1px solid ${T.border2}`, borderLeft: "none", borderRight: "none", borderBottom: "none", cursor: "pointer", textAlign: "left", fontFamily: "'Inter Tight', sans-serif" }}
+          >
+            <span className="flex items-center" style={{ flex: 1, gap: 8, minWidth: 0 }}>
+              <span style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 20, height: 20, borderRadius: 999, background: T.bg2, color: T.ink0, fontSize: 9, fontWeight: 700, textTransform: "uppercase", flexShrink: 0 }}>
+                {initials(d.name)}
+              </span>
+              <span style={{ fontSize: 12.5, fontWeight: 500, color: T.ink0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.name}</span>
+            </span>
+            <span style={{ width: 80, textAlign: "right", fontSize: 12.5, color: T.ink0 }}>{d.count}</span>
+            <span style={{ width: 100, textAlign: "right", fontSize: 12.5, color: T.ink0 }}>{d.ativoCount}</span>
+            <span style={{ width: 100, textAlign: "right", fontSize: 12.5, color: T.ink0 }}>{d.doneCount}</span>
+            <span style={{ width: 110, textAlign: "right", fontSize: 12.5, color: T.ink0 }}>{d.avgAging} dias</span>
+          </button>
+        ))}
+      </div>
+
+      <SectionTitle title="Detalhe por desenvolvedor" sub="Selecione um nome (na tabela acima ou na lista) para ver os cards" />
+      <div className="flex" style={{ gap: 20, alignItems: "flex-start" }}>
         <div style={{ width: 220, flexShrink: 0, borderRadius: 12, border: `1px solid ${T.border2}`, background: T.bg1, overflow: "hidden" }}>
           {devs.length === 0 && (
             <p style={{ padding: 14, fontSize: 12, color: T.ink2, fontFamily: "'Inter Tight', sans-serif" }}>Nenhum card com desenvolvedor no recorte atual.</p>
