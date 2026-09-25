@@ -736,7 +736,7 @@ function AnaliseScreen() {
   };
   const sum = (arr, key) => arr.reduce((a, o) => a + (o[key] || 0), 0);
 
-  const [period, setPeriod] = useState("all");
+  const [period, setPeriod] = useState("10");
   const [etapa, setEtapa] = useState("all");
   const [issueType, setIssueType] = useState("all");
   const [origem, setOrigem] = useState("all");
@@ -758,7 +758,7 @@ function AnaliseScreen() {
     return n.size ? n : new Set(PRODUCTS); // nunca deixa vazio
   });
   const resetFilters = () => {
-    setPeriod("all"); setEtapa("all"); setIssueType("all"); setOrigem("all"); setTipoEntrega("all");
+    setPeriod("10"); setEtapa("all"); setIssueType("all"); setOrigem("all"); setTipoEntrega("all");
     setAssignee("all"); setReporter("all");
     setSelectedProducts(new Set(PRODUCTS));
   };
@@ -777,6 +777,7 @@ function AnaliseScreen() {
         const d = parseBRDate(t.created);
         if (!d) return false;
         if (period === "month" && monthKey(d) !== monthKey(NOW_DATE)) return false;
+        if (period === "10" && daysBetween(d, NOW_DATE) > 10) return false;
         if (period === "30" && daysBetween(d, NOW_DATE) > 30) return false;
         if (period === "90" && daysBetween(d, NOW_DATE) > 90) return false;
       }
@@ -862,6 +863,7 @@ function AnaliseScreen() {
         <FilterSelect T={T} value={period} onChange={setPeriod} options={[
           { value: "all", label: "Todo o período" },
           { value: "month", label: "Mês atual" },
+          { value: "10", label: "Últimos 10 dias" },
           { value: "30", label: "Últimos 30 dias" },
           { value: "90", label: "Últimos 90 dias" },
         ]} />
