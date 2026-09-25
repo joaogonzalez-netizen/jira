@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { ChevronUp, ChevronDown, ChevronRight, ChevronLeft, X, BarChart3, Sun, Moon, Calendar, Plus, Minus, RefreshCw, LogOut, Lock, Layers, Trash2 } from "lucide-react";
+import { ChevronUp, ChevronDown, ChevronRight, ChevronLeft, X, BarChart3, Sun, Moon, Calendar, Plus, Minus, RefreshCw, LogOut, Lock, Layers, Trash2, Users } from "lucide-react";
 import { BarChart, Bar, LineChart, Line, PieChart, Pie, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell, LabelList } from "recharts";
 import storage from "./lib/storage";
 import { AuthProvider, useAuth } from "./lib/auth-context";
@@ -1199,6 +1199,219 @@ function EpicBar({ epic, onDragStart, onOpen, onResize, onRemove, canEdit }) {
   );
 }
 
+/* =====================================================================
+   DESENVOLVEDORES — visão geral por pessoa + cards que cada um trabalhou
+   ===================================================================== */
+
+function DevelopersScreen() {
+  const { T, PRODUCT_STYLE, TIPO_STYLE, palette } = useTheme();
+  const { tasks: TASKS_SEED } = useData();
+  const rcAxis = { fill: T.ink1, fontSize: 11.5, fontFamily: "'Inter Tight', sans-serif" };
+  const rcTooltip = { contentStyle: { background: T.bg1, border: `1px solid ${T.border2}`, borderRadius: 8, fontSize: 12, fontFamily: "'Inter Tight', sans-serif" }, labelStyle: { color: T.ink0 }, itemStyle: { color: T.ink0 } };
+
+  const [period, setPeriod] = useState("10");
+  const [selectedDev, setSelectedDev] = useState(null);
+
+  const tasks = useMemo(() => {
+    return TASKS_SEED.filter((t) => {
+      if (period !== "all") {
+        const d = parseBRDate(t.created);
+        if (!d) return false;
+        if (period === "month" && monthKey(d) !== monthKey(NOW_DATE)) return false;
+        if (period === "10" && daysBetween(d, NOW_DATE) > 10) return false;
+        if (period === "30" && daysBetween(d, NOW_DATE) > 30) return false;
+        if (period === "90" && daysBetween(d, NOW_DATE) > 90) return false;
+      }
+      return true;
+    });
+  }, [period, TASKS_SEED]);
+
+  const devs = useMemo(() => {
+    const map = {};
+    tasks.forEach((t) => { if (t.developer) (map[t.developer] || (map[t.developer] = [])).push(t); });
+    return Object.entries(map)
+      .map(([name, list]) => ({
+        name,
+        count: list.length,
+        ativoCount: list.filter((t) => ACTIVE_STAGES.includes(t.stage)).length,
+        doneCount: list.filter((t) => t.stage === "Concluído").length,
+      }))
+      .sort((a, b) => b.count - a.count);
+  }, [tasks]);
+
+  useEffect(() => {
+    if (selectedDev && !devs.some((d) => d.name === selectedDev)) setSelectedDev(null);
+    if (!selectedDev && devs.length) setSelectedDev(devs[0].name);
+  }, [devs, selectedDev]);
+
+  const detail = useMemo(() => {
+    if (!selectedDev) return null;
+    const list = tasks.filter((t) => t.developer === selectedDev).sort((a, b) => {
+      const da = parseBRDate(a.created), db = parseBRDate(b.created);
+      return (db ? db.getTime() : 0) - (da ? da.getTime() : 0);
+    });
+    const ativo = list.filter((t) => ACTIVE_STAGES.includes(t.stage));
+    const agingArr = ativo.map((t) => daysBetween(parseBRDate(t.created), NOW_DATE)).filter((v) => v !== null);
+    const avgAging = agingArr.length ? Math.round(agingArr.reduce((a, b) => a + b, 0) / agingArr.length) : 0;
+    const done = list.filter((t) => t.stage === "Concluído").length;
+    const stageDist = STAGES.map((s) => ({ stage: s, count: list.filter((t) => t.stage === s).length })).filter((r) => r.count > 0);
+    const byProduct = PRODUCTS.map((p) => ({ name: p, value: list.filter((t) => t.project === p).length })).filter((r) => r.value > 0);
+    const byTipo = LAYERS.map((l) => ({ name: l, value: list.filter((t) => layerOf(t) === l).length })).filter((r) => r.value > 0);
+    return { list, ativoCount: ativo.length, avgAging, done, stageDist, byProduct, byTipo };
+  }, [selectedDev, tasks]);
+
+  return (
+    <div style={{ flex: 1, overflowY: "auto", padding: "20px 24px 40px" }}>
+      <h1 style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", fontWeight: 700, fontSize: 18, color: T.ink0 }}>Desenvolvedores</h1>
+      <p style={{ fontSize: 12, color: T.ink1, marginTop: 2 }}>Visão geral por pessoa e os cards que cada um trabalhou (campo Desenvolvedor do Jira)</p>
+
+      <div className="flex flex-wrap items-center" style={{ gap: 8, marginTop: 14 }}>
+        <FilterSelect T={T} value={period} onChange={setPeriod} options={[
+          { value: "all", label: "Todo o período" },
+          { value: "month", label: "Mês atual" },
+          { value: "10", label: "Últimos 10 dias" },
+          { value: "30", label: "Últimos 30 dias" },
+          { value: "90", label: "Últimos 90 dias" },
+        ]} />
+      </div>
+
+      <div className="flex" style={{ gap: 20, marginTop: 18, alignItems: "flex-start" }}>
+        <div style={{ width: 220, flexShrink: 0, borderRadius: 12, border: `1px solid ${T.border2}`, background: T.bg1, overflow: "hidden" }}>
+          {devs.length === 0 && (
+            <p style={{ padding: 14, fontSize: 12, color: T.ink2, fontFamily: "'Inter Tight', sans-serif" }}>Nenhum card com desenvolvedor no recorte atual.</p>
+          )}
+          {devs.map((d) => {
+            const active = d.name === selectedDev;
+            return (
+              <button
+                key={d.name}
+                onClick={() => setSelectedDev(d.name)}
+                style={{
+                  display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", gap: 8, padding: "9px 12px",
+                  border: "none", borderBottom: `1px solid ${T.border2}`, cursor: "pointer", textAlign: "left",
+                  background: active ? palette.insightBg : "transparent",
+                }}
+              >
+                <span className="flex items-center" style={{ gap: 8, minWidth: 0 }}>
+                  <span style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 20, height: 20, borderRadius: 999, background: T.bg2, color: T.ink0, fontSize: 9, fontWeight: 700, textTransform: "uppercase", flexShrink: 0, fontFamily: "'Inter Tight', sans-serif" }}>
+                    {initials(d.name)}
+                  </span>
+                  <span style={{ fontSize: 12.5, fontWeight: active ? 600 : 500, color: T.ink0, fontFamily: "'Inter Tight', sans-serif", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.name}</span>
+                </span>
+                <span style={{ fontSize: 11, color: T.ink2, fontFamily: "'Inter Tight', sans-serif", flexShrink: 0 }}>{d.count}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {!detail && <p style={{ fontSize: 12.5, color: T.ink2, fontFamily: "'Inter Tight', sans-serif" }}>Selecione um desenvolvedor na lista ao lado.</p>}
+          {detail && (
+            <>
+              <div className="flex flex-wrap" style={{ gap: 10 }}>
+                <AnaliseKpi label="Total no recorte" value={detail.list.length} />
+                <AnaliseKpi label="Em andamento agora" value={detail.ativoCount} tone="sky" />
+                <AnaliseKpi label="Concluídos no recorte" value={detail.done} tone="emerald" />
+                <AnaliseKpi label="Aging médio (ativos)" value={`${detail.avgAging} dias`} tone="amber" />
+              </div>
+
+              <SectionTitle title="Volume por etapa" />
+              <div style={{ height: Math.max(120, detail.stageDist.length * 34) }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={detail.stageDist} layout="vertical" margin={{ left: 10, right: 50 }}>
+                    <CartesianGrid stroke={T.border2} horizontal={false} />
+                    <XAxis type="number" tick={rcAxis} axisLine={{ stroke: T.border2 }} tickLine={false} allowDecimals={false} />
+                    <YAxis type="category" dataKey="stage" tick={rcAxis} axisLine={{ stroke: T.border2 }} tickLine={false} width={110} />
+                    <Tooltip {...rcTooltip} formatter={(v) => [`${v} issues`, ""]} />
+                    <Bar dataKey="count" radius={[3, 3, 3, 3]} maxBarSize={18}>
+                      {detail.stageDist.map((entry, i) => (
+                        <Cell key={i} fill={entry.stage === "Concluído" ? palette.stageDoneColor : palette.stageBarColor} />
+                      ))}
+                      <LabelList dataKey="count" content={(props) => {
+                        const { x, y, width, height, value } = props;
+                        if (!value) return null;
+                        const total = detail.list.length;
+                        const pct = total ? Math.round((100 * value) / total) : 0;
+                        return (
+                          <text x={x + width + 6} y={y + height / 2} dy={4} fontSize={11} fill={T.ink1} fontFamily="'Inter Tight', sans-serif">
+                            {value} ({pct}%)
+                          </text>
+                        );
+                      }} />
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+
+              <div className="flex flex-wrap" style={{ gap: 20, marginTop: 4 }}>
+                {detail.byProduct.length > 0 && (
+                  <div style={{ flex: 1, minWidth: 260 }}>
+                    <SectionTitle title="Por produto" />
+                    <div style={{ height: 180 }}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={detail.byProduct} layout="vertical" margin={{ left: 10, right: 50 }}>
+                          <CartesianGrid stroke={T.border2} horizontal={false} />
+                          <XAxis type="number" tick={rcAxis} axisLine={{ stroke: T.border2 }} tickLine={false} allowDecimals={false} />
+                          <YAxis type="category" dataKey="name" tick={rcAxis} axisLine={{ stroke: T.border2 }} tickLine={false} width={90} />
+                          <Tooltip {...rcTooltip} formatter={(v) => [`${v} issues`, ""]} />
+                          <Bar dataKey="value" radius={[3, 3, 3, 3]} maxBarSize={16}>
+                            {detail.byProduct.map((entry, i) => (
+                              <Cell key={i} fill={(PRODUCT_STYLE[entry.name] || PRODUCT_STYLE["Backoffice"]).primary} />
+                            ))}
+                          </Bar>
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                )}
+                {detail.byTipo.length > 0 && (
+                  <div style={{ flex: 1, minWidth: 260 }}>
+                    <SectionTitle title="Por tipo de entrega" />
+                    <div style={{ height: 180 }}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={detail.byTipo} layout="vertical" margin={{ left: 10, right: 50 }}>
+                          <CartesianGrid stroke={T.border2} horizontal={false} />
+                          <XAxis type="number" tick={rcAxis} axisLine={{ stroke: T.border2 }} tickLine={false} allowDecimals={false} />
+                          <YAxis type="category" dataKey="name" tick={rcAxis} axisLine={{ stroke: T.border2 }} tickLine={false} width={110} />
+                          <Tooltip {...rcTooltip} formatter={(v) => [`${v} issues`, ""]} />
+                          <Bar dataKey="value" radius={[3, 3, 3, 3]} maxBarSize={16}>
+                            {detail.byTipo.map((entry, i) => (
+                              <Cell key={i} fill={(TIPO_STYLE[entry.name] || TIPO_STYLE["Sem classificação"]).dot} />
+                            ))}
+                          </Bar>
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <SectionTitle title="Cards" sub={`${detail.list.length} issues no recorte atual`} />
+              <div style={{ borderRadius: 12, border: `1px solid ${T.border2}`, overflow: "hidden" }}>
+                {detail.list.map((t, i) => {
+                  const prod = PRODUCT_STYLE[t.project] || PRODUCT_STYLE["Backoffice"];
+                  return (
+                    <div key={t.key} className="flex items-center justify-between" style={{ gap: 10, padding: "9px 12px", background: T.bg1, borderTop: i === 0 ? "none" : `1px solid ${T.border2}` }}>
+                      <div className="flex items-center" style={{ gap: 8, minWidth: 0 }}>
+                        <a href={jiraUrl(t.key)} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, fontWeight: 500, color: T.ink1, fontFamily: "'Inter Tight', sans-serif", textDecoration: "none", flexShrink: 0 }}>{t.key}</a>
+                        <span style={{ fontSize: 12.5, color: T.ink0, fontFamily: "'Inter Tight', sans-serif", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.summary}</span>
+                      </div>
+                      <div className="flex items-center" style={{ gap: 6, flexShrink: 0 }}>
+                        <Badge bg={prod.subtle} color={prod.text}>{t.project}</Badge>
+                        <Badge bg={T.bg2} color={T.ink1}>{t.stage || t.status}</Badge>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function RoadmapScreen() {
   const { T, PRODUCT_STYLE } = useTheme();
   // Sombra o NOW_DATE fixo do módulo por um valor vivo, senão a linha de "hoje"
@@ -2015,7 +2228,7 @@ function AppShell() {
 
       <div style={{ borderBottom: `1px solid ${T.border1}`, padding: "0 20px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 4, height: 46 }}>
         <div className="flex" style={{ alignItems: "center", gap: 4, height: 46 }}>
-          {[["roadmap", "Roadmap", Calendar], ["iniciativas", "Iniciativas", Layers], ["analises", "Análises", BarChart3]].map(([key, label, Icon]) => {
+          {[["roadmap", "Roadmap", Calendar], ["iniciativas", "Iniciativas", Layers], ["analises", "Análises", BarChart3], ["desenvolvedores", "Desenvolvedores", Users]].map(([key, label, Icon]) => {
             const active = menu === key;
             return (
               <button
@@ -2082,7 +2295,7 @@ function AppShell() {
         </div>
       </div>
 
-      {menu === "iniciativas" ? <IniciativasScreen /> : menu === "analises" ? <AnaliseScreen /> : <RoadmapScreen />}
+      {menu === "iniciativas" ? <IniciativasScreen /> : menu === "analises" ? <AnaliseScreen /> : menu === "desenvolvedores" ? <DevelopersScreen /> : <RoadmapScreen />}
     </div>
   );
 }
