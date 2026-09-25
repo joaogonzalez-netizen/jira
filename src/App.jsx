@@ -1265,6 +1265,8 @@ function DevelopersScreen() {
   const detail = useMemo(() => {
     if (!selectedDev) return null;
     const list = tasks.filter((t) => t.developer === selectedDev).sort((a, b) => {
+      const sa = STAGES.indexOf(a.stage), sb = STAGES.indexOf(b.stage);
+      if (sa !== sb) return (sa === -1 ? STAGES.length : sa) - (sb === -1 ? STAGES.length : sb);
       const da = parseBRDate(a.created), db = parseBRDate(b.created);
       return (db ? db.getTime() : 0) - (da ? da.getTime() : 0);
     });
