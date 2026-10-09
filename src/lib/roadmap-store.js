@@ -130,7 +130,9 @@ export function summarizeRoadmap(state) {
 
 /** Aplica o que o servidor registrou (nome novo / cancelado) por cima dos épicos
     da planilha — vale até a planilha sincronizar de novo com o Jira. */
-export function applyEpicOverrides(epics, overrides) {
+const OVERRIDE_TTL_MS = 24 * 60 * 60 * 1000;
+
+export function applyEpicOverrides(epics, overrides, now = Date.now()) {
   const o = overrides || {};
   if (!Object.keys(o).length) return epics;
   const out = [];
@@ -138,7 +140,14 @@ export function applyEpicOverrides(epics, overrides) {
     const ov = o[e.key];
     if (!ov) { out.push(e); continue; }
     if (ov.removed) continue;
-    out.push(ov.summary && ov.summary !== e.summary ? { ...e, summary: ov.summary } : e);
+    // Override velho (>24h) deixa de valer: a planilha já teve tempo de alcançar o Jira.
+    const expired = !!ov.at && now - Date.parse(ov.at) > OVERRIDE_TTL_MS;
+    let next = e;
+    if (!expired && ov.summary && ov.summary !== e.summary) next = { ...next, summary: ov.summary };
+    if (!expired && Object.prototype.hasOwnProperty.call(ov, "assignee") && (ov.assignee || null) !== (e.assignee || null)) {
+      next = { ...next, assignee: ov.assignee || null };
+    }
+    out.push(next);
   }
   return out;
 }

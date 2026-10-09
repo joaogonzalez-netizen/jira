@@ -1,5 +1,5 @@
 import { configError, loadConfig, resolveSessionFromCookie } from "../../src/server/roadmap-core.js";
-import { handleCancelEpic, handleCreateEpic, handleRenameEpic, handleStatus, loadJiraConfig } from "../../src/server/jira-core.js";
+import { handleCancelEpic, handleCreateEpic, handleStatus, handleUpdateEpic, loadJiraConfig } from "../../src/server/jira-core.js";
 import { jsonBody, sendJson } from "../_lib/respond.js";
 
 const rcfg = loadConfig(process.env);
@@ -14,7 +14,7 @@ export default async function handler(req, res) {
   try {
     const session = await resolveSessionFromCookie(req.headers.cookie, rcfg);
     if (req.method === "POST") return sendJson(res, await handleCreateEpic(jsonBody(req), session, rcfg, jira));
-    if (req.method === "PATCH") return sendJson(res, await handleRenameEpic(jsonBody(req), session, rcfg, jira));
+    if (req.method === "PATCH") return sendJson(res, await handleUpdateEpic(jsonBody(req), session, rcfg, jira));
     if (req.method === "DELETE") {
       const key = typeof req.query?.key === "string" ? req.query.key : null;
       return sendJson(res, await handleCancelEpic({ key }, session, rcfg, jira));

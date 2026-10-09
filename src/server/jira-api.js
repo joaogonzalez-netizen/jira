@@ -5,7 +5,7 @@
  * Node, igual a `roadmap-api.js`.
  */
 import { configError, loadConfig, resolveSessionFromCookie, sharedMemoryKv } from "./roadmap-core.js";
-import { handleCancelEpic, handleCreateEpic, handleRenameEpic, handleStatus, loadJiraConfig } from "./jira-core.js";
+import { handleCancelEpic, handleCreateEpic, handleListAssignees, handleStatus, handleUpdateEpic, loadJiraConfig } from "./jira-core.js";
 
 const MAX_BODY_BYTES = 64 * 1024;
 
@@ -50,18 +50,24 @@ export function jiraApiPlugin(env) {
   const handler = async (req, res, next) => {
     if (!req.url || !req.url.startsWith("/api/jira")) return next();
     const [route, query] = req.url.split("?");
-    if (route.replace(/\/+$/, "") !== "/api/jira/epics") {
+    const path = route.replace(/\/+$/, "");
+    if (path !== "/api/jira/epics" && path !== "/api/jira/assignees") {
       return sendJson(res, { status: 404, body: { message: "Rota não encontrada" } });
     }
-    if (req.method === "GET") return sendJson(res, handleStatus(jira));
+    if (path === "/api/jira/epics" && req.method === "GET") return sendJson(res, handleStatus(jira));
 
     const misconfigured = configError(rcfg);
     if (misconfigured) return sendJson(res, misconfigured);
 
     try {
       const session = await resolveSessionFromCookie(req.headers.cookie, rcfg);
+      if (path === "/api/jira/assignees") {
+        if (req.method !== "GET") return sendJson(res, { status: 405, body: { message: "Método não permitido" } });
+        const params = new URLSearchParams(query || "");
+        return sendJson(res, await handleListAssignees({ key: params.get("key"), product: params.get("product") }, session, jira));
+      }
       if (req.method === "POST") return sendJson(res, await handleCreateEpic(await readJsonBody(req), session, rcfg, jira));
-      if (req.method === "PATCH") return sendJson(res, await handleRenameEpic(await readJsonBody(req), session, rcfg, jira));
+      if (req.method === "PATCH") return sendJson(res, await handleUpdateEpic(await readJsonBody(req), session, rcfg, jira));
       if (req.method === "DELETE") {
         const key = new URLSearchParams(query || "").get("key");
         return sendJson(res, await handleCancelEpic({ key }, session, rcfg, jira));

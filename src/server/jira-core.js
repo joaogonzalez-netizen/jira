@@ -236,10 +236,15 @@ async function createJiraEpic(j, projectKey, summary, description, tipo) {
 }
 
 async function getEpicIssue(j, key) {
-  const issue = await jiraFetch(j, "GET", `/rest/api/3/issue/${key}?fields=status,issuetype,summary`);
+  const issue = await jiraFetch(j, "GET", `/rest/api/3/issue/${key}?fields=status,issuetype,summary,assignee`);
   const fields = issue?.fields || {};
   if (!isEpicType(fields.issuetype)) throw new JiraError(409, `${key} não é um épico no Jira — não vou alterar.`);
-  return { summary: fields.summary || "", status: fields.status?.name || "" };
+  const a = fields.assignee;
+  return {
+    summary: fields.summary || "",
+    status: fields.status?.name || "",
+    assignee: a && a.accountId ? { accountId: a.accountId, displayName: a.displayName || "" } : null,
+  };
 }
 
 /* ---------------------------------------------------------------------
@@ -274,6 +279,66 @@ function cleanDescription(v) {
   const t = v.trim();
   if (t.length > MAX_DESCRIPTION) throw new JiraError(400, `A descrição passa de ${MAX_DESCRIPTION} caracteres`);
   return t;
+}
+
+/* ------------------------------ Responsável ------------------------------ */
+
+const ACCOUNT_ID_RE = /^[A-Za-z0-9:_-]{6,128}$/;
+
+/** `undefined` = sem mudança · `null` = remover o responsável · objeto = atribuir.
+    O nome é obrigatório (é o que a tela mostra); `accountId` é opcional — sem ele,
+    o servidor resolve a pessoa pelo nome entre as atribuíveis ao épico. */
+function cleanAssigneeInput(v) {
+  if (v === undefined) return undefined;
+  if (v === null) return null;
+  if (typeof v !== "object" || Array.isArray(v)) throw new JiraError(400, "Responsável inválido");
+  const accountId = v.accountId === undefined || v.accountId === null || v.accountId === "" ? null : String(v.accountId);
+  if (accountId !== null && !ACCOUNT_ID_RE.test(accountId)) throw new JiraError(400, "Responsável inválido");
+  const displayName = typeof v.displayName === "string" ? v.displayName.trim().slice(0, 120) : "";
+  if (!displayName) throw new JiraError(400, "Informe o nome do responsável");
+  return { accountId, displayName };
+}
+
+/** Quem o Jira aceita como responsável (ativo, pessoa — sem apps/bots), por projeto ou por épico. */
+async function searchAssignable(j, { projectKey, issueKey, query }) {
+  const qs = new URLSearchParams({ maxResults: "200" });
+  if (issueKey) qs.set("issueKey", issueKey);
+  else qs.set("project", projectKey);
+  if (query) qs.set("query", query);
+  const users = await jiraFetch(j, "GET", `/rest/api/3/user/assignable/search?${qs}`);
+  return (Array.isArray(users) ? users : [])
+    .filter((u) => u && typeof u.accountId === "string" && u.active !== false && (!u.accountType || u.accountType === "atlassian"))
+    .map((u) => ({ accountId: u.accountId, displayName: String(u.displayName || "").trim() }))
+    .filter((u) => u.displayName)
+    .sort((a, b) => a.displayName.localeCompare(b.displayName, "pt-BR"));
+}
+
+async function resolveAssigneeId(j, key, a) {
+  if (a.accountId) return a.accountId;
+  const users = await searchAssignable(j, { issueKey: key, query: a.displayName });
+  const wanted = norm(a.displayName);
+  const exact = users.filter((u) => norm(u.displayName) === wanted);
+  if (exact.length === 1) return exact[0].accountId;
+  if (exact.length > 1) throw new JiraError(409, `Há mais de uma pessoa chamada "${a.displayName}" no Jira — escolha pelo painel do épico.`);
+  throw new JiraError(404, `Não encontrei "${a.displayName}" entre as pessoas que podem ser responsáveis por ${key}.`);
+}
+
+const assignInJira = (j, key, accountId) => jiraFetch(j, "PUT", `/rest/api/3/issue/${key}/assignee`, { accountId });
+
+/** Lista de pessoas pro select de Responsável (só admin/super). `product` p/ rascunho, `key` p/ épico do Jira. */
+export async function handleListAssignees(input, session, j) {
+  const cfgErr = jiraConfigError(j);
+  if (cfgErr) return cfgErr;
+  if (!canWriteSession(session)) return forbidden("Sem permissão para listar pessoas do Jira");
+  return wrap(async () => {
+    if (input?.key) {
+      if (!isJiraKey(input.key)) return bad("Chave de épico do Jira inválida");
+      return { status: 200, body: { users: await searchAssignable(j, { issueKey: input.key }) } };
+    }
+    const projectKey = PRODUCT_TO_PROJECT[input?.product];
+    if (!projectKey) return bad("Escolha o projeto para listar as pessoas");
+    return { status: 200, body: { users: await searchAssignable(j, { projectKey }) } };
+  });
 }
 
 const forbidden = (message = "Sem permissão para alterar épicos no Jira") => ({ status: 403, body: { message } });
@@ -346,6 +411,13 @@ const without = (list, key) => list.filter((k) => k !== key);
    Criar
    --------------------------------------------------------------------- */
 
+function warningFor(newKey, { descriptionDropped, assignFailure }) {
+  const parts = [];
+  if (descriptionDropped) parts.push("o Jira não aceitou a descrição na tela desse projeto — ela ficou só aqui");
+  if (assignFailure) parts.push(`não consegui definir o responsável (${assignFailure})`);
+  return parts.length ? { warning: `Épico ${newKey} criado, mas ${parts.join(" e ")}.` } : {};
+}
+
 export async function handleCreateEpic(input, session, rcfg, j) {
   const cfgErr = jiraConfigError(j);
   if (cfgErr) return cfgErr;
@@ -360,6 +432,7 @@ export async function handleCreateEpic(input, session, rcfg, j) {
     if (!projectKey) return bad("Escolha o produto (camada) antes de criar no Jira");
     const description = cleanDescription(input?.description);
     const tipo = cleanTipo(input?.tipo);
+    const assignee = cleanAssigneeInput(input?.assignee);
     const position = cleanPosition(input?.position);
     if (position && position.roadmapLane !== null && position.roadmapLane !== product) {
       return bad("A camada do épico precisa ser o produto escolhido");
@@ -381,6 +454,19 @@ export async function handleCreateEpic(input, session, rcfg, j) {
       status = issue?.fields?.status?.name || status;
     } catch { /* o status é só informativo */ }
 
+    // Responsável: depois de criado, pelo endpoint próprio de atribuição (não depende da tela de criação do projeto).
+    let assignedName = null;
+    let assignFailure = null;
+    if (assignee) {
+      try {
+        await assignInJira(j, newKey, await resolveAssigneeId(j, newKey, assignee));
+        assignedName = assignee.displayName;
+      } catch (e) {
+        if (!(e instanceof JiraError)) throw e;
+        assignFailure = e.message;
+      }
+    }
+
     const email = emailOf(session);
     const result = await mutateDoc(rcfg, (cur) => {
       if (!cur.customEpics.some((e) => e.key === oldKey)) return null;
@@ -390,7 +476,7 @@ export async function handleCreateEpic(input, session, rcfg, j) {
       positions[newKey] = position || oldPos || { roadmapLane: null, startWeek: null, durationWeeks: 2 };
       return touchDoc({
         ...cur,
-        customEpics: cur.customEpics.map((e) => (e.key === oldKey ? { ...e, key: newKey, project: product, summary, status, resumo: description || null, tipo: tipo || e.tipo || null } : e)),
+        customEpics: cur.customEpics.map((e) => (e.key === oldKey ? { ...e, key: newKey, project: product, summary, status, resumo: description || null, tipo: tipo || e.tipo || null, assignee: assignedName } : e)),
         positions,
         prioOrder: swapKey(cur.prioOrder, oldKey, newKey),
         filaProdutoOrder: swapKey(cur.filaProdutoOrder, oldKey, newKey),
@@ -405,7 +491,7 @@ export async function handleCreateEpic(input, session, rcfg, j) {
       status: 200,
       body: {
         ...viewDoc(result.doc), key: newKey, oldKey,
-        ...(descriptionDropped ? { warning: `Épico ${newKey} criado, mas o Jira não aceitou a descrição na tela desse projeto — ela ficou só aqui.` } : {}),
+        ...warningFor(newKey, { descriptionDropped, assignFailure }),
       },
     };
   });
@@ -432,32 +518,52 @@ async function renameInJira(j, key, summary) {
   }
 }
 
-export async function handleRenameEpic(input, session, rcfg, j) {
+/** Altera o nome e/ou o responsável de um épico do Jira (e do Roadmap, no mesmo passo). */
+export async function handleUpdateEpic(input, session, rcfg, j) {
   const cfgErr = jiraConfigError(j);
   if (cfgErr) return cfgErr;
   if (!canWriteSession(session)) return forbidden();
   return wrap(async () => {
     const key = input?.key;
-    const summary = cleanSummary(input?.summary);
     if (!isJiraKey(key)) return bad("Chave de épico do Jira inválida");
-    if (!summary) return bad(`O nome do épico é obrigatório (até ${MAX_SUMMARY} caracteres)`);
+    const hasSummary = input?.summary !== undefined;
+    const summary = hasSummary ? cleanSummary(input.summary) : null;
+    if (hasSummary && !summary) return bad(`O nome do épico é obrigatório (até ${MAX_SUMMARY} caracteres)`);
+    const assignee = cleanAssigneeInput(input?.assignee);
+    if (!hasSummary && assignee === undefined) return bad("Nada para alterar");
 
     const { doc } = await readDoc(rcfg);
     if (!doc) return { status: 409, body: { code: "not-initialized", message: "O Roadmap ainda não foi migrado para o servidor" } };
     if (!mayTouchEpic(session, doc, key)) return forbidden("Esse épico não é seu");
 
     const current = await getEpicIssue(j, key);
-    if (current.summary !== summary) await renameInJira(j, key, summary);
+    const patch = {};
+    if (hasSummary) {
+      if (current.summary !== summary) await renameInJira(j, key, summary);
+      patch.summary = summary;
+    }
+    if (assignee !== undefined) {
+      if (assignee === null) {
+        if (current.assignee) await assignInJira(j, key, null);
+      } else {
+        const accountId = await resolveAssigneeId(j, key, assignee);
+        if (current.assignee?.accountId !== accountId) await assignInJira(j, key, accountId);
+      }
+      patch.assignee = assignee ? assignee.displayName : null;
+    }
 
+    const at = new Date().toISOString();
     const result = await mutateDoc(rcfg, (cur) => touchDoc({
       ...cur,
-      customEpics: cur.customEpics.map((e) => (e.key === key ? { ...e, summary } : e)),
-      epicOverrides: { ...cur.epicOverrides, [key]: { ...(cur.epicOverrides[key] || {}), summary } },
+      customEpics: cur.customEpics.map((e) => (e.key === key ? { ...e, ...patch } : e)),
+      epicOverrides: { ...cur.epicOverrides, [key]: { ...(cur.epicOverrides[key] || {}), ...patch, at } },
     }, emailOf(session)));
-    if (!result.ok) return { status: 409, body: { message: "Renomeado no Jira, mas não consegui atualizar o Roadmap. Recarregue a página." } };
+    if (!result.ok) return { status: 409, body: { message: "Atualizado no Jira, mas não consegui atualizar o Roadmap. Recarregue a página." } };
     return { status: 200, body: { ...viewDoc(result.doc), key } };
   });
 }
+
+export const handleRenameEpic = handleUpdateEpic;
 
 /* ---------------------------------------------------------------------
    Cancelar ("excluir")

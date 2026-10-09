@@ -442,6 +442,44 @@ export async function handleSnapshotGet(config) {
   }
 }
 
+const OVERRIDE_TTL_MS = 24 * 60 * 60 * 1000;
+const normName = (s) => String(s ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase();
+
+/** Tira dos overrides (nome novo / responsável / cancelado) o que a planilha já
+    alcançou ou o que passou de 24 h — assim uma mudança feita direto no Jira
+    depois não fica escondida por um override velho. `null` se nada mudou. */
+export function pruneOverrides(doc, sheetEpics, now = Date.now()) {
+  const byKey = new Map(sheetEpics.map((e) => [e.key, e]));
+  const next = {};
+  let changed = false;
+  for (const [key, ov] of Object.entries(doc.epicOverrides || {})) {
+    const sheet = byKey.get(key);
+    const o = { ...ov };
+    if (!sheet) {
+      if (o.removed) { changed = true; continue; } // a planilha já não lista o épico cancelado
+      next[key] = o;
+      continue;
+    }
+    const expired = !!o.at && now - Date.parse(o.at) > OVERRIDE_TTL_MS;
+    if ("summary" in o && (expired || sheet.summary === o.summary)) { delete o.summary; changed = true; }
+    if ("assignee" in o && (expired || normName(sheet.assignee) === normName(o.assignee))) { delete o.assignee; changed = true; }
+    if (!o.removed && !("summary" in o) && !("assignee" in o)) { changed = true; continue; }
+    next[key] = o;
+  }
+  return changed ? { ...doc, epicOverrides: next } : null;
+}
+
+async function pruneDocOverrides(config, epics, email) {
+  for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt++) {
+    const raw = await readRaw(config, STATE_KEY);
+    const doc = parseDoc(raw);
+    if (!doc) return;
+    const pruned = pruneOverrides(doc, epics);
+    if (!pruned) return;
+    if (await casWrite(config, STATE_KEY, raw, JSON.stringify(touchDoc(pruned, email)))) return;
+  }
+}
+
 export async function handleSnapshotPut(input, session, config) {
   if (!session || session.role !== "super") return forbidden("Só o superusuário publica a planilha sincronizada");
   if (!isPlainObject(input) || !Array.isArray(input.epics) || !Array.isArray(input.tasks)) {
@@ -453,6 +491,11 @@ export async function handleSnapshotPut(input, session, config) {
   const kv = await ensureConnected(config);
   await kv.set(SNAPSHOT_KEY, raw);
   await kv.set(SNAPSHOT_AT_KEY, syncedAt);
+  try {
+    await pruneDocOverrides(config, input.epics.filter((e) => e && typeof e.key === "string"), session.user?.email || null);
+  } catch (e) {
+    console.error("[roadmap] falha ao limpar overrides:", e); // o snapshot já foi gravado; a poda é só higiene
+  }
   return { status: 200, body: { syncedAt } };
 }
 

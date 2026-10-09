@@ -6,6 +6,8 @@ import {
   descriptionToAdf,
   handleCancelEpic,
   handleCreateEpic,
+  handleListAssignees,
+  handleUpdateEpic,
   handleRenameEpic,
   handleStatus,
   loadJiraConfig,
@@ -29,6 +31,12 @@ function fakeJira(opts = {}) {
   const counters = {};
   const epicType = { id: "10000", name: "Epic", hierarchyLevel: 1 };
   const storyType = { id: "10001", name: "Story", hierarchyLevel: 0 };
+  const users = opts.users || [
+    { accountId: "acc-ana-0001", displayName: "Ana Souza", active: true, accountType: "atlassian" },
+    { accountId: "acc-bruno-02", displayName: "Bruno Lima", active: true, accountType: "atlassian" },
+    { accountId: "acc-bot-0001", displayName: "Automation for Jira", active: true, accountType: "app" },
+    { accountId: "acc-old-0001", displayName: "Ex Funcionário", active: false, accountType: "atlassian" },
+  ];
   const projects = new Set(opts.projects || ["SELLER", "IA", "FLIX", "LOJA", "BACK", "ACADEMY"]);
   const reply = (status, body) => ({ ok: status >= 200 && status < 300, status, text: async () => (body === undefined ? "" : JSON.stringify(body)) });
   const defaultTransitions = [{ id: "11", name: "Em DEV", to: { name: "Em DEV" } }, { id: "21", name: "Cancelar", to: { name: "Cancelado" } }];
@@ -71,10 +79,20 @@ function fakeJira(opts = {}) {
       issues.set(key, { summary: f.summary, status: "Backlog", type: epicType });
       return reply(201, { id: "9999", key });
     }
+    if (method === "GET" && u.pathname === "/rest/api/3/user/assignable/search") {
+      const q = (u.searchParams.get("query") || "").toLowerCase();
+      return reply(200, users.filter((x) => !q || x.displayName.toLowerCase().includes(q)));
+    }
+    if (method === "PUT" && (m = u.pathname.match(/^\/rest\/api\/3\/issue\/([A-Z0-9]+-\d+)\/assignee$/))) {
+      if (opts.assignFail) return reply(opts.assignFail, { errorMessages: ["O usuário não pode ser responsável"] });
+      const it = issues.get(m[1]);
+      it.assignee = body.accountId ? users.find((x) => x.accountId === body.accountId) || { accountId: body.accountId, displayName: "?" } : null;
+      return reply(204);
+    }
     if (method === "GET" && (m = u.pathname.match(/^\/rest\/api\/3\/issue\/([A-Z0-9]+-\d+)$/))) {
       const it = issues.get(m[1]);
       if (!it) return reply(404, { errorMessages: ["Issue does not exist"] });
-      return reply(200, { key: m[1], fields: { summary: it.summary, status: { name: it.status }, issuetype: it.type } });
+      return reply(200, { key: m[1], fields: { summary: it.summary, status: { name: it.status }, issuetype: it.type, assignee: it.assignee ? { accountId: it.assignee.accountId, displayName: it.assignee.displayName } : null } });
     }
     if (method === "GET" && (m = u.pathname.match(/^\/rest\/api\/3\/issue\/([A-Z0-9]+-\d+)\/editmeta$/))) {
       return reply(200, { fields: opts.editmetaFields || { summary: { name: "Summary" } } });
@@ -576,4 +594,146 @@ test("tipo de entrega: sem createmeta e sem escolher, o Jira exige — mensagem 
   const r = await handleCreateEpic({ key: "NOVO-100", summary: "x", product: "STL IA" }, SUPER, rcfg, j);
   assert.equal(r.status, 400);
   assert.match(r.body.message, /exige o Tipo de entrega.*Inovação, Melhoria, Sustentação/);
+});
+
+/* -------------------------------- responsável -------------------------------- */
+
+test("listar pessoas atribuíveis: só ativas e não-apps, ordenadas; por projeto ou por épico", async () => {
+  const { jira, j } = await setup(withEpics());
+  const porProjeto = await handleListAssignees({ product: "STL IA" }, SUPER, j);
+  assert.equal(porProjeto.status, 200);
+  assert.deepEqual(porProjeto.body.users, [{ accountId: "acc-ana-0001", displayName: "Ana Souza" }, { accountId: "acc-bruno-02", displayName: "Bruno Lima" }]);
+  assert.ok(jira.calls.at(-1).path.includes("project=IA"), "consulta o projeto do produto");
+  const porEpico = await handleListAssignees({ key: "SELLER-1" }, ANDRE, j);
+  assert.equal(porEpico.status, 200);
+  assert.ok(jira.calls.at(-1).path.includes("issueKey=SELLER-1"));
+  noLeak(porProjeto);
+});
+
+test("listar pessoas: só admin/super, entradas válidas, e sem Jira configurado", async () => {
+  const { jira, j } = await setup();
+  assert.equal((await handleListAssignees({ product: "STL IA" }, LEITOR, j)).status, 403);
+  assert.equal((await handleListAssignees({ product: "STL IA" }, null, j)).status, 403);
+  assert.equal((await handleListAssignees({ product: "Inventado" }, SUPER, j)).status, 400);
+  assert.equal((await handleListAssignees({}, SUPER, j)).status, 400);
+  assert.equal((await handleListAssignees({ key: "NOVO-100" }, SUPER, j)).status, 400, "NOVO-* não existe no Jira");
+  assert.equal((await handleListAssignees({ key: "ia-1/../x" }, SUPER, j)).status, 400);
+  assert.equal(jira.calls.length, 0);
+  const off = loadJiraConfig({}, jira.fetch);
+  assert.equal((await handleListAssignees({ product: "STL IA" }, SUPER, off)).status, 503);
+});
+
+test("criar com responsável: atribui no Jira depois de criar e guarda o nome no épico", async () => {
+  const { rcfg, jira, j } = await setup();
+  const r = await handleCreateEpic({ key: "NOVO-100", summary: "Com dono", product: "STL IA", assignee: { accountId: "acc-ana-0001", displayName: "Ana Souza" } }, SUPER, rcfg, j);
+  assert.equal(r.status, 200);
+  assert.equal(r.body.warning, undefined);
+  const put = jira.calls.find((c) => c.method === "PUT" && c.path === "/rest/api/3/issue/IA-301/assignee");
+  assert.deepEqual(put.body, { accountId: "acc-ana-0001" });
+  assert.equal(jira.issues.get("IA-301").assignee.displayName, "Ana Souza");
+  assert.equal((await state(rcfg)).state.customEpics.find((e) => e.key === "IA-301").assignee, "Ana Souza");
+  const post = jira.calls.find((c) => c.method === "POST" && c.path === "/rest/api/3/issue");
+  assert.equal("assignee" in post.body.fields, false, "não depende da tela de criação do projeto");
+});
+
+test("criar com responsável só pelo nome: resolve entre as pessoas atribuíveis", async () => {
+  const { rcfg, jira, j } = await setup();
+  const r = await handleCreateEpic({ key: "NOVO-100", summary: "x", product: "STL Seller", assignee: { displayName: "bruno lima" } }, SUPER, rcfg, j);
+  assert.equal(r.status, 200);
+  assert.equal(jira.issues.get("SELLER-301").assignee.accountId, "acc-bruno-02");
+});
+
+test("criar: se a atribuição falha o épico fica criado, com aviso claro e sem responsável gravado", async () => {
+  const { rcfg, j } = await setup({ assignFail: 400 });
+  const r = await handleCreateEpic({ key: "NOVO-100", summary: "x", product: "STL IA", assignee: { accountId: "acc-ana-0001", displayName: "Ana Souza" } }, SUPER, rcfg, j);
+  assert.equal(r.status, 200);
+  assert.equal(r.body.key, "IA-301");
+  assert.match(r.body.warning, /IA-301 criado, mas não consegui definir o responsável/);
+  assert.equal((await state(rcfg)).state.customEpics.find((e) => e.key === "IA-301").assignee, null);
+});
+
+test("criar: avisos de descrição e de responsável vêm juntos", async () => {
+  const { rcfg, j } = await setup({ rejectDescription: true, assignFail: 400 });
+  const r = await handleCreateEpic({ key: "NOVO-100", summary: "x", product: "STL IA", description: "d", assignee: { accountId: "acc-ana-0001", displayName: "Ana Souza" } }, SUPER, rcfg, j);
+  assert.match(r.body.warning, /não aceitou a descrição.* e não consegui definir o responsável/);
+});
+
+test("responsável inválido é recusado antes do Jira", async () => {
+  const { rcfg, jira, j } = await setup(withEpics());
+  for (const assignee of ["Ana", 7, [], { accountId: "x" }, { displayName: "" }, { accountId: "../etc", displayName: "Ana" }, { accountId: "a b c d e f", displayName: "Ana" }]) {
+    assert.equal((await handleCreateEpic({ key: "NOVO-100", summary: "x", product: "STL IA", assignee }, SUPER, rcfg, j)).status, 400, JSON.stringify(assignee));
+    assert.equal((await handleUpdateEpic({ key: "SELLER-1", assignee }, SUPER, rcfg, j)).status, 400, JSON.stringify(assignee));
+  }
+  assert.equal(jira.writes().length, 0);
+});
+
+test("atualizar responsável: atribui, guarda o override com data e não repete se já é a mesma pessoa", async () => {
+  const { rcfg, jira, j } = await setup(withEpics());
+  const r = await handleUpdateEpic({ key: "SELLER-1", assignee: { accountId: "acc-ana-0001", displayName: "Ana Souza" } }, SUPER, rcfg, j);
+  assert.equal(r.status, 200);
+  noLeak(r);
+  assert.equal(jira.calls.filter((c) => c.method === "PUT" && c.path.endsWith("/assignee")).length, 1);
+  assert.equal(jira.calls.filter((c) => c.method === "PUT" && c.path === "/rest/api/3/issue/SELLER-1").length, 0, "sem nome: não renomeia");
+  const ov = (await state(rcfg)).state.epicOverrides["SELLER-1"];
+  assert.equal(ov.assignee, "Ana Souza");
+  assert.ok(Date.parse(ov.at) > 0, "override carimbado");
+  const again = await handleUpdateEpic({ key: "SELLER-1", assignee: { accountId: "acc-ana-0001", displayName: "Ana Souza" } }, SUPER, rcfg, j);
+  assert.equal(again.status, 200);
+  assert.equal(jira.calls.filter((c) => c.method === "PUT" && c.path.endsWith("/assignee")).length, 1, "mesma pessoa: nada a fazer no Jira");
+});
+
+test("atualizar responsável pelo nome (arrastar no Gantt): resolve único, recusa ambíguo e inexistente", async () => {
+  let { rcfg, jira, j } = await setup(withEpics());
+  assert.equal((await handleUpdateEpic({ key: "SELLER-1", assignee: { displayName: "Bruno Lima" } }, SUPER, rcfg, j)).status, 200);
+  assert.equal(jira.issues.get("SELLER-1").assignee.accountId, "acc-bruno-02");
+
+  const dupes = [{ accountId: "acc-ana-0001", displayName: "Ana Souza", accountType: "atlassian" }, { accountId: "acc-ana-0002", displayName: "Ana Souza", accountType: "atlassian" }];
+  ({ rcfg, jira, j } = await setup({ ...withEpics(), users: dupes }));
+  const amb = await handleUpdateEpic({ key: "SELLER-1", assignee: { displayName: "Ana Souza" } }, SUPER, rcfg, j);
+  assert.equal(amb.status, 409);
+  assert.match(amb.body.message, /mais de uma pessoa chamada "Ana Souza"/);
+
+  ({ rcfg, jira, j } = await setup(withEpics()));
+  const none = await handleUpdateEpic({ key: "SELLER-1", assignee: { displayName: "Fulano Inexistente" } }, SUPER, rcfg, j);
+  assert.equal(none.status, 404);
+  assert.match(none.body.message, /Não encontrei "Fulano Inexistente"/);
+  assert.equal(jira.writes().length, 0);
+});
+
+test("remover responsável: manda accountId null ao Jira e registra override nulo", async () => {
+  const { rcfg, jira, j } = await setup(withEpics({ "SELLER-1": { summary: "Nome antigo", status: "Em DEV", type: { id: "10000", name: "Epic", hierarchyLevel: 1 }, assignee: { accountId: "acc-ana-0001", displayName: "Ana Souza" } } }));
+  const r = await handleUpdateEpic({ key: "SELLER-1", assignee: null }, SUPER, rcfg, j);
+  assert.equal(r.status, 200);
+  assert.deepEqual(jira.calls.find((c) => c.method === "PUT" && c.path.endsWith("/assignee")).body, { accountId: null });
+  const ov = (await state(rcfg)).state.epicOverrides["SELLER-1"];
+  assert.ok("assignee" in ov && ov.assignee === null);
+  // remover quando já não tem ninguém não escreve no Jira
+  const before = jira.writes().length;
+  await handleUpdateEpic({ key: "SELLER-1", assignee: null }, SUPER, rcfg, j);
+  assert.equal(jira.writes().length, before);
+});
+
+test("atualizar nome e responsável na mesma chamada: dois efeitos no Jira, um registro no Roadmap", async () => {
+  const { rcfg, jira, j } = await setup(withEpics());
+  const r = await handleUpdateEpic({ key: "SELLER-1", summary: "Nome novo", assignee: { accountId: "acc-bruno-02", displayName: "Bruno Lima" } }, SUPER, rcfg, j);
+  assert.equal(r.status, 200);
+  assert.equal(jira.issues.get("SELLER-1").summary, "Nome novo");
+  assert.equal(jira.issues.get("SELLER-1").assignee.displayName, "Bruno Lima");
+  const ov = (await state(rcfg)).state.epicOverrides["SELLER-1"];
+  assert.equal(ov.summary, "Nome novo"); assert.equal(ov.assignee, "Bruno Lima");
+  assert.equal((await handleUpdateEpic({ key: "SELLER-1" }, SUPER, rcfg, j)).status, 400, "sem nada para alterar");
+});
+
+test("responsável: admin só nos épicos que criou; o alias handleRenameEpic segue valendo", async () => {
+  const { rcfg, jira, j } = await setup(withEpics());
+  const created = await handleCreateEpic({ key: "NOVO-200", summary: "Do André", product: "STL IA" }, ANDRE, rcfg, j);
+  const key = created.body.key;
+  const before = jira.writes().length;
+  assert.equal((await handleUpdateEpic({ key: "SELLER-1", assignee: { displayName: "Ana Souza" } }, ANDRE, rcfg, j)).status, 403);
+  assert.equal((await handleUpdateEpic({ key, assignee: { displayName: "Ana Souza" } }, MARIA, rcfg, j)).status, 403);
+  assert.equal(jira.writes().length, before, "negado: nada no Jira");
+  const ok = await handleUpdateEpic({ key, assignee: { accountId: "acc-ana-0001", displayName: "Ana Souza" } }, ANDRE, rcfg, j);
+  assert.equal(ok.status, 200);
+  assert.equal((await state(rcfg)).state.customEpics.find((e) => e.key === key).assignee, "Ana Souza");
+  assert.equal(handleRenameEpic, handleUpdateEpic);
 });

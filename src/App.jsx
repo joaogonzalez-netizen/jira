@@ -12,6 +12,8 @@ const TASKS_SEED_INITIAL = [{"key": "SELLER-254", "project": "STL Seller", "type
 const STAGES = ["Backlog", "Em design", "Em produto", "Análise técnica", "Pronta pra dev", "Em dev", "Em rollout", "Concluído"];
 const PRODUCTS = ["STLFLIX", "STL IA", "STL Seller", "STL Loja", "Backoffice", "STL Academy"];
 const LAYERS = ["Inovação", "Melhoria", "Sustentação", "Sem classificação"];
+/** Chave da linha "Sem responsável" na visão do Gantt por responsável. */
+const NO_ASSIGNEE = "__sem_responsavel__";
 /** Opções do campo "Tipo de entrega" do Jira (o mesmo vocabulário das camadas, sem "Sem classificação"). */
 const TIPOS_ENTREGA = LAYERS.filter((l) => l !== "Sem classificação");
 const ACTIVE_STAGES = ["Em design", "Em produto", "Análise técnica", "Pronta pra dev", "Em dev", "Em rollout"];
@@ -527,28 +529,56 @@ function DataProvider({ children }) {
       if (jiraOn && project) {
         if (roadmapModeRef.current !== "server") return { ok: false, message: "O Roadmap precisa estar no servidor pra criar no Jira." };
         if (!summary) return { ok: false, message: "Dê um nome ao épico antes de criar no Jira." };
-        const r = await jiraApi.createEpic({ key, summary, product: project, description, tipo: patch.tipo || null, position });
+        const r = await jiraApi.createEpic({ key, summary, product: project, description, tipo: patch.tipo || null, assignee: patch.assignee || undefined, position });
         if (!r.ok) return { ok: false, message: r.message };
         applyServerDoc(r);
         if (r.warning) setRoadmapError(r.warning);
         return { ok: true, oldKey: key, newKey: r.key };
       }
-      const nextCustom = customEpics.map((e) => (e.key === key ? { ...e, summary: patch.summary, project, resumo: description || null, tipo: patch.tipo || null } : e));
+      const nextCustom = customEpics.map((e) => (e.key === key ? { ...e, summary: patch.summary, project, resumo: description || null, tipo: patch.tipo || null, assignee: Object.prototype.hasOwnProperty.call(patch, "assignee") ? (patch.assignee?.displayName || null) : e.assignee } : e));
       setCustomEpics(nextCustom);
       setPositions((prev) => { const next = { ...prev, [key]: position }; persistRoadmap(next, nextCustom, prioOrder, filaProdutoOrder, filaUxOrder); return next; });
       return { ok: true };
     }
 
-    if (summary && summary !== cur.summary) {
-      if (!jiraOn) return { ok: false, message: "A integração com o Jira não está configurada — não dá pra renomear esse épico daqui." };
+    // Nome e/ou responsável alterados: uma chamada só ao Jira.
+    const changes = {};
+    if (summary && summary !== cur.summary) changes.summary = summary;
+    if (Object.prototype.hasOwnProperty.call(patch, "assignee") && (patch.assignee?.displayName || null) !== (cur.assignee || null)) {
+      changes.assignee = patch.assignee ? { displayName: patch.assignee.displayName, accountId: patch.assignee.accountId || undefined } : null;
+    }
+    if (Object.keys(changes).length) {
+      if (!jiraOn) return { ok: false, message: "A integração com o Jira não está configurada — não dá pra alterar nome ou responsável desse épico daqui." };
       if (roadmapModeRef.current !== "server") return { ok: false, message: "O Roadmap precisa estar no servidor pra mexer no Jira." };
-      const r = await jiraApi.renameEpic({ key, summary });
+      const r = await jiraApi.updateEpic({ key, ...changes });
       if (!r.ok) return { ok: false, message: r.message };
       applyServerDoc(r);
     }
     updatePosition(key, position);
     return { ok: true };
   }, [ownsCard, byKeyWithCustom, customEpics, prioOrder, filaProdutoOrder, filaUxOrder, persistRoadmap, updatePosition, applyServerDoc]);
+
+  // Trocar só o responsável (arrastar no Gantt por responsável). `null` = sem responsável.
+  // Rascunho muda só aqui; épico do Jira muda no Jira (por nome: o servidor acha a pessoa).
+  const reassignEpic = useCallback(async (key, displayName) => {
+    const cur = byKeyWithCustom[key];
+    if (!ownsCard(cur)) { setRoadmapError("Esse card não é seu."); return { ok: false }; }
+    if ((cur.assignee || null) === (displayName || null)) return { ok: true };
+    if (key.startsWith("NOVO-")) {
+      const nextCustom = customEpics.map((e) => (e.key === key ? { ...e, assignee: displayName || null } : e));
+      setCustomEpics(nextCustom);
+      persistRoadmap(positions, nextCustom, prioOrder, filaProdutoOrder, filaUxOrder);
+      return { ok: true };
+    }
+    const fail = (message) => { setRoadmapError(message); return { ok: false, message }; };
+    if (jiraConfiguredRef.current !== true) return fail("A integração com o Jira não está configurada — não dá pra trocar o responsável daqui.");
+    if (roadmapModeRef.current !== "server") return fail("O Roadmap precisa estar no servidor pra mexer no Jira.");
+    const r = await jiraApi.updateEpic({ key, assignee: displayName ? { displayName } : null });
+    if (!r.ok) return fail(r.message);
+    applyServerDoc(r);
+    return { ok: true };
+  }, [ownsCard, byKeyWithCustom, customEpics, positions, prioOrder, filaProdutoOrder, filaUxOrder, persistRoadmap, applyServerDoc]);
+  const notifyRoadmapError = useCallback((message) => setRoadmapError(message), []);
 
   // Janela fixa de semanas pra popular o seletor "Semana inicial" do drawer
   // fora do Roadmap (Projetos não tem Gantt, então não tem zoom pra derivar isso).
@@ -608,13 +638,13 @@ function DataProvider({ children }) {
     positions, setPositions, customEpics, setCustomEpics, prioOrder, setPrioOrder,
     filaProdutoOrder, setFilaProdutoOrder, filaUxOrder, setFilaUxOrder,
     roadmapSaving, persistRoadmap, updatePosition, addEpic, deleteEpic, saveDrawer, roadmapWeeks,
-    roadmapMode, roadmapError, clearRoadmapError, localSummary, migrateToServer,
+    roadmapMode, roadmapError, clearRoadmapError, localSummary, migrateToServer, reassignEpic, notifyRoadmapError,
   }), [
     epicsView, tasks, syncFromSheet, lastSync, syncStatus, syncError,
     jiraConfigured,
     positions, customEpics, prioOrder, filaProdutoOrder, filaUxOrder,
     roadmapSaving, persistRoadmap, updatePosition, addEpic, deleteEpic, saveDrawer, roadmapWeeks,
-    roadmapMode, roadmapError, clearRoadmapError, localSummary, migrateToServer,
+    roadmapMode, roadmapError, clearRoadmapError, localSummary, migrateToServer, reassignEpic, notifyRoadmapError,
   ]);
   return <DataCtx.Provider value={value}>{children}</DataCtx.Provider>;
 }
@@ -782,9 +812,24 @@ function EpicDrawer({ epic, onClose, weeks, onSave, onDelete, canEdit, jiraConfi
   const [project, setProject] = useState(epic?.project || "");
   const [description, setDescription] = useState(epic?.resumo || "");
   const [tipo, setTipo] = useState(epic?.tipo || "");
+  const [assigneeName, setAssigneeName] = useState(epic?.assignee || "");
+  const [people, setPeople] = useState([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
-  useEffect(() => { setSummary(epic?.summary || ""); setLane(epic?.roadmapLane || PRIORIZACAO_KEY); setStartWeek(epic?.startWeek ?? 0); setDuration(epic?.durationWeeks ?? 2); setProject(epic?.project || ""); setDescription(epic?.resumo || ""); setTipo(epic?.tipo || ""); setError(null); }, [epic]);
+  useEffect(() => { setSummary(epic?.summary || ""); setLane(epic?.roadmapLane || PRIORIZACAO_KEY); setStartWeek(epic?.startWeek ?? 0); setDuration(epic?.durationWeeks ?? 2); setProject(epic?.project || ""); setDescription(epic?.resumo || ""); setTipo(epic?.tipo || ""); setAssigneeName(epic?.assignee || ""); setError(null); }, [epic]);
+  const epicKey = epic?.key || null;
+  const isDraftKey = !!epicKey && epicKey.startsWith("NOVO-");
+  const draftProjectForPeople = isDraftKey ? (project || (lane !== PRIORIZACAO_KEY ? lane : "")) : "";
+  // Pessoas atribuíveis do projeto, direto do Jira (só quando o card é editável por mim).
+  useEffect(() => {
+    setPeople([]);
+    if (!epicKey || !schedulable || !jiraConfigured || !canEdit) return undefined;
+    const q = isDraftKey ? (draftProjectForPeople ? { product: draftProjectForPeople } : null) : { key: epicKey };
+    if (!q) return undefined;
+    let alive = true;
+    jiraApi.assignees(q).then((r) => { if (alive && r?.ok) setPeople(r.users || []); });
+    return () => { alive = false; };
+  }, [epicKey, isDraftKey, draftProjectForPeople, schedulable, jiraConfigured, canEdit]);
   if (!epic) return null;
   const prod = PRODUCT_STYLE[epic.project] || PRODUCT_STYLE["Backoffice"];
   const isCustom = schedulable && epic.key.startsWith("NOVO-");
@@ -811,11 +856,33 @@ function EpicDrawer({ epic, onClose, weeks, onSave, onDelete, canEdit, jiraConfi
     return run(() => onSave(epic.key, {
       summary, roadmapLane: lane === PRIORIZACAO_KEY ? null : lane, startWeek: lane === PRIORIZACAO_KEY ? null : startWeek, durationWeeks: duration,
       ...(isCustom ? { project: project || null, description, tipo: tipo || null } : {}),
+      ...(assigneeName !== (epic.assignee || "") ? { assignee: assigneeName ? (people.find((u) => u.displayName === assigneeName) || { displayName: assigneeName }) : null } : {}),
     }));
   };
   // Projeto efetivo do rascunho: o escolhido, ou a camada de produto.
   const draftProject = project || (lane !== PRIORIZACAO_KEY ? lane : "");
   const handleDelete = () => run(() => onDelete(epic.key));
+  // Responsável: editável em rascunho e em épico do Jira (com integração ligada); senão só leitura.
+  const assigneeEditable = schedulable && canEdit && (isCustom || (isJira && jiraConfigured));
+  const assigneeOptions = [...new Set([...(assigneeName ? [assigneeName] : []), ...(epic.assignee ? [epic.assignee] : []), ...people.map((u) => u.displayName)])]
+    .sort((a, b) => a.localeCompare(b, "pt-BR"));
+  const assigneeBlocked = busy || (isCustom && jiraConfigured && !draftProject);
+  const assigneeField = (assigneeEditable || epic.assignee) && (
+    <>
+      <p style={{ marginTop: 14, marginBottom: 6, fontSize: 12, fontWeight: 500, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>Responsável</p>
+      {assigneeEditable ? (
+        <select
+          value={assigneeName} onChange={(e) => setAssigneeName(e.target.value)} disabled={assigneeBlocked}
+          style={{ width: "100%", borderRadius: 8, border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink0, fontSize: 13, padding: "7px 8px", fontFamily: "'Inter Tight', sans-serif" }}
+        >
+          <option value="">Sem responsável</option>
+          {assigneeOptions.map((n) => <option key={n} value={n}>{n}</option>)}
+        </select>
+      ) : (
+        <p style={{ fontSize: 13, color: T.ink0, fontFamily: "'Inter Tight', sans-serif" }}>{epic.assignee}</p>
+      )}
+    </>
+  );
   const hint = !jiraConfigured || !canEdit ? null
     : isCustom ? (draftProject ? `Ao salvar, este épico será criado no Jira (projeto ${draftProject}).` : "Escolha o projeto para criar este épico no Jira. Até lá ele é só um rascunho daqui.")
     : isJira ? "Mudar o nome aqui também muda no Jira." : null;
@@ -860,6 +927,8 @@ function EpicDrawer({ epic, onClose, weeks, onSave, onDelete, canEdit, jiraConfi
               {TIPOS_ENTREGA.map((t) => <option key={t} value={t}>{t}</option>)}
             </select>
 
+            {assigneeField}
+
             <p style={{ marginTop: 14, marginBottom: 6, fontSize: 12, fontWeight: 500, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>Descrição</p>
             <textarea
               value={description} onChange={(e) => setDescription(e.target.value)} disabled={!canEdit || busy}
@@ -894,6 +963,8 @@ function EpicDrawer({ epic, onClose, weeks, onSave, onDelete, canEdit, jiraConfi
               {epic.tipo && <Badge bg={T.bg2} color={T.ink1}>{epic.tipo}</Badge>}
               {epic.priority && <Badge bg={T.bg2} color={T.ink2}>{epic.priority}</Badge>}
             </div>
+
+            {assigneeField}
 
             <p style={{ marginTop: 14, marginBottom: 6, fontSize: 12, fontWeight: 500, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>Iniciativa</p>
             <select
@@ -1512,11 +1583,12 @@ function PrioCard({ epic, onDragStart, onOpen, onAdd, onMoveToFilaProduto, onMov
   );
 }
 
-function EpicBar({ epic, onDragStart, onOpen, onResize, onRemove, canEdit }) {
+function EpicBar({ epic, onDragStart, onOpen, onResize, onRemove, canEdit, showAssignee = true }) {
   const { T, PRODUCT_STYLE } = useTheme();
   const prod = PRODUCT_STYLE[epic.roadmapLane] || PRODUCT_STYLE["Backoffice"];
   return (
     <div
+      title={[epic.summary, showAssignee ? epic.assignee : epic.roadmapLane].filter(Boolean).join(" · ")}
       draggable={canEdit} onDragStart={(e) => onDragStart(e, epic.key)} onClick={() => onOpen(epic)}
       style={{
         display: "flex", alignItems: "center", gap: 6, height: 26, borderRadius: 7, padding: "0 8px", cursor: canEdit ? "grab" : "pointer",
@@ -1525,6 +1597,11 @@ function EpicBar({ epic, onDragStart, onOpen, onResize, onRemove, canEdit }) {
       }}
     >
       <span style={{ width: 5, height: 5, borderRadius: 999, background: prod.primary, flexShrink: 0 }} />
+      {showAssignee && epic.assignee && (
+        <span style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 15, height: 15, borderRadius: 999, background: prod.primary, color: "#fff", fontSize: 7.5, fontWeight: 700, textTransform: "uppercase", flexShrink: 0, fontFamily: "'Inter Tight', sans-serif" }}>
+          {initials(epic.assignee)}
+        </span>
+      )}
       <span style={{ fontSize: 11, fontWeight: 500, color: prod.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", fontFamily: "'Inter Tight', sans-serif", flex: "1 1 auto", minWidth: 0 }}>
         {epic.summary}
       </span>
@@ -1826,7 +1903,7 @@ function RoadmapScreen() {
     positions, setPositions, customEpics, setCustomEpics, prioOrder, setPrioOrder,
     filaProdutoOrder, setFilaProdutoOrder, filaUxOrder, setFilaUxOrder,
     roadmapSaving: saving, persistRoadmap: persist, updatePosition, addEpic: addEpicShared, deleteEpic: deleteEpicShared, saveDrawer: saveDrawerShared,
-    roadmapMode, roadmapError, clearRoadmapError, localSummary, migrateToServer, jiraConfigured,
+    roadmapMode, roadmapError, clearRoadmapError, localSummary, migrateToServer, jiraConfigured, reassignEpic, notifyRoadmapError,
   } = useData();
   // Único lugar onde o admin escreve: cria card e mexe NOS DELE (posição no
   // Gantt, fila, nome, duração, exclusão). Épico da planilha não tem dono, então
@@ -1834,6 +1911,12 @@ function RoadmapScreen() {
   const { user, canCreateCard, ownsCard, canWriteShared } = useAuth();
   const { initiatives, createInitiative, deleteInitiative, assignEpicToInitiative, updateInitiative, initiativeByEpicKey } = useInitiatives();
   const [weekCount, setWeekCount] = useState(13);
+  // "produto" (linhas = produtos, com iniciativas) ou "responsavel" (linhas = pessoas; as barras mantêm a cor do produto).
+  const [viewMode, setViewModeState] = useState(() => {
+    try { return localStorage.getItem("roadmap-view") === "responsavel" ? "responsavel" : "produto"; } catch { return "produto"; }
+  });
+  const setViewMode = (v) => { setViewModeState(v); try { localStorage.setItem("roadmap-view", v); } catch { /* sem storage: vale só nesta sessão */ } };
+  const byAssignee = viewMode === "responsavel";
   const [openKey, setOpenKey] = useState(null);
   const [migrating, setMigrating] = useState(false);
   const [migrationMsg, setMigrationMsg] = useState(null);
@@ -1963,7 +2046,7 @@ function RoadmapScreen() {
   // Épicos sem iniciativa continuam soltos na lane, como antes. Produto e
   // iniciativa podem ser recolhidos — recolhido, a "layer" ocupa só a própria
   // linha de cabeçalho, escondendo o que tem dentro (sem apagar o dado).
-  const laneMeta = useMemo(() => {
+  const productLaneMeta = useMemo(() => {
     let rowCursor = 2;
     return PRODUCTS.map((p) => {
       const scheduled = enriched.filter((e) => e.roadmapLane === p && e.startWeek !== null);
@@ -2001,6 +2084,23 @@ function RoadmapScreen() {
       return { product: p, scheduled, groups, unassigned, unassignedStartRow, unassignedRowOf, startRow: startRowForLabel, rowCount, collapsed: productCollapsed };
     });
   }, [enriched, initiatives, collapsedProducts, collapsedInitiatives]);
+  // Visão por responsável: uma linha por pessoa (ordem alfabética) + "Sem responsável",
+  // que existe sempre pra servir de destino ao "tirar o responsável" arrastando.
+  const assigneeLaneMeta = useMemo(() => {
+    const scheduled = enriched.filter((e) => e.roadmapLane && e.startWeek !== null);
+    const names = [...new Set(scheduled.map((e) => e.assignee).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR"));
+    let rowCursor = 2;
+    return [...names, NO_ASSIGNEE].map((name) => {
+      const items = scheduled.filter((e) => (e.assignee || NO_ASSIGNEE) === name);
+      const { rowOf, rowCount } = items.length ? layoutLane(items) : { rowOf: {}, rowCount: 0 };
+      const startRow = rowCursor;
+      const count = Math.max(1, rowCount);
+      rowCursor += count;
+      return { product: name, isAssignee: true, scheduled: items, groups: [], unassigned: items, unassignedStartRow: startRow, unassignedRowOf: rowOf, startRow, rowCount: count, collapsed: false };
+    });
+  }, [enriched]);
+  const laneMeta = byAssignee ? assigneeLaneMeta : productLaneMeta;
+  const assigneeStyle = { primary: T.ink2, subtle: T.bg2, text: T.ink1 };
   const totalRows = laneMeta.reduce((s, l) => s + l.rowCount, 2);
 
   const onDragStart = (e, key) => { setDragKey(key); e.dataTransfer.effectAllowed = "move"; };
@@ -2133,11 +2233,26 @@ function RoadmapScreen() {
     if (dragKey && !filaUxOrder.includes(dragKey)) moveToFilaUx(dragKey);
     setDragKey(null);
   };
-  const onDropCell = (e, product, weekIndex) => {
+  const onDropCell = (e, laneKey, weekIndex) => {
     e.preventDefault();
     if (!dragKey) return;
     const cur = positions[dragKey] || { durationWeeks: 2 };
+    if (!byAssignee) {
+      updatePosition(dragKey, { roadmapLane: laneKey, startWeek: weekIndex, durationWeeks: cur.durationWeeks || 2 });
+      setDragKey(null);
+      return;
+    }
+    // Visão por responsável: a coluna escolhe a semana, a linha escolhe a pessoa; o produto (cor) não muda.
+    const epic = byKey[dragKey];
+    const product = cur.roadmapLane || epic?.project;
+    if (!product) {
+      notifyRoadmapError("Esse épico não tem projeto — defina o projeto antes de agendar na visão por responsável.");
+      setDragKey(null);
+      return;
+    }
     updatePosition(dragKey, { roadmapLane: product, startWeek: weekIndex, durationWeeks: cur.durationWeeks || 2 });
+    const target = laneKey === NO_ASSIGNEE ? null : laneKey;
+    if ((epic?.assignee || null) !== target && ownsCard(epic)) reassignEpic(dragKey, target);
     setDragKey(null);
   };
   // Soltar um épico em cima da barra tracejada da iniciativa vincula os dois.
@@ -2182,6 +2297,17 @@ function RoadmapScreen() {
           </div>
           <div className="flex items-center" style={{ gap: 10 }}>
             {saving && <span style={{ fontSize: 11, color: T.ink2 }}>salvando…</span>}
+            <div className="flex items-center" style={{ gap: 6 }}>
+              <span style={{ fontSize: 12, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>Ver por:</span>
+              <div role="group" aria-label="Ver por" style={{ display: "flex", borderRadius: 8, border: `1px solid ${T.border2}`, overflow: "hidden" }}>
+                {[["produto", "Produto"], ["responsavel", "Responsável"]].map(([v, label]) => (
+                  <button key={v} onClick={() => setViewMode(v)} aria-pressed={viewMode === v}
+                    style={{ padding: "5px 10px", fontSize: 12, fontWeight: 500, border: "none", cursor: "pointer", background: viewMode === v ? "#5166e6" : T.bg1, color: viewMode === v ? "#fff" : T.ink0, fontFamily: "'Inter Tight', sans-serif" }}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
             {canCreateCard && (
               <button onClick={addEpic} style={{ display: "flex", alignItems: "center", gap: 5, borderRadius: 8, padding: "6px 10px", fontSize: 12, fontWeight: 500, border: "none", cursor: "pointer", background: "#5166e6", color: "#fff", fontFamily: "'Inter Tight', sans-serif" }}>
                 <Plus size={12} /> Novo épico
@@ -2240,17 +2366,36 @@ function RoadmapScreen() {
         </div>
       )}
 
+      {byAssignee && (
+        <div className="flex items-center flex-wrap" style={{ gap: 12, padding: "10px 24px 0", fontFamily: "'Inter Tight', sans-serif", fontSize: 11.5, color: T.ink1 }}>
+          {PRODUCTS.map((p) => (
+            <span key={p} className="flex items-center" style={{ gap: 5 }}>
+              <span style={{ width: 8, height: 8, borderRadius: 999, background: PRODUCT_STYLE[p].primary }} />{p}
+            </span>
+          ))}
+        </div>
+      )}
       <div className="flex" style={{ padding: "16px 24px", borderBottom: `1px solid ${T.border1}` }}>
         {/* Painel fixo (produto + iniciativa) — nunca rola horizontalmente, então
             não depende de position:sticky sobre um grid rolável (fonte dos vazamentos). */}
-        <div style={{ flexShrink: 0, display: "grid", gridTemplateColumns: `${PROD_COL_PX}px ${INIT_COL_PX}px`, gridTemplateRows: `32px repeat(${totalRows - 1}, 32px)`, borderRight: `1px solid ${T.border2}` }}>
+        <div style={{ flexShrink: 0, display: "grid", gridTemplateColumns: byAssignee ? `${PROD_COL_PX + INIT_COL_PX}px` : `${PROD_COL_PX}px ${INIT_COL_PX}px`, gridTemplateRows: `32px repeat(${totalRows - 1}, 32px)`, borderRight: `1px solid ${T.border2}` }}>
           <div style={{ gridColumn: 1, gridRow: 1, borderBottom: `1px solid ${T.border2}` }} />
-          <div style={{ gridColumn: 2, gridRow: 1, borderBottom: `1px solid ${T.border2}`, display: "flex", alignItems: "center", fontSize: 11, fontWeight: 600, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>Iniciativa</div>
+          {!byAssignee && <div style={{ gridColumn: 2, gridRow: 1, borderBottom: `1px solid ${T.border2}`, display: "flex", alignItems: "center", fontSize: 11, fontWeight: 600, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>Iniciativa</div>}
 
           {laneMeta.map((lane) => {
-            const style = PRODUCT_STYLE[lane.product];
+            const style = lane.isAssignee ? assigneeStyle : PRODUCT_STYLE[lane.product];
             return (
               <React.Fragment key={lane.product}>
+                {lane.isAssignee ? (
+                  <div style={{ gridColumn: 1, gridRow: `${lane.startRow} / span ${lane.rowCount}`, display: "flex", alignItems: "center", gap: 8, borderTop: `2px solid ${T.border2}`, padding: "0 8px" }}>
+                    <span style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 20, height: 20, borderRadius: 999, background: T.bg2, color: T.ink1, fontSize: 9, fontWeight: 700, textTransform: "uppercase", flexShrink: 0, fontFamily: "'Inter Tight', sans-serif" }}>
+                      {lane.product === NO_ASSIGNEE ? "–" : initials(lane.product)}
+                    </span>
+                    <span title={lane.product === NO_ASSIGNEE ? "Sem responsável" : lane.product} style={{ fontSize: 12, fontWeight: 600, color: lane.product === NO_ASSIGNEE ? T.ink2 : T.ink0, fontFamily: "'Inter Tight', sans-serif", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {lane.product === NO_ASSIGNEE ? "Sem responsável" : lane.product}
+                    </span>
+                  </div>
+                ) : (
                 <div style={{ gridColumn: 1, gridRow: `${lane.startRow} / span ${lane.rowCount}`, display: "flex", alignItems: "center", gap: 4, borderRight: `1px solid ${T.border2}`, borderTop: `2px solid ${T.border2}`, paddingRight: 8 }}>
                   <button
                     onClick={() => toggleProductCollapsed(lane.product)}
@@ -2262,6 +2407,7 @@ function RoadmapScreen() {
                   <span style={{ width: 7, height: 7, borderRadius: 999, background: style.primary, flexShrink: 0 }} />
                   <span style={{ fontSize: 12, fontWeight: 600, color: T.ink0, fontFamily: "'Inter Tight', sans-serif" }}>{lane.product}</span>
                 </div>
+                )}
                 {lane.groups.map((g) => {
                   const initRowSpan = 1 + (g.collapsed ? 0 : g.bodyRowCount);
                   return (
@@ -2294,7 +2440,7 @@ function RoadmapScreen() {
             ))}
 
             {laneMeta.map((lane) => {
-              const style = PRODUCT_STYLE[lane.product];
+              const style = lane.isAssignee ? assigneeStyle : PRODUCT_STYLE[lane.product];
               return (
                 <React.Fragment key={lane.product}>
                   {weeks.map((w) => (
@@ -2336,7 +2482,7 @@ function RoadmapScreen() {
                   })}
                   {lane.unassigned.map((e) => (
                     <div key={e.key} style={{ gridColumn: `${colOf(e.startWeek)} / span ${e.durationWeeks}`, gridRow: lane.unassignedStartRow + lane.unassignedRowOf[e.key], display: "flex", alignItems: "center", zIndex: 1 }}>
-                      <EpicBar epic={e} onDragStart={onDragStart} onOpen={() => setOpenKey(e.key)} onResize={resizeEpic} onRemove={removeFromGantt} canEdit={ownsCard(e)} />
+                      <EpicBar epic={e} onDragStart={onDragStart} onOpen={() => setOpenKey(e.key)} onResize={resizeEpic} onRemove={removeFromGantt} canEdit={ownsCard(e)} showAssignee={!byAssignee} />
                     </div>
                   ))}
                 </React.Fragment>

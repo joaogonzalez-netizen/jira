@@ -30,7 +30,20 @@ export const jiraApi = {
     const r = await call("GET", "/api/jira/epics");
     return r.ok ? !!r.data.configured : null;
   },
-  createEpic: async ({ key, summary, product, description, tipo, position }) => result(await call("POST", "/api/jira/epics", { key, summary, product, description, tipo, position })),
+  createEpic: async ({ key, summary, product, description, tipo, assignee, position }) => result(await call("POST", "/api/jira/epics", { key, summary, product, description, tipo, assignee, position })),
   renameEpic: async ({ key, summary }) => result(await call("PATCH", "/api/jira/epics", { key, summary })),
+  /** Nome e/ou responsável: `assignee` = { displayName, accountId? } atribui, `null` remove, ausente não mexe. */
+  updateEpic: async ({ key, summary, assignee }) => {
+    const body = { key };
+    if (summary !== undefined) body.summary = summary;
+    if (assignee !== undefined) body.assignee = assignee;
+    return result(await call("PATCH", "/api/jira/epics", body));
+  },
+  /** Pessoas que podem ser responsáveis: por projeto (rascunho) ou por épico do Jira. */
+  async assignees({ product, key }) {
+    const qs = key ? `key=${encodeURIComponent(key)}` : `product=${encodeURIComponent(product || "")}`;
+    const r = await call("GET", `/api/jira/assignees?${qs}`);
+    return r.ok ? { ok: true, users: r.data.users || [] } : { ok: false, message: r.data?.message || `Erro ${r.status}` };
+  },
   cancelEpic: async ({ key }) => result(await call("DELETE", `/api/jira/epics?key=${encodeURIComponent(key)}`)),
 };

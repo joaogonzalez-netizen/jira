@@ -127,3 +127,65 @@ test("diff do cliente leva projeto e descrição do rascunho (resumo) ao servido
   assert.equal(res.doc.customEpics[0].resumo, "texto");
   assert.ok(isEmptyDiff(diffRoadmap(next, next)), "igual -> sem diff");
 });
+
+import { pruneOverrides, createMemoryKv, loadConfig, handleSeed, handleGet, handleSnapshotPut } from "../server/roadmap-core.js";
+
+const DAY = 24 * 60 * 60 * 1000;
+
+test("applyEpicOverrides: responsável (inclusive remover) e override vencido deixa de valer", () => {
+  const eps = [{ key: "A-1", summary: "x", assignee: "Ana" }, { key: "A-2", summary: "y", assignee: null }, { key: "A-3", summary: "z", assignee: "Bia" }];
+  const now = Date.parse("2026-10-20T12:00:00Z");
+  const fresh = "2026-10-20T08:00:00Z";
+  const out = applyEpicOverrides(eps, { "A-1": { assignee: "Bruno", at: fresh }, "A-2": { assignee: "Caio", at: fresh }, "A-3": { assignee: null, at: fresh } }, now);
+  assert.deepEqual(out.map((e) => e.assignee), ["Bruno", "Caio", null]);
+  assert.equal(out[0].summary, "x", "só o responsável muda");
+  const old = applyEpicOverrides(eps, { "A-1": { assignee: "Bruno", summary: "novo", at: "2026-10-18T08:00:00Z" } }, now);
+  assert.deepEqual([old[0].assignee, old[0].summary], ["Ana", "x"], "passou de 24h: vale o que a planilha traz");
+  const legacy = applyEpicOverrides(eps, { "A-1": { summary: "sem data" } }, now);
+  assert.equal(legacy[0].summary, "sem data", "override antigo sem carimbo continua valendo");
+  const cancelled = applyEpicOverrides(eps, { "A-2": { removed: true, at: "2026-01-01T00:00:00Z" } }, now);
+  assert.deepEqual(cancelled.map((e) => e.key), ["A-1", "A-3"], "cancelado não expira");
+});
+
+test("pruneOverrides: tira o que a planilha já alcançou, o vencido e o cancelado que sumiu; mantém o pendente", () => {
+  const now = Date.parse("2026-10-20T12:00:00Z");
+  const fresh = new Date(now - 2 * 60 * 60 * 1000).toISOString();
+  const stale = new Date(now - 2 * DAY).toISOString();
+  const doc = { epicOverrides: {
+    "A-1": { summary: "Novo nome", at: fresh },                                  // planilha já tem -> some
+    "A-2": { assignee: "Ana Souza", at: fresh },                                 // planilha já tem (sem acento/caixa) -> some
+    "A-3": { summary: "Pendente", assignee: "Bia", at: fresh },                  // planilha ainda não alcançou -> fica
+    "A-4": { summary: "Vencido", at: stale },                                    // >24h -> some
+    "A-5": { removed: true, at: stale },                                         // planilha não lista mais -> some
+    "A-6": { removed: true, at: fresh },                                         // planilha ainda lista -> fica escondido
+    "A-7": { summary: "Fora da planilha", at: fresh },                           // não está na planilha -> fica
+  } };
+  const sheet = [
+    { key: "A-1", summary: "Novo nome", assignee: null }, { key: "A-2", summary: "x", assignee: "ana souza" },
+    { key: "A-3", summary: "Velho", assignee: "Caio" }, { key: "A-4", summary: "Antigo", assignee: null }, { key: "A-6", summary: "y", assignee: null },
+  ];
+  const next = pruneOverrides(doc, sheet, now);
+  assert.deepEqual(Object.keys(next.epicOverrides).sort(), ["A-3", "A-6", "A-7"]);
+  assert.deepEqual(next.epicOverrides["A-3"], { summary: "Pendente", assignee: "Bia", at: fresh });
+  assert.equal(pruneOverrides(next, sheet, now), null, "nada mais a limpar -> null");
+  assert.equal(pruneOverrides({ epicOverrides: {} }, sheet, now), null);
+});
+
+test("publicar a planilha (snapshot) limpa os overrides já alcançados e carimba a revisão", async () => {
+  const config = loadConfig({}, createMemoryKv());
+  await handleSeed({ state: { positions: {}, customEpics: [], prioOrder: [], filaProdutoOrder: [], filaUxOrder: [] } }, SUPER, config);
+  const { handlePatch } = await import("../server/roadmap-core.js");
+  const { readDoc, writeDoc, touchDoc } = await import("../server/roadmap-core.js");
+  const { raw, doc } = await readDoc(config);
+  const at = new Date().toISOString();
+  assert.ok(await writeDoc(config, raw, touchDoc({ ...doc, epicOverrides: { "A-1": { assignee: "Ana", at }, "A-2": { summary: "Pendente", at } } }, "x")));
+  const before = (await handleGet(config)).body;
+  const r = await handleSnapshotPut({ epics: [{ key: "A-1", summary: "s", assignee: "Ana" }, { key: "A-2", summary: "Ainda velho" }], tasks: [], syncedAt: at }, SUPER, config);
+  assert.equal(r.status, 200);
+  const after = (await handleGet(config)).body;
+  assert.deepEqual(Object.keys(after.state.epicOverrides), ["A-2"]);
+  assert.ok(after.rev > before.rev);
+  // um PATCH normal continua preservando os overrides
+  const p = await handlePatch({ positions: { "A-2": { roadmapLane: null, startWeek: null, durationWeeks: 2 } } }, SUPER, config);
+  assert.deepEqual(Object.keys(p.body.state.epicOverrides), ["A-2"]);
+});
