@@ -737,3 +737,13 @@ test("responsável: admin só nos épicos que criou; o alias handleRenameEpic se
   assert.equal((await state(rcfg)).state.customEpics.find((e) => e.key === key).assignee, "Ana Souza");
   assert.equal(handleRenameEpic, handleUpdateEpic);
 });
+
+test("criar: se o Jira nunca aceita o Tipo de entrega, o erro diz o que foi tentado e o que se sabe do campo", async () => {
+  const { rcfg, jira, j } = await setup({ requireTipo: { field: "customfield_10050", options: { 1: "Feature" } } });
+  const r = await handleCreateEpic({ key: "NOVO-100", summary: "X", product: "STL Seller", tipo: "Inovação", position: pos(null, null) }, SUPER, rcfg, j);
+  assert.equal(r.status, 400);
+  assert.match(r.body.message, /Tipo de entrega/);
+  assert.match(r.body.message, /customfield_10050/);
+  assert.match(r.body.message, /metadados/);
+  assert.equal(jira.calls.filter((c) => c.method === "POST").length, 4);
+});

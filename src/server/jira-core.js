@@ -193,12 +193,19 @@ async function createJiraEpic(j, projectKey, summary, description, tipo) {
   let fields = { project: { key: projectKey }, issuetype: { id: typeId }, summary };
 
   // Tipo de entrega: descobre o campo do projeto (id, tipo e opções) e já manda o valor certo.
+  let tipoNote = "";
   try {
-    const found = resolveTipoEntrega(await createFields(j, projectKey, typeId), tipo);
+    const metaFields = await createFields(j, projectKey, typeId);
+    const found = resolveTipoEntrega(metaFields, tipo);
     if (found) fields = { ...fields, [found.fieldId]: found.value };
+    const f = metaFields.find((x) => norm(x?.name) === "tipo de entrega");
+    tipoNote = f
+      ? `campo ${f.fieldId}, tipo ${f.schema?.type || "?"}/${f.schema?.custom?.split(":").pop() || "?"}, opções: ${(f.allowedValues || []).map((o) => o?.value ?? o?.name).join(", ") || "(nenhuma listada)"}`
+      : "o campo não aparece nos metadados de criação do projeto";
   } catch (e) {
     if (e instanceof JiraError && e.status === 400 && /Tipo de entrega/.test(e.message)) throw e; // regra de negócio, não falha de rede
     // createmeta indisponível: segue e deixa o erro do Jira guiar (abaixo)
+    tipoNote = `não consegui ler os metadados do campo (${e.message})`;
   }
 
   let withDescription = false;
@@ -211,7 +218,7 @@ async function createJiraEpic(j, projectKey, summary, description, tipo) {
   // Tenta, e a cada recusa conhecida do Jira corrige UMA coisa e tenta de novo:
   // "Epic Name" obrigatório -> preenche; descrição fora da tela do projeto -> cria sem ela;
   // "Tipo de entrega" exigido -> envia {value} e, se não servir, [{value}].
-  for (let attempt = 0; attempt < 5; attempt++) {
+  for (let attempt = 0; attempt < 6; attempt++) {
     try {
       const created = await post(fields);
       return { created, descriptionDropped: !!description && !withDescription };
@@ -228,6 +235,8 @@ async function createJiraEpic(j, projectKey, summary, description, tipo) {
         if (!tipo) throw new JiraError(400, `O projeto exige o Tipo de entrega — escolha uma opção (${TIPOS_ENTREGA.join(", ")}).`);
         if (!(e.tipoField in fields)) { fields = { ...fields, [e.tipoField]: { value: tipo } }; continue; }
         if (!triedTipoArray.has(e.tipoField)) { triedTipoArray.add(e.tipoField); fields = { ...fields, [e.tipoField]: [{ value: tipo }] }; continue; }
+        if (!triedTipoArray.has(`${e.tipoField}:text`)) { triedTipoArray.add(`${e.tipoField}:text`); fields = { ...fields, [e.tipoField]: tipo }; continue; }
+        throw new JiraError(400, `${e.message} — mandei "${tipo}" no campo ${e.tipoField} como opção, lista e texto e o Jira não aceitou; ${tipoNote}.`);
       }
       throw e;
     }
