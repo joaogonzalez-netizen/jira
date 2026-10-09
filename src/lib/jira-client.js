@@ -30,7 +30,7 @@ export const jiraApi = {
     const r = await call("GET", "/api/jira/epics");
     return r.ok ? !!r.data.configured : null;
   },
-  createEpic: async ({ key, summary, product, description, position }) => result(await call("POST", "/api/jira/epics", { key, summary, product, description, position })),
+  createEpic: async ({ key, summary, product, description, tipo, position }) => result(await call("POST", "/api/jira/epics", { key, summary, product, description, tipo, position })),
   renameEpic: async ({ key, summary }) => result(await call("PATCH", "/api/jira/epics", { key, summary })),
   cancelEpic: async ({ key }) => result(await call("DELETE", `/api/jira/epics?key=${encodeURIComponent(key)}`)),
 };

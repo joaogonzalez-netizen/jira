@@ -12,6 +12,8 @@ const TASKS_SEED_INITIAL = [{"key": "SELLER-254", "project": "STL Seller", "type
 const STAGES = ["Backlog", "Em design", "Em produto", "Análise técnica", "Pronta pra dev", "Em dev", "Em rollout", "Concluído"];
 const PRODUCTS = ["STLFLIX", "STL IA", "STL Seller", "STL Loja", "Backoffice", "STL Academy"];
 const LAYERS = ["Inovação", "Melhoria", "Sustentação", "Sem classificação"];
+/** Opções do campo "Tipo de entrega" do Jira (o mesmo vocabulário das camadas, sem "Sem classificação"). */
+const TIPOS_ENTREGA = LAYERS.filter((l) => l !== "Sem classificação");
 const ACTIVE_STAGES = ["Em design", "Em produto", "Análise técnica", "Pronta pra dev", "Em dev", "Em rollout"];
 const NOW_DATE = (() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; })();
 function todayMidnight() { const d = new Date(); d.setHours(0, 0, 0, 0); return d; }
@@ -525,13 +527,13 @@ function DataProvider({ children }) {
       if (jiraOn && project) {
         if (roadmapModeRef.current !== "server") return { ok: false, message: "O Roadmap precisa estar no servidor pra criar no Jira." };
         if (!summary) return { ok: false, message: "Dê um nome ao épico antes de criar no Jira." };
-        const r = await jiraApi.createEpic({ key, summary, product: project, description, position });
+        const r = await jiraApi.createEpic({ key, summary, product: project, description, tipo: patch.tipo || null, position });
         if (!r.ok) return { ok: false, message: r.message };
         applyServerDoc(r);
         if (r.warning) setRoadmapError(r.warning);
         return { ok: true, oldKey: key, newKey: r.key };
       }
-      const nextCustom = customEpics.map((e) => (e.key === key ? { ...e, summary: patch.summary, project, resumo: description || null } : e));
+      const nextCustom = customEpics.map((e) => (e.key === key ? { ...e, summary: patch.summary, project, resumo: description || null, tipo: patch.tipo || null } : e));
       setCustomEpics(nextCustom);
       setPositions((prev) => { const next = { ...prev, [key]: position }; persistRoadmap(next, nextCustom, prioOrder, filaProdutoOrder, filaUxOrder); return next; });
       return { ok: true };
@@ -779,9 +781,10 @@ function EpicDrawer({ epic, onClose, weeks, onSave, onDelete, canEdit, jiraConfi
   const [duration, setDuration] = useState(epic?.durationWeeks ?? 2);
   const [project, setProject] = useState(epic?.project || "");
   const [description, setDescription] = useState(epic?.resumo || "");
+  const [tipo, setTipo] = useState(epic?.tipo || "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
-  useEffect(() => { setSummary(epic?.summary || ""); setLane(epic?.roadmapLane || PRIORIZACAO_KEY); setStartWeek(epic?.startWeek ?? 0); setDuration(epic?.durationWeeks ?? 2); setProject(epic?.project || ""); setDescription(epic?.resumo || ""); setError(null); }, [epic]);
+  useEffect(() => { setSummary(epic?.summary || ""); setLane(epic?.roadmapLane || PRIORIZACAO_KEY); setStartWeek(epic?.startWeek ?? 0); setDuration(epic?.durationWeeks ?? 2); setProject(epic?.project || ""); setDescription(epic?.resumo || ""); setTipo(epic?.tipo || ""); setError(null); }, [epic]);
   if (!epic) return null;
   const prod = PRODUCT_STYLE[epic.project] || PRODUCT_STYLE["Backoffice"];
   const isCustom = schedulable && epic.key.startsWith("NOVO-");
@@ -807,7 +810,7 @@ function EpicDrawer({ epic, onClose, weeks, onSave, onDelete, canEdit, jiraConfi
     }
     return run(() => onSave(epic.key, {
       summary, roadmapLane: lane === PRIORIZACAO_KEY ? null : lane, startWeek: lane === PRIORIZACAO_KEY ? null : startWeek, durationWeeks: duration,
-      ...(isCustom ? { project: project || null, description } : {}),
+      ...(isCustom ? { project: project || null, description, tipo: tipo || null } : {}),
     }));
   };
   // Projeto efetivo do rascunho: o escolhido, ou a camada de produto.
@@ -846,6 +849,15 @@ function EpicDrawer({ epic, onClose, weeks, onSave, onDelete, canEdit, jiraConfi
             >
               <option value="">Selecione o projeto…</option>
               {PRODUCTS.map((p) => <option key={p} value={p}>{p}</option>)}
+            </select>
+
+            <p style={{ marginTop: 14, marginBottom: 6, fontSize: 12, fontWeight: 500, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>Tipo de entrega</p>
+            <select
+              value={tipo} onChange={(e) => setTipo(e.target.value)} disabled={!canEdit || busy}
+              style={{ width: "100%", borderRadius: 8, border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink0, fontSize: 13, padding: "7px 8px", fontFamily: "'Inter Tight', sans-serif" }}
+            >
+              <option value="">Selecione…</option>
+              {TIPOS_ENTREGA.map((t) => <option key={t} value={t}>{t}</option>)}
             </select>
 
             <p style={{ marginTop: 14, marginBottom: 6, fontSize: 12, fontWeight: 500, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>Descrição</p>

@@ -38,6 +38,8 @@ const LOCAL_KEY_RE = /^NOVO-\d{1,12}$/;
 const isJiraKey = (k) => typeof k === "string" && JIRA_KEY_RE.test(k) && !LOCAL_KEY_RE.test(k);
 /** Status final aceito como "cancelado", em ordem de preferência. */
 const CANCEL_STATUSES = ["cancelado", "canceled", "cancelled", "arquivado", "archived"];
+/** Opções do campo "Tipo de entrega" (as mesmas que o app já lê da planilha). */
+export const TIPOS_ENTREGA = ["Inovação", "Melhoria", "Sustentação"];
 const MAX_SUMMARY = 255;
 const MAX_CAS_ATTEMPTS = 6;
 const REQUEST_TIMEOUT_MS = 15000;
@@ -102,6 +104,8 @@ function jiraHttpError(status, data) {
     const hit = Object.entries(data?.errors || {}).find(([field, msg]) => /^customfield_\d+$/.test(field) && /epic name/i.test(String(msg)));
     if (hit) err.epicNameField = hit[0];
     if (typeof data?.errors?.description === "string") err.descriptionRejected = true;
+    const tipoHit = Object.entries(data?.errors || {}).find(([field, msg]) => /^customfield_\d+$/.test(field) && norm(msg).includes("tipo de entrega"));
+    if (tipoHit) err.tipoField = tipoHit[0];
     return err;
   }
   if (status === 429) return new JiraError(429, "O Jira limitou as requisições — tente de novo em instantes.");
@@ -133,6 +137,9 @@ async function jiraFetch(j, method, path, body) {
   return data;
 }
 
+/** Compara texto ignorando maiúsculas e acentos ("Inovação" == "inovacao"). */
+const norm = (s) => String(s ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase();
+
 const isEpicType = (t) => !!t && (t.hierarchyLevel === 1 || /^(epic|épico)$/i.test(t.name || ""));
 
 async function epicTypeId(j, projectKey) {
@@ -145,19 +152,66 @@ async function epicTypeId(j, projectKey) {
   return type.id;
 }
 
+/** Campos que o Jira pede ao criar um épico nesse projeto (paginado). Falha aqui não
+    impede a criação: sem isso caímos no fallback guiado pelo erro do Jira. */
+async function createFields(j, projectKey, typeId) {
+  const all = [];
+  for (let startAt = 0, page = 0; page < 10; page++) {
+    const data = await jiraFetch(j, "GET", `/rest/api/3/issue/createmeta/${projectKey}/issuetypes/${typeId}?startAt=${startAt}&maxResults=100`);
+    const values = Array.isArray(data?.values) ? data.values : [];
+    all.push(...values);
+    if (data?.isLast !== false || !values.length) break;
+    startAt += values.length;
+  }
+  return all;
+}
+
+/** Monta o valor do campo "Tipo de entrega" no formato que o tipo do campo pede
+    (lista simples, múltipla ou texto). `null` quando o projeto não tem o campo
+    (ou não é obrigatório e nada foi escolhido). */
+function resolveTipoEntrega(fields, tipo) {
+  const f = fields.find((x) => norm(x?.name) === "tipo de entrega");
+  if (!f) return null;
+  const options = Array.isArray(f.allowedValues) ? f.allowedValues : [];
+  const labelOf = (o) => o?.value ?? o?.name ?? "";
+  const list = options.map(labelOf).filter(Boolean).join(", ") || TIPOS_ENTREGA.join(", ");
+  if (!tipo) {
+    if (f.required) throw new JiraError(400, `O projeto exige o Tipo de entrega — escolha uma opção (${list}).`);
+    return null;
+  }
+  const isArray = f.schema?.type === "array";
+  if (!options.length) return { fieldId: f.fieldId, value: isArray ? [tipo] : tipo };
+  const match = options.find((o) => norm(labelOf(o)) === norm(tipo));
+  if (!match) throw new JiraError(400, `O Jira não tem a opção "${tipo}" em Tipo de entrega. Opções: ${list}.`);
+  const option = match.id !== undefined ? { id: String(match.id) } : { value: labelOf(match) };
+  return { fieldId: f.fieldId, value: isArray ? [option] : option };
+}
+
 /** Cria o épico; projetos com "Epic Name" obrigatório respondem 400 apontando o campo. */
-async function createJiraEpic(j, projectKey, summary, description) {
-  const issuetype = { id: await epicTypeId(j, projectKey) };
-  let fields = { project: { key: projectKey }, issuetype, summary };
+async function createJiraEpic(j, projectKey, summary, description, tipo) {
+  const typeId = await epicTypeId(j, projectKey);
+  let fields = { project: { key: projectKey }, issuetype: { id: typeId }, summary };
+
+  // Tipo de entrega: descobre o campo do projeto (id, tipo e opções) e já manda o valor certo.
+  try {
+    const found = resolveTipoEntrega(await createFields(j, projectKey, typeId), tipo);
+    if (found) fields = { ...fields, [found.fieldId]: found.value };
+  } catch (e) {
+    if (e instanceof JiraError && e.status === 400 && /Tipo de entrega/.test(e.message)) throw e; // regra de negócio, não falha de rede
+    // createmeta indisponível: segue e deixa o erro do Jira guiar (abaixo)
+  }
+
   let withDescription = false;
   if (description) {
     fields = { ...fields, description: descriptionToAdf(description) };
     withDescription = true;
   }
   const post = (f) => jiraFetch(j, "POST", "/rest/api/3/issue", { fields: f });
+  const triedTipoArray = new Set();
   // Tenta, e a cada recusa conhecida do Jira corrige UMA coisa e tenta de novo:
-  // "Epic Name" obrigatório -> preenche; descrição fora da tela do projeto -> cria sem ela.
-  for (let attempt = 0; attempt < 3; attempt++) {
+  // "Epic Name" obrigatório -> preenche; descrição fora da tela do projeto -> cria sem ela;
+  // "Tipo de entrega" exigido -> envia {value} e, se não servir, [{value}].
+  for (let attempt = 0; attempt < 5; attempt++) {
     try {
       const created = await post(fields);
       return { created, descriptionDropped: !!description && !withDescription };
@@ -169,6 +223,11 @@ async function createJiraEpic(j, projectKey, summary, description) {
         fields = rest;
         withDescription = false;
         continue;
+      }
+      if (e.tipoField) {
+        if (!tipo) throw new JiraError(400, `O projeto exige o Tipo de entrega — escolha uma opção (${TIPOS_ENTREGA.join(", ")}).`);
+        if (!(e.tipoField in fields)) { fields = { ...fields, [e.tipoField]: { value: tipo } }; continue; }
+        if (!triedTipoArray.has(e.tipoField)) { triedTipoArray.add(e.tipoField); fields = { ...fields, [e.tipoField]: [{ value: tipo }] }; continue; }
       }
       throw e;
     }
@@ -200,6 +259,13 @@ export function descriptionToAdf(text) {
     return { type: "paragraph", content: nodes };
   });
   return { type: "doc", version: 1, content };
+}
+
+function cleanTipo(v) {
+  if (v === undefined || v === null || v === "") return "";
+  const found = typeof v === "string" ? TIPOS_ENTREGA.find((t) => norm(t) === norm(v)) : null;
+  if (!found) throw new JiraError(400, `Tipo de entrega inválido. Use: ${TIPOS_ENTREGA.join(", ")}.`);
+  return found;
 }
 
 function cleanDescription(v) {
@@ -293,6 +359,7 @@ export async function handleCreateEpic(input, session, rcfg, j) {
     const projectKey = PRODUCT_TO_PROJECT[product];
     if (!projectKey) return bad("Escolha o produto (camada) antes de criar no Jira");
     const description = cleanDescription(input?.description);
+    const tipo = cleanTipo(input?.tipo);
     const position = cleanPosition(input?.position);
     if (position && position.roadmapLane !== null && position.roadmapLane !== product) {
       return bad("A camada do épico precisa ser o produto escolhido");
@@ -304,7 +371,7 @@ export async function handleCreateEpic(input, session, rcfg, j) {
     if (!draft) return { status: 404, body: { message: "Esse épico não existe mais (ou já foi criado no Jira)" } };
     if (!mayTouchEpic(session, doc, oldKey)) return forbidden("Esse épico é de outra pessoa");
 
-    const { created, descriptionDropped } = await createJiraEpic(j, projectKey, summary, description);
+    const { created, descriptionDropped } = await createJiraEpic(j, projectKey, summary, description, tipo);
     const newKey = created?.key;
     if (typeof newKey !== "string" || !JIRA_KEY_RE.test(newKey)) throw new JiraError(502, "O Jira não devolveu a chave do épico criado");
 
@@ -323,7 +390,7 @@ export async function handleCreateEpic(input, session, rcfg, j) {
       positions[newKey] = position || oldPos || { roadmapLane: null, startWeek: null, durationWeeks: 2 };
       return touchDoc({
         ...cur,
-        customEpics: cur.customEpics.map((e) => (e.key === oldKey ? { ...e, key: newKey, project: product, summary, status, resumo: description || null } : e)),
+        customEpics: cur.customEpics.map((e) => (e.key === oldKey ? { ...e, key: newKey, project: product, summary, status, resumo: description || null, tipo: tipo || e.tipo || null } : e)),
         positions,
         prioOrder: swapKey(cur.prioOrder, oldKey, newKey),
         filaProdutoOrder: swapKey(cur.filaProdutoOrder, oldKey, newKey),

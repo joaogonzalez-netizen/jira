@@ -47,8 +47,23 @@ function fakeJira(opts = {}) {
       if (!projects.has(m[1])) return reply(404, { errorMessages: ["No project could be found"] });
       return reply(200, { issueTypes: opts.noEpicType ? [storyType] : [storyType, epicType] });
     }
+    if (method === "GET" && (m = u.pathname.match(/^\/rest\/api\/3\/issue\/createmeta\/([A-Z]+)\/issuetypes\/(\d+)$/))) {
+      if (!opts.createmeta) return reply(404, { errorMessages: ["createmeta indisponível"] });
+      const start = Number(u.searchParams.get("startAt") || 0);
+      const size = opts.pageSize || 100;
+      const slice = opts.createmeta.slice(start, start + size);
+      return reply(200, { values: slice, startAt: start, maxResults: size, total: opts.createmeta.length, isLast: start + size >= opts.createmeta.length });
+    }
     if (method === "POST" && u.pathname === "/rest/api/3/issue") {
       const f = body.fields;
+      if (opts.requireTipo) {
+        const v = f[opts.requireTipo.field];
+        const labels = opts.requireTipo.options;
+        const okShape = v !== undefined && (opts.requireTipo.arrayOnly ? Array.isArray(v) : !Array.isArray(v));
+        const first = Array.isArray(v) ? v[0] : v;
+        const label = first && (first.value ?? labels[first.id]);
+        if (!okShape || !label || !Object.values(labels).includes(label)) return reply(400, { errors: { [opts.requireTipo.field]: "Preencha o campo: Tipo de entrega" } });
+      }
       if (opts.epicNameRequired && !f.customfield_10011) return reply(400, { errors: { customfield_10011: "Epic Name is required." } });
       if (opts.rejectDescription && f.description) return reply(400, { errors: { description: "Field 'description' cannot be set. It is not on the appropriate screen, or unknown." } });
       counters[f.project.key] = (counters[f.project.key] || 300) + 1;
@@ -479,4 +494,86 @@ test("rascunho: projeto e descrição persistem no Roadmap (resumo) e não se pe
   assert.equal(rec.project, "STL IA");
   assert.equal(rec.resumo, "Minha descrição");
   assert.equal((await handlePatch({ customEpics: { upsert: [{ key: "NOVO-100", summary: "x", resumo: "a".repeat(10001), createdBy: "joao@x.com" }] } }, SUPER, rcfg)).body.state.customEpics.find((e) => e.key === "NOVO-100").resumo.length, 10000, "descrição enorme é cortada, não derruba o save");
+});
+
+/* ------------------------------ Tipo de entrega ------------------------------ */
+
+const TIPO_FIELD = (extra = {}) => ({
+  fieldId: "customfield_10050", name: "Tipo de entrega", required: true, schema: { type: "option" },
+  allowedValues: [{ id: "10101", value: "Inovação" }, { id: "10102", value: "Melhoria" }, { id: "10103", value: "Sustentação" }],
+  ...extra,
+});
+const BASE_FIELDS = [{ fieldId: "summary", name: "Resumo", required: true }, { fieldId: "description", name: "Descrição", required: false }];
+
+test("tipo de entrega: o campo é descoberto no projeto e enviado com o id da opção", async () => {
+  const { rcfg, jira, j } = await setup({ createmeta: [...BASE_FIELDS, TIPO_FIELD()], requireTipo: { field: "customfield_10050", options: { 10101: "Inovação", 10102: "Melhoria", 10103: "Sustentação" } } });
+  const r = await handleCreateEpic({ key: "NOVO-100", summary: "Com tipo", product: "STL IA", tipo: "Melhoria" }, SUPER, rcfg, j);
+  assert.equal(r.status, 200);
+  const post = jira.calls.find((c) => c.method === "POST" && c.path === "/rest/api/3/issue");
+  assert.deepEqual(post.body.fields.customfield_10050, { id: "10102" });
+  assert.equal(jira.calls.filter((c) => c.method === "POST" && c.path === "/rest/api/3/issue").length, 1, "acertou de primeira, sem retry");
+  assert.equal((await state(rcfg)).state.customEpics.find((e) => e.key === "IA-301").tipo, "Melhoria");
+});
+
+test("tipo de entrega: ignora maiúsculas/acentos e aceita campo de lista múltipla", async () => {
+  const { rcfg, jira, j } = await setup({ createmeta: [TIPO_FIELD({ schema: { type: "array", items: "option" } })], requireTipo: { field: "customfield_10050", arrayOnly: true, options: { 10101: "Inovação", 10102: "Melhoria", 10103: "Sustentação" } } });
+  const r = await handleCreateEpic({ key: "NOVO-100", summary: "x", product: "STL Seller", tipo: "sustentacao" }, SUPER, rcfg, j);
+  assert.equal(r.status, 200);
+  assert.deepEqual(jira.calls.find((c) => c.method === "POST" && c.path === "/rest/api/3/issue").body.fields.customfield_10050, [{ id: "10103" }]);
+  assert.equal((await state(rcfg)).state.customEpics.find((e) => e.key === "SELLER-301").tipo, "Sustentação", "guarda o nome canônico");
+});
+
+test("tipo de entrega obrigatório e não escolhido: recusa ANTES de criar, dizendo as opções", async () => {
+  const { rcfg, jira, j } = await setup({ createmeta: [TIPO_FIELD()] });
+  const r = await handleCreateEpic({ key: "NOVO-100", summary: "x", product: "STL IA" }, SUPER, rcfg, j);
+  assert.equal(r.status, 400);
+  assert.match(r.body.message, /exige o Tipo de entrega.*Inovação, Melhoria, Sustentação/);
+  assert.equal(jira.writes().length, 0, "nada foi criado no Jira");
+});
+
+test("tipo de entrega: opção que o Jira não tem e valor inválido do app", async () => {
+  const { rcfg, jira, j } = await setup({ createmeta: [TIPO_FIELD({ allowedValues: [{ id: "1", value: "Inovação" }] })] });
+  const sem = await handleCreateEpic({ key: "NOVO-100", summary: "x", product: "STL IA", tipo: "Melhoria" }, SUPER, rcfg, j);
+  assert.equal(sem.status, 400);
+  assert.match(sem.body.message, /não tem a opção "Melhoria".*Inovação/);
+  assert.equal((await handleCreateEpic({ key: "NOVO-100", summary: "x", product: "STL IA", tipo: "Qualquer coisa" }, SUPER, rcfg, j)).status, 400);
+  assert.equal((await handleCreateEpic({ key: "NOVO-100", summary: "x", product: "STL IA", tipo: 7 }, SUPER, rcfg, j)).status, 400);
+  assert.equal(jira.writes().length, 0);
+});
+
+test("tipo de entrega: projeto sem o campo, ou campo opcional não escolhido — cria normalmente", async () => {
+  let { rcfg, jira, j } = await setup({ createmeta: BASE_FIELDS });
+  assert.equal((await handleCreateEpic({ key: "NOVO-100", summary: "x", product: "STL IA", tipo: "Inovação" }, SUPER, rcfg, j)).status, 200);
+  assert.ok(!Object.keys(jira.calls.find((c) => c.method === "POST" && c.path === "/rest/api/3/issue").body.fields).some((k) => k.startsWith("customfield")), "não inventa campo que o projeto não tem");
+  ({ rcfg, jira, j } = await setup({ createmeta: [TIPO_FIELD({ required: false })] }));
+  assert.equal((await handleCreateEpic({ key: "NOVO-100", summary: "x", product: "STL IA" }, SUPER, rcfg, j)).status, 200);
+});
+
+test("tipo de entrega: campo na segunda página do createmeta também é achado", async () => {
+  const filler = Array.from({ length: 5 }, (_, i) => ({ fieldId: `customfield_2000${i}`, name: `Outro ${i}`, required: false }));
+  const { rcfg, jira, j } = await setup({ createmeta: [...filler, TIPO_FIELD()], pageSize: 3, requireTipo: { field: "customfield_10050", options: { 10101: "Inovação", 10102: "Melhoria", 10103: "Sustentação" } } });
+  assert.equal((await handleCreateEpic({ key: "NOVO-100", summary: "x", product: "STL IA", tipo: "Inovação" }, SUPER, rcfg, j)).status, 200);
+  assert.ok(jira.calls.filter((c) => c.path.includes("/createmeta/")).length >= 2, "paginou");
+});
+
+test("tipo de entrega: sem createmeta, o erro do Jira guia — tenta {value} e depois [{value}]", async () => {
+  // lista simples: aceita {value}
+  let { rcfg, jira, j } = await setup({ requireTipo: { field: "customfield_10050", options: { a: "Inovação", b: "Melhoria", c: "Sustentação" } } });
+  let r = await handleCreateEpic({ key: "NOVO-100", summary: "x", product: "STL IA", tipo: "Inovação" }, SUPER, rcfg, j);
+  assert.equal(r.status, 200);
+  const posts = jira.calls.filter((c) => c.method === "POST" && c.path === "/rest/api/3/issue");
+  assert.equal(posts.length, 2);
+  assert.deepEqual(posts[1].body.fields.customfield_10050, { value: "Inovação" });
+  // lista múltipla: precisa de [{value}]
+  ({ rcfg, jira, j } = await setup({ requireTipo: { field: "customfield_10050", arrayOnly: true, options: { a: "Inovação", b: "Melhoria", c: "Sustentação" } } }));
+  r = await handleCreateEpic({ key: "NOVO-100", summary: "x", product: "STL IA", tipo: "Melhoria" }, SUPER, rcfg, j);
+  assert.equal(r.status, 200);
+  assert.deepEqual(jira.calls.filter((c) => c.method === "POST" && c.path === "/rest/api/3/issue").pop().body.fields.customfield_10050, [{ value: "Melhoria" }]);
+});
+
+test("tipo de entrega: sem createmeta e sem escolher, o Jira exige — mensagem clara com as opções", async () => {
+  const { rcfg, j } = await setup({ requireTipo: { field: "customfield_10050", options: { a: "Inovação" } } });
+  const r = await handleCreateEpic({ key: "NOVO-100", summary: "x", product: "STL IA" }, SUPER, rcfg, j);
+  assert.equal(r.status, 400);
+  assert.match(r.body.message, /exige o Tipo de entrega.*Inovação, Melhoria, Sustentação/);
 });
