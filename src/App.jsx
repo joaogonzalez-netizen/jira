@@ -2,7 +2,8 @@ import React, { createContext, useContext, useState, useEffect, useMemo, useCall
 import { ChevronUp, ChevronDown, ChevronRight, ChevronLeft, X, BarChart3, Sun, Moon, Calendar, Plus, Minus, RefreshCw, LogOut, Lock, Layers, Trash2, Users, Settings } from "lucide-react";
 import { BarChart, Bar, LineChart, Line, PieChart, Pie, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell, LabelList } from "recharts";
 import storage from "./lib/storage";
-import { roadmapStore, diffRoadmap, isEmptyDiff, summarizeRoadmap, emptyRoadmap } from "./lib/roadmap-store";
+import { roadmapStore, diffRoadmap, isEmptyDiff, summarizeRoadmap, emptyRoadmap, applyEpicOverrides, mergeCustomEpics } from "./lib/roadmap-store";
+import { jiraApi } from "./lib/jira-client";
 import { AuthProvider, useAuth } from "./lib/auth-context";
 
 const EPICS_SEED_INITIAL = [{"key": "SELLER-256", "project": "STL Seller", "type": "Epic", "summary": "Vincular calculadora com Produtos", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Backlog", "stage": "Backlog", "tipo": "Inovação", "parent": null, "created": "07/08/2026 15:06:01", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "SELLER-255", "project": "STL Seller", "type": "Epic", "summary": "[Shopee] Gerador de anúncios", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Backlog", "stage": "Backlog", "tipo": "Inovação", "parent": null, "created": "07/08/2026 14:29:05", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "SELLER-250", "project": "STL Seller", "type": "Epic", "summary": "Cancelamento do Oferta/Seller", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Backlog", "stage": "Backlog", "tipo": "Sustentação", "parent": null, "created": "05/08/2026 08:53:47", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "SELLER-249", "project": "STL Seller", "type": "Epic", "summary": "Calculadora na Flix", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Backlog", "stage": "Backlog", "tipo": "Inovação", "parent": null, "created": "04/08/2026 14:02:28", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": "Testar uma prévia da calculadora de preços do STLSeller direto na página do modelo na STLFLIX, usando o cálculo como gatilho de ativação cross-produto no momento da descoberta."}, {"key": "SELLER-248", "project": "STL Seller", "type": "Epic", "summary": "Calculadora na IA", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Backlog", "stage": "Backlog", "tipo": "Inovação", "parent": null, "created": "04/08/2026 14:02:42", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "SELLER-200", "project": "STL Seller", "type": "Epic", "summary": "[v2] Produtos", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Backlog", "stage": "Backlog", "tipo": "Melhoria", "parent": null, "created": "29/07/2026 20:19:26", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "SELLER-199", "project": "STL Seller", "type": "Epic", "summary": "[v2] Pedidos", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Backlog", "stage": "Backlog", "tipo": "Melhoria", "parent": null, "created": "29/07/2026 20:18:17", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "SELLER-194", "project": "STL Seller", "type": "Epic", "summary": "Publicar anúncio no Mercado Livre", "assignee": "Marcelo Augusto", "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Pronto P/ DEV", "stage": "Pronta pra dev", "tipo": "Inovação", "parent": null, "created": "28/07/2026 11:34:58", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "SELLER-189", "project": "STL Seller", "type": "Epic", "summary": "Dados (Amplitude e Clarity)", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Pronto P/ DEV", "stage": "Pronta pra dev", "tipo": "Inovação", "parent": null, "created": "28/07/2026 09:42:01", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "SELLER-188", "project": "STL Seller", "type": "Epic", "summary": "Integração Amazon", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Backlog", "stage": "Backlog", "tipo": "Inovação", "parent": null, "created": "28/07/2026 09:41:49", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "SELLER-158", "project": "STL Seller", "type": "Epic", "summary": "Cálculos para modelos em resina", "assignee": "João Gonzalez", "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Backlog", "stage": "Backlog", "tipo": "Inovação", "parent": null, "created": "16/07/2026 15:56:01", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": "Avaliar uma calculadora de resina indicada pelo time de pesquisa, com estrutura de custo diferente da calculadora atual."}, {"key": "SELLER-155", "project": "STL Seller", "type": "Epic", "summary": "[v2] Calculadora", "assignee": "Marcelo Augusto", "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Em DEV", "stage": "Em dev", "tipo": "Inovação", "parent": null, "created": "16/07/2026 15:50:08", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": "Evoluir a calculadora de preços para guardar impressoras/filamentos/custos reutilizáveis, suportar Pix e ajudar o maker a decidir se vale anunciar — reduzindo o retrabalho de recomeçar cada cálculo do zero."}, {"key": "SELLER-154", "project": "STL Seller", "type": "Epic", "summary": "[v2] Finder", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Produto", "stage": null, "tipo": "Inovação", "parent": null, "created": "16/07/2026 15:49:13", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "SELLER-153", "project": "STL Seller", "type": "Epic", "summary": "[v2] Gerador de anúncios", "assignee": "Marcelo Augusto", "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Em refinamento Técnico", "stage": "Análise técnica", "tipo": "Inovação", "parent": null, "created": "16/07/2026 15:47:22", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "SELLER-152", "project": "STL Seller", "type": "Epic", "summary": "[Shopee] Postagem de anúncio", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Backlog", "stage": "Backlog", "tipo": "Inovação", "parent": null, "created": "16/07/2026 15:45:12", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": "Criar prompts de IA para gerar automaticamente títulos e descrições de anúncios da Shopee, seguindo as boas práticas de SEO e os limites de caracteres da plataforma."}, {"key": "SELLER-88", "project": "STL Seller", "type": "Epic", "summary": "Global", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Done", "stage": "Concluído", "tipo": "Inovação", "parent": null, "created": "28/06/2026 21:59:13", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "SELLER-48", "project": "STL Seller", "type": "Epic", "summary": "Seller", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Done", "stage": "Concluído", "tipo": "Inovação", "parent": null, "created": "27/05/2026 14:15:10", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "SELLER-46", "project": "STL Seller", "type": "Epic", "summary": "Cobrança de créditos STLSeller", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Em DEV", "stage": "Em dev", "tipo": "Inovação", "parent": null, "created": "20/05/2026 14:57:03", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "SELLER-42", "project": "STL Seller", "type": "Epic", "summary": "[Seller] Calculadora", "assignee": "João Gonzalez", "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Done", "stage": "Concluído", "tipo": "Inovação", "parent": null, "created": "20/05/2026 10:27:14", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "SELLER-29", "project": "STL Seller", "type": "Epic", "summary": "Finder", "assignee": "João Gonzalez", "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Done", "stage": "Concluído", "tipo": "Inovação", "parent": null, "created": "11/05/2026 13:07:07", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "SELLER-14", "project": "STL Seller", "type": "Epic", "summary": "[Seller] Pedidos", "assignee": "João Gonzalez", "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Done", "stage": "Concluído", "tipo": "Inovação", "parent": null, "created": "07/05/2026 17:29:12", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "SELLER-11", "project": "STL Seller", "type": "Epic", "summary": "Produtos", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Done", "stage": "Concluído", "tipo": "Inovação", "parent": null, "created": "04/05/2026 11:32:10", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": "Instrumentar a tela de Estoque no Amplitude (acessos, filtros, alertas de ruptura, exportação, detalhe de produto) para medir engajamento e embasar decisões de evolução."}, {"key": "SELLER-10", "project": "STL Seller", "type": "Epic", "summary": "Avaliador de anúncios", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Backlog", "stage": "Backlog", "tipo": "Inovação", "parent": null, "created": "21/04/2026 10:28:28", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": "Criar um avaliador de anúncios do Mercado Livre que analisa qualidade e performance de um anúncio e recomenda melhorias, começando pelo orgânico e podendo evoluir para Product Ads."}, {"key": "SELLER-8", "project": "STL Seller", "type": "Epic", "summary": "[IA] My Ads: Geração de Anúncios com IA", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Done", "stage": "Concluído", "tipo": "Inovação", "parent": null, "created": "16/04/2026 11:22:45", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "LOJA-60", "project": "STL Loja", "type": "Epic", "summary": "Atualização Loja", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Backlog", "stage": "Backlog", "tipo": "Melhoria", "parent": null, "created": "04/08/2026 14:08:43", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "LOJA-34", "project": "STL Loja", "type": "Epic", "summary": "Automatizar sincronização de planos entre WooCommerce e Backend (STLFLIX/STLAI)", "assignee": "João Gonzalez", "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Em refinamento Técnico", "stage": "Análise técnica", "tipo": "Melhoria", "parent": null, "created": "25/06/2026 14:27:27", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": "Automatizar o cadastro de planos no Backend (STLFLIX/STLAI) direto pelo WooCommerce via API, eliminando o cadastro manual duplicado que hoje deixa clientes sem acesso quando é esquecido."}, {"key": "LOJA-6", "project": "STL Loja", "type": "Epic", "summary": "Reestruturação da Loja STLFLIX", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Done", "stage": "Concluído", "tipo": "Melhoria", "parent": null, "created": "17/03/2026 11:17:35", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "IA-264", "project": "STL IA", "type": "Epic", "summary": "[IA] Barra de pesquisa", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Em DEV", "stage": "Em dev", "tipo": "Inovação", "parent": null, "created": "05/08/2026 15:36:28", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "IA-156", "project": "STL IA", "type": "Epic", "summary": "Padronização e tradução de campos e modais de filtros para 2D dos customizadores STLAI", "assignee": null, "reporter": "silvana souza", "developer": null, "tester": null, "status": "Em DEV", "stage": "Em dev", "tipo": "Melhoria", "parent": null, "created": "25/05/2026 14:49:30", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "High", "resumo": "Padronizar o layout dos modais de filtros entre os customizadores da STLAI e garantir que todos os textos respeitem o idioma selecionado pelo usuário."}, {"key": "IA-144", "project": "STL IA", "type": "Epic", "summary": "Workbench STLAI: criação de modelos 3D por imagem e edição integrada com Tools", "assignee": "silvana souza", "reporter": "silvana souza", "developer": null, "tester": null, "status": "Em design", "stage": "Em design", "tipo": "Inovação", "parent": null, "created": "19/05/2026 16:10:21", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "High", "resumo": "Evoluir a seção Tools da STLAI para uma Workbench, começando por gerar modelos 3D a partir de fotos/texto (Image to 3D V1) e permitir editar o resultado nas ferramentas existentes."}, {"key": "IA-129", "project": "STL IA", "type": "Epic", "summary": "Multi-Color: Filtro modelos coloridos", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Em DEV", "stage": "Em dev", "tipo": "Inovação", "parent": null, "created": "21/04/2026 10:57:35", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "IA-112", "project": "STL IA", "type": "Epic", "summary": "Padronização da experiência e arquitetura dos customizadores (STLAI)", "assignee": "silvana souza", "reporter": "silvana souza", "developer": null, "tester": null, "status": "Produto", "stage": null, "tipo": "Inovação", "parent": null, "created": "22/04/2026 11:26:54", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": "Padronizar a experiência e a arquitetura dos customizadores da STLAI para resolver inconsistência de UX, retrabalho de desenvolvimento e dependência de devs específicos entre os lançamentos."}, {"key": "IA-89", "project": "STL IA", "type": "Epic", "summary": "Análise de comportamento dos usuários nos customizadores", "assignee": "silvana souza", "reporter": "silvana souza", "developer": null, "tester": null, "status": "Produto", "stage": null, "tipo": "Sustentação", "parent": null, "created": "17/04/2026 17:51:19", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "High", "resumo": "Instrumentar o funil de uso dos customizadores da STLAI (2D→3D, erros, satisfação) para entender onde os usuários desistem e o que diferencia quem ativa de quem cancela."}, {"key": "IA-70", "project": "STL IA", "type": "Epic", "summary": "Multi-Color: Exportação colorida para Bambu e Orca", "assignee": "silvana souza", "reporter": "silvana souza", "developer": null, "tester": null, "status": "Done", "stage": "Concluído", "tipo": "Inovação", "parent": null, "created": "14/04/2026 15:20:34", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Highest", "resumo": "Permitir gerar e exportar modelos 3D já coloridos da STLAI prontos para Bambu Studio e Orca, sem precisar de pós-processamento manual em ferramentas externas."}, {"key": "IA-21", "project": "STL IA", "type": "Epic", "summary": "Gerar modelo com qualidade realista superior", "assignee": "silvana souza", "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Done", "stage": "Concluído", "tipo": "Inovação", "parent": null, "created": "12/03/2026 15:19:59", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "FLIX-352", "project": "STLFLIX", "type": "Epic", "summary": "Projeto Evolt", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Backlog", "stage": "Backlog", "tipo": "Inovação", "parent": null, "created": "05/08/2026 12:00:23", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": "Ideia trazida pelo Lincoln para Portugal: cupom gratuito seguido de uma VSL logo na entrada para converter o usuário em outra assinatura."}, {"key": "FLIX-305", "project": "STLFLIX", "type": "Epic", "summary": "[Flix] Ecossistema", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Produto", "stage": null, "tipo": "Inovação", "parent": null, "created": "27/07/2026 09:20:01", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "FLIX-283", "project": "STLFLIX", "type": "Epic", "summary": "Flix em Espanhol", "assignee": "João Gonzalez", "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Em rollout", "stage": "Em rollout", "tipo": "Inovação", "parent": null, "created": "20/07/2026 09:47:20", "dataInicio": null, "dataConcl": "21/04/2026", "intercom": false, "epic": true, "priority": "Medium", "resumo": "Adicionar espanhol (LatAm) como terceiro idioma da plataforma, reaproveitando a infraestrutura de i18n já construída para PT-BR."}, {"key": "FLIX-257", "project": "STLFLIX", "type": "Epic", "summary": "[AR] MercadoPago", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Em refinamento Técnico", "stage": "Análise técnica", "tipo": "Melhoria", "parent": null, "created": "13/07/2026 10:59:50", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "FLIX-168", "project": "STLFLIX", "type": "Epic", "summary": "[Explore] Novos Filtros", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Done", "stage": "Concluído", "tipo": "Melhoria", "parent": null, "created": "15/06/2026 11:43:03", "dataInicio": null, "dataConcl": "24/07/2026", "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "FLIX-142", "project": "STLFLIX", "type": "Epic", "summary": "Lote especial", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Done", "stage": "Concluído", "tipo": "Sustentação", "parent": null, "created": "02/06/2026 10:48:09", "dataInicio": null, "dataConcl": "24/07/2026", "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "FLIX-3", "project": "STLFLIX", "type": "Epic", "summary": "[Flix em PT-BR] 01 - Infraestrutura de Idioma", "assignee": "João Gonzalez", "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Done", "stage": "Concluído", "tipo": "Inovação", "parent": null, "created": "10/03/2026 10:25:38", "dataInicio": null, "dataConcl": "21/04/2026", "intercom": false, "epic": true, "priority": "Medium", "resumo": "Criar a base técnica de multi-idioma da STLFlix, começando por PT-BR, com detecção automática, seletor manual e fallback para inglês."}, {"key": "BACK-52", "project": "Backoffice", "type": "Epic", "summary": "Integração ARCA MP", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Backlog", "stage": "Backlog", "tipo": "Inovação", "parent": null, "created": "07/08/2026 15:02:07", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "BACK-51", "project": "Backoffice", "type": "Epic", "summary": "Novos Headers", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Em DEV", "stage": "Em dev", "tipo": "Inovação", "parent": null, "created": "06/08/2026 10:24:42", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "BACK-50", "project": "Backoffice", "type": "Epic", "summary": "[v2] Onboarding GetDemo", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Backlog", "stage": "Backlog", "tipo": "Melhoria", "parent": null, "created": "06/08/2026 09:41:56", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "BACK-46", "project": "Backoffice", "type": "Epic", "summary": "GetDemo", "assignee": "João Gonzalez", "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Em rollout", "stage": "Em rollout", "tipo": "Inovação", "parent": null, "created": "15/06/2026 10:44:41", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "BACK-45", "project": "Backoffice", "type": "Epic", "summary": "Onboarding", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Done", "stage": "Concluído", "tipo": "Inovação", "parent": null, "created": "18/06/2026 10:35:33", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "BACK-35", "project": "Backoffice", "type": "Epic", "summary": "[V1] Backoffice seller", "assignee": "João Gonzalez", "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Produto", "stage": null, "tipo": "Sustentação", "parent": null, "created": "23/07/2026 10:20:34", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": "Dar ao time de suporte uma ferramenta interna com autonomia e rastreabilidade para ações de conta do STLSeller (senha, crédito, assinatura), com log de auditoria e visibilidade das integrações de marketplace."}, {"key": "BACK-2", "project": "Backoffice", "type": "Epic", "summary": "Melhorias no Model Shop", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Done", "stage": "Concluído", "tipo": "Sustentação", "parent": null, "created": "16/03/2026 16:01:40", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": "Evoluir o backoffice do Model Shop para reduzir trabalho manual no cadastro/publicação de produtos, começando por suportar arquivos grandes para produtos de resina e cosplay."}, {"key": "ACADEMY-45", "project": "STL Academy", "type": "Epic", "summary": "Ambiente novo (Cursos livres, ao vivo, mentorias)", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Backlog", "stage": "Backlog", "tipo": "Inovação", "parent": null, "created": "05/08/2026 10:13:53", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}];
@@ -200,6 +201,19 @@ function DataProvider({ children }) {
   const [roadmapError, setRoadmapError] = useState(null);
   const [roadmapLoaded, setRoadmapLoaded] = useState(false);
   const [localSummary, setLocalSummary] = useState(null);
+  // O que o servidor registrou sobre épicos do Jira alterados por aqui (nome novo,
+  // cancelado) — vale por cima da planilha até ela sincronizar com o Jira.
+  const [epicOverrides, setEpicOverrides] = useState({});
+  const epicsView = useMemo(() => applyEpicOverrides(epics, epicOverrides), [epics, epicOverrides]);
+  // Escrita no Jira ligada? (JIRA_EMAIL/JIRA_API_TOKEN no servidor) — null = ainda não sei.
+  const [jiraConfigured, setJiraConfigured] = useState(null);
+  const jiraConfiguredRef = useRef(null);
+  jiraConfiguredRef.current = jiraConfigured;
+  useEffect(() => {
+    let alive = true;
+    jiraApi.status().then((v) => { if (alive) setJiraConfigured(v); });
+    return () => { alive = false; };
+  }, []);
 
   const roadmapModeRef = useRef("loading");
   const serverRef = useRef({ state: null, rev: 0, snapshotAt: null });
@@ -216,6 +230,7 @@ function DataProvider({ children }) {
     setPrioOrder(st.prioOrder || []);
     setFilaProdutoOrder(st.filaProdutoOrder || []);
     setFilaUxOrder(st.filaUxOrder || []);
+    setEpicOverrides(st.epicOverrides || {});
   }, []);
 
   const readLocalRoadmap = useCallback(async () => {
@@ -381,7 +396,7 @@ function DataProvider({ children }) {
     if (mode === "server" && !latestRef.current.canWriteShared) return;
     const cur = latestRef.current;
     const adds = {};
-    epics.forEach((ep) => {
+    epicsView.forEach((ep) => {
       if (Object.prototype.hasOwnProperty.call(cur.positions, ep.key)) return; // respeita escolha manual, mesmo remoção explícita
       const status = projetosStatusRef.current[ep.key] || ep.status;
       if (status === "Pronto P/ DEV") adds[ep.key] = { roadmapLane: ep.project, startWeek: 0, durationWeeks: 2 };
@@ -402,7 +417,7 @@ function DataProvider({ children }) {
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [epics, roadmapLoaded, roadmapMode]);
+  }, [epicsView, roadmapLoaded, roadmapMode]);
 
   // Primeira carga do servidor (só super): usa o Roadmap deste navegador, ou um
   // backup .json importado, e leva junto os dados da planilha já sincronizados.
@@ -435,7 +450,7 @@ function DataProvider({ children }) {
     return { ok: true };
   }, [adoptState, readLocalRoadmap, resyncFromServer, setMode, writeLocalRoadmap]);
 
-  const allEpicsWithCustom = useMemo(() => [...epics, ...customEpics], [epics, customEpics]);
+  const allEpicsWithCustom = useMemo(() => mergeCustomEpics(epicsView, customEpics), [epicsView, customEpics]);
   const byKeyWithCustom = useMemo(() => Object.fromEntries(allEpicsWithCustom.map((e) => [e.key, e])), [allEpicsWithCustom]);
 
   // Choke point de toda mudança de posição (drop no Gantt, resize, remover,
@@ -463,23 +478,67 @@ function DataProvider({ children }) {
     return key;
   }, [canCreateCard, user, customEpics, prioOrder, filaProdutoOrder, filaUxOrder, persistRoadmap]);
 
-  const deleteEpic = useCallback((key) => {
-    if (!ownsCard(byKeyWithCustom[key])) return;
-    const nextCustom = customEpics.filter((e) => e.key !== key);
-    setCustomEpics(nextCustom);
-    setPositions((prev) => { const next = { ...prev }; delete next[key]; persistRoadmap(next, nextCustom, prioOrder, filaProdutoOrder, filaUxOrder); return next; });
-  }, [ownsCard, byKeyWithCustom, customEpics, prioOrder, filaProdutoOrder, filaUxOrder, persistRoadmap]);
+  // Resposta do servidor depois de uma operação no Jira: ele já devolve o
+  // documento do Roadmap atualizado (chave nova, nome novo, épico removido).
+  const applyServerDoc = useCallback((r) => {
+    serverRef.current = { ...serverRef.current, state: r.state, rev: r.rev };
+    adoptState(r.state);
+    writeLocalRoadmap(r.state);
+  }, [adoptState, writeLocalRoadmap]);
 
-  const saveDrawer = useCallback((key, patch) => {
-    if (!ownsCard(byKeyWithCustom[key])) return;
+  // Excluir: rascunho local some daqui. Épico que existe no Jira é CANCELADO lá
+  // (nunca excluído) e some do Roadmap.
+  const deleteEpic = useCallback(async (key) => {
+    if (!ownsCard(byKeyWithCustom[key])) return { ok: false, message: "Esse card não é seu." };
     if (key.startsWith("NOVO-")) {
+      const nextCustom = customEpics.filter((e) => e.key !== key);
+      setCustomEpics(nextCustom);
+      setPositions((prev) => { const next = { ...prev }; delete next[key]; persistRoadmap(next, nextCustom, prioOrder, filaProdutoOrder, filaUxOrder); return next; });
+      return { ok: true };
+    }
+    if (jiraConfiguredRef.current !== true) return { ok: false, message: "A integração com o Jira não está configurada — não dá pra cancelar esse épico daqui." };
+    if (roadmapModeRef.current !== "server") return { ok: false, message: "O Roadmap precisa estar no servidor pra mexer no Jira." };
+    const r = await jiraApi.cancelEpic({ key });
+    if (!r.ok) return { ok: false, message: r.message };
+    applyServerDoc(r);
+    return { ok: true, cancelledKey: key };
+  }, [ownsCard, byKeyWithCustom, customEpics, prioOrder, filaProdutoOrder, filaUxOrder, persistRoadmap, applyServerDoc]);
+
+  // Salvar o drawer. Rascunho (NOVO-*) com produto escolhido e Jira ligado é
+  // criado no Jira e ganha a chave real; épico do Jira com nome alterado é
+  // renomeado lá. Se o Jira recusar, nada muda aqui e a mensagem volta pro drawer.
+  const saveDrawer = useCallback(async (key, patch) => {
+    const cur = byKeyWithCustom[key];
+    if (!ownsCard(cur)) return { ok: false, message: "Esse card não é seu." };
+    const jiraOn = jiraConfiguredRef.current === true;
+    const position = { roadmapLane: patch.roadmapLane ?? null, startWeek: patch.startWeek ?? null, durationWeeks: patch.durationWeeks ?? 2 };
+    const summary = typeof patch.summary === "string" ? patch.summary.trim() : "";
+
+    if (key.startsWith("NOVO-")) {
+      if (jiraOn && position.roadmapLane) {
+        if (roadmapModeRef.current !== "server") return { ok: false, message: "O Roadmap precisa estar no servidor pra criar no Jira." };
+        if (!summary) return { ok: false, message: "Dê um nome ao épico antes de criar no Jira." };
+        const r = await jiraApi.createEpic({ key, summary, product: position.roadmapLane, position });
+        if (!r.ok) return { ok: false, message: r.message };
+        applyServerDoc(r);
+        return { ok: true, oldKey: key, newKey: r.key };
+      }
       const nextCustom = customEpics.map((e) => (e.key === key ? { ...e, summary: patch.summary } : e));
       setCustomEpics(nextCustom);
-      setPositions((prev) => { const next = { ...prev, [key]: { roadmapLane: patch.roadmapLane, startWeek: patch.startWeek, durationWeeks: patch.durationWeeks } }; persistRoadmap(next, nextCustom, prioOrder, filaProdutoOrder, filaUxOrder); return next; });
-    } else {
-      updatePosition(key, { roadmapLane: patch.roadmapLane, startWeek: patch.startWeek, durationWeeks: patch.durationWeeks });
+      setPositions((prev) => { const next = { ...prev, [key]: position }; persistRoadmap(next, nextCustom, prioOrder, filaProdutoOrder, filaUxOrder); return next; });
+      return { ok: true };
     }
-  }, [ownsCard, byKeyWithCustom, customEpics, prioOrder, filaProdutoOrder, filaUxOrder, persistRoadmap, updatePosition]);
+
+    if (summary && summary !== cur.summary) {
+      if (!jiraOn) return { ok: false, message: "A integração com o Jira não está configurada — não dá pra renomear esse épico daqui." };
+      if (roadmapModeRef.current !== "server") return { ok: false, message: "O Roadmap precisa estar no servidor pra mexer no Jira." };
+      const r = await jiraApi.renameEpic({ key, summary });
+      if (!r.ok) return { ok: false, message: r.message };
+      applyServerDoc(r);
+    }
+    updatePosition(key, position);
+    return { ok: true };
+  }, [ownsCard, byKeyWithCustom, customEpics, prioOrder, filaProdutoOrder, filaUxOrder, persistRoadmap, updatePosition, applyServerDoc]);
 
   // Janela fixa de semanas pra popular o seletor "Semana inicial" do drawer
   // fora do Roadmap (Projetos não tem Gantt, então não tem zoom pra derivar isso).
@@ -534,13 +593,15 @@ function DataProvider({ children }) {
   const clearRoadmapError = useCallback(() => setRoadmapError(null), []);
 
   const value = useMemo(() => ({
-    epics, tasks, setEpics, setTasks, syncFromSheet, lastSync, syncStatus, syncError,
+    epics: epicsView, tasks, setEpics, setTasks, syncFromSheet, lastSync, syncStatus, syncError,
+    jiraConfigured,
     positions, setPositions, customEpics, setCustomEpics, prioOrder, setPrioOrder,
     filaProdutoOrder, setFilaProdutoOrder, filaUxOrder, setFilaUxOrder,
     roadmapSaving, persistRoadmap, updatePosition, addEpic, deleteEpic, saveDrawer, roadmapWeeks,
     roadmapMode, roadmapError, clearRoadmapError, localSummary, migrateToServer,
   }), [
-    epics, tasks, syncFromSheet, lastSync, syncStatus, syncError,
+    epicsView, tasks, syncFromSheet, lastSync, syncStatus, syncError,
+    jiraConfigured,
     positions, customEpics, prioOrder, filaProdutoOrder, filaUxOrder,
     roadmapSaving, persistRoadmap, updatePosition, addEpic, deleteEpic, saveDrawer, roadmapWeeks,
     roadmapMode, roadmapError, clearRoadmapError, localSummary, migrateToServer,
@@ -699,7 +760,7 @@ function Badge({ children, bg, color }) {
  * que só o Roadmap monta (`schedulable`). Em Projetos o drawer já é leitura para
  * todo mundo, então o aviso de "card de outro" não aparece lá.
  */
-function EpicDrawer({ epic, onClose, weeks, onSave, onDelete, canEdit }) {
+function EpicDrawer({ epic, onClose, weeks, onSave, onDelete, canEdit, jiraConfigured }) {
   const { T, PRODUCT_STYLE } = useTheme();
   const { canCreateCard } = useAuth();
   const { initiatives, initiativeByEpicKey, assignEpicToInitiative } = useInitiatives();
@@ -708,10 +769,32 @@ function EpicDrawer({ epic, onClose, weeks, onSave, onDelete, canEdit }) {
   const [lane, setLane] = useState(epic?.roadmapLane || PRIORIZACAO_KEY);
   const [startWeek, setStartWeek] = useState(epic?.startWeek ?? 0);
   const [duration, setDuration] = useState(epic?.durationWeeks ?? 2);
-  useEffect(() => { setSummary(epic?.summary || ""); setLane(epic?.roadmapLane || PRIORIZACAO_KEY); setStartWeek(epic?.startWeek ?? 0); setDuration(epic?.durationWeeks ?? 2); }, [epic]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  useEffect(() => { setSummary(epic?.summary || ""); setLane(epic?.roadmapLane || PRIORIZACAO_KEY); setStartWeek(epic?.startWeek ?? 0); setDuration(epic?.durationWeeks ?? 2); setError(null); }, [epic]);
   if (!epic) return null;
   const prod = PRODUCT_STYLE[epic.project] || PRODUCT_STYLE["Backoffice"];
   const isCustom = schedulable && epic.key.startsWith("NOVO-");
+  // Épico que já existe no Jira: com a integração ligada dá pra renomear e cancelar daqui.
+  const isJira = schedulable && !isCustom;
+  const nameEditable = isCustom || (isJira && jiraConfigured && canEdit);
+  const canCancelInJira = isJira && jiraConfigured && canEdit;
+
+  const run = async (action) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await action();
+      if (r && r.ok === false && !r.aborted) setError(r.message || "Não foi possível concluir.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const handleSave = () => run(() => onSave(epic.key, { summary, roadmapLane: lane === PRIORIZACAO_KEY ? null : lane, startWeek: lane === PRIORIZACAO_KEY ? null : startWeek, durationWeeks: duration }));
+  const handleDelete = () => run(() => onDelete(epic.key));
+  const hint = !jiraConfigured || !canEdit ? null
+    : isCustom ? (lane === PRIORIZACAO_KEY ? "Escolha uma camada (produto) para criar este épico no Jira. Até lá ele é só um rascunho daqui." : `Ao salvar, este épico será criado no Jira (produto ${lane}).`)
+    : isJira ? "Mudar o nome aqui também muda no Jira." : null;
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 50, display: "flex", justifyContent: "flex-end", background: "rgba(0,0,0,0.45)" }}>
       <div onClick={(e) => e.stopPropagation()} style={{ height: "100%", width: 360, overflowY: "auto", borderLeft: `1px solid ${T.border2}`, background: T.bg0, padding: 20 }}>
@@ -726,8 +809,8 @@ function EpicDrawer({ epic, onClose, weeks, onSave, onDelete, canEdit }) {
           <button onClick={onClose} style={{ background: "none", border: "none", color: T.ink1, cursor: "pointer" }}><X size={16} /></button>
         </div>
 
-        {isCustom ? (
-          <input value={summary} onChange={(e) => setSummary(e.target.value)} placeholder="Nome do épico" disabled={!canEdit}
+        {nameEditable ? (
+          <input value={summary} onChange={(e) => setSummary(e.target.value)} placeholder="Nome do épico" disabled={!canEdit || busy}
             style={{ marginTop: 10, width: "100%", background: T.bg1, border: `1px solid ${T.border2}`, borderRadius: 8, padding: "8px 10px", fontSize: 15, fontWeight: 600, color: T.ink0, fontFamily: "'Plus Jakarta Sans', sans-serif" }} />
         ) : (
           <h3 style={{ marginTop: 8, fontSize: 17, fontWeight: 700, color: T.ink0, fontFamily: "'Plus Jakarta Sans', sans-serif" }}>{epic.summary}</h3>
@@ -812,17 +895,23 @@ function EpicDrawer({ epic, onClose, weeks, onSave, onDelete, canEdit }) {
             )}
 
             {canEdit ? (
-              <div className="flex items-center justify-between" style={{ marginTop: 24 }}>
-                {isCustom ? (
-                  <button onClick={() => onDelete(epic.key)} style={{ fontSize: 12, color: "#e08585", background: "none", border: "none", cursor: "pointer", fontFamily: "'Inter Tight', sans-serif" }}>Excluir</button>
-                ) : <span />}
-                <button
-                  onClick={() => onSave(epic.key, { summary: isCustom ? summary : epic.summary, roadmapLane: lane === PRIORIZACAO_KEY ? null : lane, startWeek: lane === PRIORIZACAO_KEY ? null : startWeek, durationWeeks: duration })}
-                  style={{ borderRadius: 8, padding: "7px 14px", fontSize: 12.5, fontWeight: 600, border: "none", cursor: "pointer", background: "#5166e6", color: "#fff", fontFamily: "'Inter Tight', sans-serif" }}
-                >
-                  Salvar
-                </button>
-              </div>
+              <>
+                {hint && <p style={{ marginTop: 20, fontSize: 11.5, color: T.ink2, fontFamily: "'Inter Tight', sans-serif", lineHeight: 1.4 }}>{hint}</p>}
+                {error && <p role="alert" style={{ marginTop: 10, fontSize: 12, color: "#e08585", fontFamily: "'Inter Tight', sans-serif", lineHeight: 1.4 }}>{error}</p>}
+                <div className="flex items-center justify-between" style={{ marginTop: hint || error ? 12 : 24 }}>
+                  {isCustom || canCancelInJira ? (
+                    <button disabled={busy} onClick={handleDelete} style={{ fontSize: 12, color: "#e08585", background: "none", border: "none", cursor: busy ? "default" : "pointer", opacity: busy ? 0.6 : 1, fontFamily: "'Inter Tight', sans-serif" }}>
+                      {isCustom ? "Excluir" : "Cancelar no Jira"}
+                    </button>
+                  ) : <span />}
+                  <button
+                    disabled={busy} onClick={handleSave}
+                    style={{ borderRadius: 8, padding: "7px 14px", fontSize: 12.5, fontWeight: 600, border: "none", cursor: busy ? "default" : "pointer", opacity: busy ? 0.7 : 1, background: "#5166e6", color: "#fff", fontFamily: "'Inter Tight', sans-serif" }}
+                  >
+                    {busy ? "Salvando…" : "Salvar"}
+                  </button>
+                </div>
+              </>
             ) : (
               <p className="inline-flex items-center" style={{ marginTop: 24, gap: 6, fontSize: 11.5, color: T.ink2, fontFamily: "'Inter Tight', sans-serif" }}>
                 <Lock size={11} /> Somente leitura: este card não é seu.
@@ -1684,13 +1773,13 @@ function RoadmapScreen() {
     positions, setPositions, customEpics, setCustomEpics, prioOrder, setPrioOrder,
     filaProdutoOrder, setFilaProdutoOrder, filaUxOrder, setFilaUxOrder,
     roadmapSaving: saving, persistRoadmap: persist, updatePosition, addEpic: addEpicShared, deleteEpic: deleteEpicShared, saveDrawer: saveDrawerShared,
-    roadmapMode, roadmapError, clearRoadmapError, localSummary, migrateToServer,
+    roadmapMode, roadmapError, clearRoadmapError, localSummary, migrateToServer, jiraConfigured,
   } = useData();
   // Único lugar onde o admin escreve: cria card e mexe NOS DELE (posição no
   // Gantt, fila, nome, duração, exclusão). Épico da planilha não tem dono, então
   // só o super o move. Reordenar as listas mexe na ordem de todo mundo: super.
   const { user, canCreateCard, ownsCard, canWriteShared } = useAuth();
-  const { initiatives, createInitiative, deleteInitiative, assignEpicToInitiative } = useInitiatives();
+  const { initiatives, createInitiative, deleteInitiative, assignEpicToInitiative, updateInitiative, initiativeByEpicKey } = useInitiatives();
   const [weekCount, setWeekCount] = useState(13);
   const [openKey, setOpenKey] = useState(null);
   const [migrating, setMigrating] = useState(false);
@@ -1744,10 +1833,30 @@ function RoadmapScreen() {
   }, []);
 
   const addEpic = () => { const key = addEpicShared(); if (key) setOpenKey(key); };
-  const deleteEpic = (key) => { deleteEpicShared(key); setOpenKey(null); };
-  const saveDrawer = (key, patch) => { saveDrawerShared(key, patch); setOpenKey(null); };
+  // Excluir: rascunho some daqui; épico do Jira é CANCELADO lá (com confirmação).
+  // A iniciativa do épico acompanha: a chave some (ou, ao criar no Jira, troca).
+  const deleteEpic = async (key) => {
+    const isJira = !key.startsWith("NOVO-");
+    if (isJira && !window.confirm(`Cancelar ${key} no Jira?\n\nO épico vai para o status Cancelado e sai do Roadmap. As histórias dele não são alteradas, e dá para reabri-lo no Jira depois.`)) {
+      return { ok: false, aborted: true };
+    }
+    const init = initiativeByEpicKey[key];
+    const r = await deleteEpicShared(key);
+    if (!r.ok) return r;
+    if (init) await updateInitiative(init.id, { epicKeys: init.epicKeys.filter((k) => k !== key) });
+    setOpenKey(null);
+    return r;
+  };
+  const saveDrawer = async (key, patch) => {
+    const init = initiativeByEpicKey[key];
+    const r = await saveDrawerShared(key, patch);
+    if (!r.ok) return r;
+    if (r.newKey && init) await updateInitiative(init.id, { epicKeys: init.epicKeys.map((k) => (k === key ? r.newKey : k)) });
+    setOpenKey(null);
+    return r;
+  };
 
-  const allEpics = useMemo(() => [...EPICS_SEED, ...customEpics], [EPICS_SEED, customEpics]);
+  const allEpics = useMemo(() => mergeCustomEpics(EPICS_SEED, customEpics), [EPICS_SEED, customEpics]);
   const byKey = useMemo(() => Object.fromEntries(allEpics.map((e) => [e.key, e])), [allEpics]);
 
   const PAST_WEEKS = 4; // ~1 mês antes de hoje, sempre visível pra trás
@@ -2280,7 +2389,7 @@ function RoadmapScreen() {
         </div>
       </div>
 
-      <EpicDrawer epic={openEpic} weeks={weeks} onClose={() => setOpenKey(null)} onSave={saveDrawer} onDelete={deleteEpic} canEdit={ownsCard(openEpic)} />
+      <EpicDrawer epic={openEpic} weeks={weeks} onClose={() => setOpenKey(null)} onSave={saveDrawer} onDelete={deleteEpic} canEdit={ownsCard(openEpic)} jiraConfigured={jiraConfigured === true} />
 
       {showAddInitiative && (
         <div onClick={() => setShowAddInitiative(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50 }}>

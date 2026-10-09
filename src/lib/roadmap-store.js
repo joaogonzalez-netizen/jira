@@ -123,3 +123,36 @@ export function summarizeRoadmap(state) {
     customEpics: (state.customEpics || []).length,
   };
 }
+
+/* ---------------------------------------------------------------------
+   Épicos que vêm do Jira (planilha) + o que foi feito aqui
+   --------------------------------------------------------------------- */
+
+/** Aplica o que o servidor registrou (nome novo / cancelado) por cima dos épicos
+    da planilha — vale até a planilha sincronizar de novo com o Jira. */
+export function applyEpicOverrides(epics, overrides) {
+  const o = overrides || {};
+  if (!Object.keys(o).length) return epics;
+  const out = [];
+  for (const e of epics) {
+    const ov = o[e.key];
+    if (!ov) { out.push(e); continue; }
+    if (ov.removed) continue;
+    out.push(ov.summary && ov.summary !== e.summary ? { ...e, summary: ov.summary } : e);
+  }
+  return out;
+}
+
+/** Junta os épicos da planilha com os criados aqui. Um épico criado no Jira por
+    este app aparece nos dois lugares assim que a planilha sincroniza: vale a
+    versão da planilha, mas o dono (`createdBy`) continua sendo o de quem criou. */
+export function mergeCustomEpics(sheetEpics, customEpics) {
+  const customByKey = new Map(customEpics.map((e) => [e.key, e]));
+  const sheetKeys = new Set(sheetEpics.map((e) => e.key));
+  const merged = sheetEpics.map((e) => {
+    const c = customByKey.get(e.key);
+    return c && c.createdBy ? { ...e, createdBy: c.createdBy } : e;
+  });
+  for (const c of customEpics) if (!sheetKeys.has(c.key)) merged.push(c);
+  return merged;
+}

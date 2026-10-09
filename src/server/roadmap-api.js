@@ -11,7 +11,7 @@
  */
 import {
   configError,
-  createMemoryKv,
+  sharedMemoryKv,
   handleGet,
   handlePatch,
   handleSeed,
@@ -57,7 +57,7 @@ function readJsonBody(req) {
 }
 
 export function roadmapApiPlugin(env) {
-  const config = loadConfig(env, env.FILA_DEV_FAKE_KV === "1" ? createMemoryKv() : undefined);
+  const config = loadConfig(env, env.FILA_DEV_FAKE_KV === "1" ? sharedMemoryKv() : undefined);
 
   const handler = async (req, res, next) => {
     if (!req.url || !req.url.startsWith("/api/roadmap")) return next();

@@ -65,6 +65,13 @@ export function createMemoryKv() {
   };
 }
 
+let devKv = null;
+/** Um único KV em memória por processo — os plugins de dev (roadmap e Jira) precisam enxergar o mesmo documento. */
+export function sharedMemoryKv() {
+  if (!devKv) devKv = createMemoryKv();
+  return devKv;
+}
+
 export function loadConfig(env, injectedKv) {
   const authConfig = loadAuthConfig(env);
   if (injectedKv) return { missing: [], kv: injectedKv, kvReady: Promise.resolve(), authConfig };
@@ -198,7 +205,7 @@ function normalizeOrderOp(v, label) {
    --------------------------------------------------------------------- */
 
 function emptyDoc() {
-  return { v: 1, rev: 0, updatedAt: null, updatedBy: null, positions: {}, customEpics: [], prioOrder: [], filaProdutoOrder: [], filaUxOrder: [] };
+  return { v: 1, rev: 0, updatedAt: null, updatedBy: null, positions: {}, customEpics: [], epicOverrides: {}, prioOrder: [], filaProdutoOrder: [], filaUxOrder: [] };
 }
 
 function parseDoc(raw) {
@@ -211,6 +218,7 @@ function parseDoc(raw) {
       ...d,
       positions: isPlainObject(d.positions) ? d.positions : {},
       customEpics: Array.isArray(d.customEpics) ? d.customEpics : [],
+      epicOverrides: isPlainObject(d.epicOverrides) ? d.epicOverrides : {},
       prioOrder: Array.isArray(d.prioOrder) ? d.prioOrder : [],
       filaProdutoOrder: Array.isArray(d.filaProdutoOrder) ? d.filaProdutoOrder : [],
       filaUxOrder: Array.isArray(d.filaUxOrder) ? d.filaUxOrder : [],
@@ -226,6 +234,7 @@ function view(doc, extra = {}) {
     state: {
       positions: doc.positions,
       customEpics: doc.customEpics,
+      epicOverrides: doc.epicOverrides || {},
       prioOrder: doc.prioOrder,
       filaProdutoOrder: doc.filaProdutoOrder,
       filaUxOrder: doc.filaUxOrder,
@@ -444,3 +453,24 @@ export async function handleSnapshotPut(input, session, config) {
   await kv.set(SNAPSHOT_AT_KEY, syncedAt);
   return { status: 200, body: { syncedAt } };
 }
+
+/* ---------------------------------------------------------------------
+   Acesso ao documento para outros módulos do servidor (jira-core)
+   --------------------------------------------------------------------- */
+
+export async function readDoc(config) {
+  const raw = await readRaw(config, STATE_KEY);
+  return { raw, doc: parseDoc(raw) };
+}
+
+/** Grava `nextDoc` só se o documento ainda for `expectedRaw` (compare-and-set). */
+export async function writeDoc(config, expectedRaw, nextDoc) {
+  return casWrite(config, STATE_KEY, expectedRaw, JSON.stringify(nextDoc));
+}
+
+/** Carimba revisão/autor — todo caminho que muda o documento passa por aqui. */
+export function touchDoc(doc, email) {
+  return { ...doc, rev: doc.rev + 1, updatedAt: new Date().toISOString(), updatedBy: email || null };
+}
+
+export { view as viewDoc, canWrite as canWriteSession };

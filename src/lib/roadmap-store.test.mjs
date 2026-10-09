@@ -86,3 +86,32 @@ test("round-trip aleatório: applyDiff(base, diff(base, next)) === next", () => 
     if (isEmptyDiff(diff)) assert.equal(res.changed, false);
   }
 });
+
+import { applyEpicOverrides, mergeCustomEpics } from "./roadmap-store.js";
+
+test("applyEpicOverrides: renomeia e esconde só o que o servidor registrou; sem overrides devolve a mesma lista", () => {
+  const eps = [{ key: "A-1", summary: "Velho" }, { key: "A-2", summary: "Fica" }, { key: "A-3", summary: "Some" }];
+  assert.equal(applyEpicOverrides(eps, {}), eps);
+  assert.equal(applyEpicOverrides(eps, undefined), eps);
+  const out = applyEpicOverrides(eps, { "A-1": { summary: "Novo" }, "A-3": { removed: true }, "Z-9": { removed: true } });
+  assert.deepEqual(out.map((e) => [e.key, e.summary]), [["A-1", "Novo"], ["A-2", "Fica"]]);
+  assert.equal(eps[0].summary, "Velho", "não muta a lista original");
+  // override igual ao que a planilha já traz: devolve o próprio objeto (sem re-render à toa)
+  assert.equal(applyEpicOverrides(eps, { "A-2": { summary: "Fica" } })[1], eps[1]);
+});
+
+test("mergeCustomEpics: rascunhos entram; criado no Jira + já na planilha não duplica e mantém o dono", () => {
+  const sheet = [{ key: "SELLER-1", summary: "da planilha" }, { key: "SELLER-301", summary: "criado aqui, já sincronizado" }];
+  const custom = [
+    { key: "NOVO-1", summary: "rascunho", createdBy: "a@x.com" },
+    { key: "SELLER-301", summary: "versão local", createdBy: "andre@x.com" },
+    { key: "SELLER-302", summary: "criado aqui, planilha ainda não viu", createdBy: "joao@x.com" },
+  ];
+  const out = mergeCustomEpics(sheet, custom);
+  assert.deepEqual(out.map((e) => e.key), ["SELLER-1", "SELLER-301", "NOVO-1", "SELLER-302"]);
+  const dup = out.find((e) => e.key === "SELLER-301");
+  assert.equal(dup.summary, "criado aqui, já sincronizado", "vale a versão da planilha");
+  assert.equal(dup.createdBy, "andre@x.com", "o dono segue valendo");
+  assert.equal(out.filter((e) => e.key === "SELLER-301").length, 1);
+  assert.equal(out.find((e) => e.key === "SELLER-1").createdBy, undefined, "épico da planilha continua sem dono");
+});

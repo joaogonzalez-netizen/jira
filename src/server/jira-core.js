@@ -1,0 +1,400 @@
+/**
+ * Escrita no Jira a partir do Roadmap: criar, renomear e cancelar épicos.
+ *
+ * Roda nos dois lugares de sempre e por isso não conhece `req`/`res`: o plugin
+ * do Vite (`jira-api.js`) e a função da Vercel (`api/jira/epics.js`).
+ *
+ * Credenciais: `JIRA_EMAIL` + `JIRA_API_TOKEN` (token de API do Jira Cloud),
+ * só em variável de ambiente do servidor. `JIRA_BASE_URL` é opcional. Nada
+ * disso chega ao navegador, e o token nunca entra em mensagem de erro.
+ *
+ * Ordem das operações, sempre: (1) valida sessão e posse, (2) chama o Jira,
+ * (3) só então atualiza o documento do Roadmap. Se o Jira recusar, nada muda
+ * aqui — o Jira é a fonte da verdade.
+ *
+ * Permissões (as mesmas do Roadmap): super mexe em qualquer épico; admin só
+ * nos que ele criou (registro em `customEpics` com o e-mail dele em `createdBy`).
+ *
+ * "Excluir" nunca usa a API de exclusão do Jira: faz a transição do épico para
+ * o status Cancelado (reversível) e o esconde do Roadmap.
+ */
+import { readDoc, writeDoc, touchDoc, viewDoc, canWriteSession } from "./roadmap-core.js";
+
+const DEFAULT_BASE_URL = "https://joaogonzalezstlflix.atlassian.net";
+
+/** Produto do Roadmap -> chave do projeto no Jira (prefixo das chaves dos épicos). */
+export const PRODUCT_TO_PROJECT = {
+  "STLFLIX": "FLIX",
+  "STL IA": "IA",
+  "STL Seller": "SELLER",
+  "STL Loja": "LOJA",
+  "Backoffice": "BACK",
+  "STL Academy": "ACADEMY",
+};
+
+const JIRA_KEY_RE = /^[A-Z][A-Z0-9]{1,9}-\d{1,9}$/;
+const LOCAL_KEY_RE = /^NOVO-\d{1,12}$/;
+/** Chave de épico que existe no Jira — `NOVO-*` é reservado a rascunhos locais. */
+const isJiraKey = (k) => typeof k === "string" && JIRA_KEY_RE.test(k) && !LOCAL_KEY_RE.test(k);
+/** Status final aceito como "cancelado", em ordem de preferência. */
+const CANCEL_STATUSES = ["cancelado", "canceled", "cancelled", "arquivado", "archived"];
+const MAX_SUMMARY = 255;
+const MAX_CAS_ATTEMPTS = 6;
+const REQUEST_TIMEOUT_MS = 15000;
+
+class JiraError extends Error {
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+  }
+}
+
+/* ---------------------------------------------------------------------
+   Configuração
+   --------------------------------------------------------------------- */
+
+export function loadJiraConfig(env, fetchImpl) {
+  const email = String(env.JIRA_EMAIL || "").trim();
+  const token = String(env.JIRA_API_TOKEN || "").trim();
+  const baseUrl = String(env.JIRA_BASE_URL || DEFAULT_BASE_URL).trim().replace(/\/+$/, "");
+  const missing = [];
+  if (!email) missing.push("JIRA_EMAIL");
+  if (!token) missing.push("JIRA_API_TOKEN");
+  if (!/^https:\/\/[^\s/]+$/.test(baseUrl)) missing.push("JIRA_BASE_URL (precisa ser https://…)");
+  if (missing.length) return { missing };
+  return {
+    missing: [],
+    baseUrl,
+    authHeader: `Basic ${Buffer.from(`${email}:${token}`).toString("base64")}`,
+    fetch: fetchImpl || globalThis.fetch,
+    typeCache: new Map(),
+  };
+}
+
+export function jiraConfigError(j) {
+  if (!j.missing.length) return null;
+  return { status: 503, body: { message: `Integração com o Jira não configurada: defina ${j.missing.join(" e ")}` } };
+}
+
+/** Só diz se a integração está ligada — a tela usa pra decidir o que mostrar. */
+export function handleStatus(j) {
+  return { status: 200, body: { configured: !j.missing.length } };
+}
+
+/* ---------------------------------------------------------------------
+   Cliente HTTP do Jira
+   --------------------------------------------------------------------- */
+
+function describeJiraBody(data) {
+  if (!data || typeof data !== "object") return "";
+  const parts = [...(Array.isArray(data.errorMessages) ? data.errorMessages : []), ...Object.values(data.errors || {})];
+  return parts.filter((p) => typeof p === "string").join("; ").slice(0, 300);
+}
+
+function jiraHttpError(status, data) {
+  const detail = describeJiraBody(data);
+  const suffix = detail ? ` (${detail})` : "";
+  if (status === 401) return new JiraError(502, "O Jira recusou as credenciais — confira JIRA_EMAIL e JIRA_API_TOKEN.");
+  if (status === 403) return new JiraError(403, `A conta do Jira não tem permissão para essa ação${suffix}`);
+  if (status === 404) return new JiraError(404, `Não encontrado no Jira${suffix}`);
+  if (status === 400) {
+    const err = new JiraError(400, `O Jira recusou${suffix || ": dados inválidos"}`);
+    const hit = Object.entries(data?.errors || {}).find(([field, msg]) => /^customfield_\d+$/.test(field) && /epic name/i.test(String(msg)));
+    if (hit) err.epicNameField = hit[0];
+    return err;
+  }
+  if (status === 429) return new JiraError(429, "O Jira limitou as requisições — tente de novo em instantes.");
+  return new JiraError(502, `O Jira respondeu com erro ${status}${suffix}`);
+}
+
+async function jiraFetch(j, method, path, body) {
+  let res;
+  try {
+    res = await j.fetch(`${j.baseUrl}${path}`, {
+      method,
+      headers: {
+        Authorization: j.authHeader,
+        Accept: "application/json",
+        ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+      },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+  } catch {
+    throw new JiraError(502, "Não consegui falar com o Jira (rede ou tempo esgotado).");
+  }
+  const text = await res.text().catch(() => "");
+  let data = null;
+  if (text) {
+    try { data = JSON.parse(text); } catch { data = null; }
+  }
+  if (!res.ok) throw jiraHttpError(res.status, data);
+  return data;
+}
+
+const isEpicType = (t) => !!t && (t.hierarchyLevel === 1 || /^(epic|épico)$/i.test(t.name || ""));
+
+async function epicTypeId(j, projectKey) {
+  const cached = j.typeCache.get(projectKey);
+  if (cached) return cached;
+  const project = await jiraFetch(j, "GET", `/rest/api/3/project/${projectKey}`);
+  const type = (project?.issueTypes || []).find(isEpicType);
+  if (!type) throw new JiraError(409, `Não achei o tipo "Épico" no projeto ${projectKey} do Jira.`);
+  j.typeCache.set(projectKey, type.id);
+  return type.id;
+}
+
+/** Cria o épico; projetos com "Epic Name" obrigatório respondem 400 apontando o campo. */
+async function createJiraEpic(j, projectKey, summary) {
+  const issuetype = { id: await epicTypeId(j, projectKey) };
+  const fields = { project: { key: projectKey }, issuetype, summary };
+  try {
+    return await jiraFetch(j, "POST", "/rest/api/3/issue", { fields });
+  } catch (e) {
+    const needsEpicName = e instanceof JiraError && e.status === 400 && e.epicNameField;
+    if (!needsEpicName) throw e;
+    return jiraFetch(j, "POST", "/rest/api/3/issue", { fields: { ...fields, [e.epicNameField]: summary } });
+  }
+}
+
+async function getEpicIssue(j, key) {
+  const issue = await jiraFetch(j, "GET", `/rest/api/3/issue/${key}?fields=status,issuetype,summary`);
+  const fields = issue?.fields || {};
+  if (!isEpicType(fields.issuetype)) throw new JiraError(409, `${key} não é um épico no Jira — não vou alterar.`);
+  return { summary: fields.summary || "", status: fields.status?.name || "" };
+}
+
+/* ---------------------------------------------------------------------
+   Validação e permissão
+   --------------------------------------------------------------------- */
+
+const forbidden = (message = "Sem permissão para alterar épicos no Jira") => ({ status: 403, body: { message } });
+const bad = (message) => ({ status: 400, body: { message } });
+
+function cleanSummary(v) {
+  if (typeof v !== "string") return null;
+  const t = v.replace(/\s+/g, " ").trim();
+  return t && t.length <= MAX_SUMMARY ? t : null;
+}
+
+function cleanPosition(p) {
+  if (p === undefined || p === null) return null;
+  if (typeof p !== "object" || Array.isArray(p)) throw new JiraError(400, "Posição inválida");
+  const lane = p.roadmapLane ?? null;
+  if (lane !== null && (typeof lane !== "string" || !lane || lane.length > 60)) throw new JiraError(400, "Camada inválida");
+  const sw = p.startWeek ?? null;
+  if (sw !== null && !(Number.isInteger(sw) && sw >= -104 && sw <= 520)) throw new JiraError(400, "Semana inicial inválida");
+  const dw = Number.isInteger(p.durationWeeks) ? p.durationWeeks : 2;
+  if (dw < 1 || dw > 52) throw new JiraError(400, "Duração inválida");
+  return { roadmapLane: lane, startWeek: sw, durationWeeks: dw };
+}
+
+const emailOf = (session) => session?.user?.email || null;
+
+/** Super: qualquer épico. Admin: só os que ele criou aqui (registro com o e-mail dele). */
+function mayTouchEpic(session, doc, key) {
+  if (!canWriteSession(session)) return false;
+  if (session.role === "super") return true;
+  const email = emailOf(session);
+  return !!email && doc.customEpics.some((e) => e.key === key && e.createdBy === email);
+}
+
+const wrap = async (fn) => {
+  try {
+    return await fn();
+  } catch (e) {
+    if (e instanceof JiraError) return { status: e.status, body: { message: e.message, ...(e.extra || {}) } };
+    throw e;
+  }
+};
+
+/* ---------------------------------------------------------------------
+   Atualização do documento do Roadmap (compare-and-set com retry)
+   --------------------------------------------------------------------- */
+
+async function mutateDoc(rcfg, mutate) {
+  for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt++) {
+    const { raw, doc } = await readDoc(rcfg);
+    if (!doc) return { ok: false, reason: "not-initialized" };
+    const next = mutate(doc);
+    if (!next) return { ok: false, reason: "gone" };
+    if (await writeDoc(rcfg, raw, next)) return { ok: true, doc: next };
+  }
+  return { ok: false, reason: "contention" };
+}
+
+const swapKey = (list, from, to) => {
+  const out = [];
+  for (const k of list) {
+    const v = k === from ? to : k;
+    if (!out.includes(v)) out.push(v);
+  }
+  return out;
+};
+
+const without = (list, key) => list.filter((k) => k !== key);
+
+/* ---------------------------------------------------------------------
+   Criar
+   --------------------------------------------------------------------- */
+
+export async function handleCreateEpic(input, session, rcfg, j) {
+  const cfgErr = jiraConfigError(j);
+  if (cfgErr) return cfgErr;
+  if (!canWriteSession(session)) return forbidden();
+  return wrap(async () => {
+    const oldKey = input?.key;
+    const summary = cleanSummary(input?.summary);
+    const product = input?.product;
+    if (typeof oldKey !== "string" || !LOCAL_KEY_RE.test(oldKey)) return bad("Esse épico não é um rascunho local");
+    if (!summary) return bad(`O nome do épico é obrigatório (até ${MAX_SUMMARY} caracteres)`);
+    const projectKey = PRODUCT_TO_PROJECT[product];
+    if (!projectKey) return bad("Escolha o produto (camada) antes de criar no Jira");
+    const position = cleanPosition(input?.position);
+    if (position && position.roadmapLane !== null && position.roadmapLane !== product) {
+      return bad("A camada do épico precisa ser o produto escolhido");
+    }
+
+    const { doc } = await readDoc(rcfg);
+    if (!doc) return { status: 409, body: { code: "not-initialized", message: "O Roadmap ainda não foi migrado para o servidor" } };
+    const draft = doc.customEpics.find((e) => e.key === oldKey);
+    if (!draft) return { status: 404, body: { message: "Esse épico não existe mais (ou já foi criado no Jira)" } };
+    if (!mayTouchEpic(session, doc, oldKey)) return forbidden("Esse épico é de outra pessoa");
+
+    const created = await createJiraEpic(j, projectKey, summary);
+    const newKey = created?.key;
+    if (typeof newKey !== "string" || !JIRA_KEY_RE.test(newKey)) throw new JiraError(502, "O Jira não devolveu a chave do épico criado");
+
+    let status = "Backlog";
+    try {
+      const issue = await jiraFetch(j, "GET", `/rest/api/3/issue/${newKey}?fields=status`);
+      status = issue?.fields?.status?.name || status;
+    } catch { /* o status é só informativo */ }
+
+    const email = emailOf(session);
+    const result = await mutateDoc(rcfg, (cur) => {
+      if (!cur.customEpics.some((e) => e.key === oldKey)) return null;
+      const positions = { ...cur.positions };
+      const oldPos = positions[oldKey];
+      delete positions[oldKey];
+      positions[newKey] = position || oldPos || { roadmapLane: null, startWeek: null, durationWeeks: 2 };
+      return touchDoc({
+        ...cur,
+        customEpics: cur.customEpics.map((e) => (e.key === oldKey ? { ...e, key: newKey, project: product, summary, status } : e)),
+        positions,
+        prioOrder: swapKey(cur.prioOrder, oldKey, newKey),
+        filaProdutoOrder: swapKey(cur.filaProdutoOrder, oldKey, newKey),
+        filaUxOrder: swapKey(cur.filaUxOrder, oldKey, newKey),
+      }, email);
+    });
+    if (!result.ok) {
+      const why = result.reason === "contention" ? "muitas alterações ao mesmo tempo" : "o rascunho sumiu daqui";
+      return { status: 409, body: { message: `Criado no Jira como ${newKey}, mas não consegui atualizar o Roadmap (${why}). Recarregue a página.`, jiraKey: newKey } };
+    }
+    return { status: 200, body: { ...viewDoc(result.doc), key: newKey, oldKey } };
+  });
+}
+
+/* ---------------------------------------------------------------------
+   Renomear
+   --------------------------------------------------------------------- */
+
+async function renameInJira(j, key, summary) {
+  let epicNameField = null;
+  try {
+    const meta = await jiraFetch(j, "GET", `/rest/api/3/issue/${key}/editmeta`);
+    epicNameField = Object.entries(meta?.fields || {}).find(([, f]) => /^epic name$/i.test(f?.name || ""))?.[0] || null;
+  } catch { /* sem editmeta, vai só o resumo */ }
+  try {
+    await jiraFetch(j, "PUT", `/rest/api/3/issue/${key}`, { fields: { summary, ...(epicNameField ? { [epicNameField]: summary } : {}) } });
+  } catch (e) {
+    if (epicNameField && e instanceof JiraError && e.status === 400) {
+      await jiraFetch(j, "PUT", `/rest/api/3/issue/${key}`, { fields: { summary } });
+      return;
+    }
+    throw e;
+  }
+}
+
+export async function handleRenameEpic(input, session, rcfg, j) {
+  const cfgErr = jiraConfigError(j);
+  if (cfgErr) return cfgErr;
+  if (!canWriteSession(session)) return forbidden();
+  return wrap(async () => {
+    const key = input?.key;
+    const summary = cleanSummary(input?.summary);
+    if (!isJiraKey(key)) return bad("Chave de épico do Jira inválida");
+    if (!summary) return bad(`O nome do épico é obrigatório (até ${MAX_SUMMARY} caracteres)`);
+
+    const { doc } = await readDoc(rcfg);
+    if (!doc) return { status: 409, body: { code: "not-initialized", message: "O Roadmap ainda não foi migrado para o servidor" } };
+    if (!mayTouchEpic(session, doc, key)) return forbidden("Esse épico não é seu");
+
+    const current = await getEpicIssue(j, key);
+    if (current.summary !== summary) await renameInJira(j, key, summary);
+
+    const result = await mutateDoc(rcfg, (cur) => touchDoc({
+      ...cur,
+      customEpics: cur.customEpics.map((e) => (e.key === key ? { ...e, summary } : e)),
+      epicOverrides: { ...cur.epicOverrides, [key]: { ...(cur.epicOverrides[key] || {}), summary } },
+    }, emailOf(session)));
+    if (!result.ok) return { status: 409, body: { message: "Renomeado no Jira, mas não consegui atualizar o Roadmap. Recarregue a página." } };
+    return { status: 200, body: { ...viewDoc(result.doc), key } };
+  });
+}
+
+/* ---------------------------------------------------------------------
+   Cancelar ("excluir")
+   --------------------------------------------------------------------- */
+
+const isCancelStatus = (name) => CANCEL_STATUSES.includes(String(name || "").toLowerCase());
+
+async function cancelInJira(j, key, currentStatus) {
+  if (isCancelStatus(currentStatus)) return; // já está cancelado: idempotente
+  const data = await jiraFetch(j, "GET", `/rest/api/3/issue/${key}/transitions`);
+  const transitions = Array.isArray(data?.transitions) ? data.transitions : [];
+  let pick = null;
+  for (const wanted of CANCEL_STATUSES) {
+    pick = transitions.find((t) => String(t?.to?.name || "").toLowerCase() === wanted);
+    if (pick) break;
+  }
+  if (!pick) {
+    const options = transitions.map((t) => t?.to?.name).filter(Boolean).join(", ") || "nenhuma";
+    throw new JiraError(409, `Não achei como mover ${key} para Cancelado a partir de "${currentStatus}". Transições disponíveis: ${options}.`);
+  }
+  await jiraFetch(j, "POST", `/rest/api/3/issue/${key}/transitions`, { transition: { id: pick.id } });
+}
+
+export async function handleCancelEpic(input, session, rcfg, j) {
+  const cfgErr = jiraConfigError(j);
+  if (cfgErr) return cfgErr;
+  if (!canWriteSession(session)) return forbidden();
+  return wrap(async () => {
+    const key = input?.key;
+    if (!isJiraKey(key)) return bad("Chave de épico do Jira inválida");
+
+    const { doc } = await readDoc(rcfg);
+    if (!doc) return { status: 409, body: { code: "not-initialized", message: "O Roadmap ainda não foi migrado para o servidor" } };
+    if (!mayTouchEpic(session, doc, key)) return forbidden("Esse épico não é seu");
+
+    const current = await getEpicIssue(j, key);
+    await cancelInJira(j, key, current.status);
+
+    const result = await mutateDoc(rcfg, (cur) => {
+      const positions = { ...cur.positions };
+      delete positions[key];
+      return touchDoc({
+        ...cur,
+        customEpics: cur.customEpics.filter((e) => e.key !== key),
+        positions,
+        prioOrder: without(cur.prioOrder, key),
+        filaProdutoOrder: without(cur.filaProdutoOrder, key),
+        filaUxOrder: without(cur.filaUxOrder, key),
+        // esconde também a versão que ainda vem da planilha, até ela sincronizar
+        epicOverrides: { ...cur.epicOverrides, [key]: { ...(cur.epicOverrides[key] || {}), removed: true } },
+      }, emailOf(session));
+    });
+    if (!result.ok) return { status: 409, body: { message: "Cancelado no Jira, mas não consegui atualizar o Roadmap. Recarregue a página." } };
+    return { status: 200, body: { ...viewDoc(result.doc), key } };
+  });
+}
