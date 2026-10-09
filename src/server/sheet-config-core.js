@@ -66,8 +66,8 @@ function canWrite(session) {
   return !!session && (session.role === "admin" || session.role === "super");
 }
 
-function forbidden() {
-  return { status: 403, body: { message: "Sem permissão para alterar a planilha de dados" } };
+function forbidden(message = "Sem permissão para alterar a planilha de dados") {
+  return { status: 403, body: { message } };
 }
 
 /** Aceita tanto o ID puro quanto um link completo do Google Sheets colado

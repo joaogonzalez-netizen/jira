@@ -27,6 +27,8 @@ test("sem override salvo: o sync usa a planilha padrão (override null)", async 
 test("só admin/super leem e gravam; anônimo e leitor não", async () => {
   const c = mk();
   assert.equal((await handleGet(c, null)).status, 403);
+  assert.match((await handleGet(c, null)).body.message, /ver a planilha/);
+  assert.match((await handleSet({ sheetId: "abc" }, null, c)).body.message, /alterar a planilha/);
   assert.equal((await handleGet(c, LEITOR)).status, 403);
   assert.equal((await handleSet({ sheetId: "abc" }, null, c)).status, 403);
   assert.equal((await handleSet({ sheetId: "abc" }, LEITOR, c)).status, 403);
