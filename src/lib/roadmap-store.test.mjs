@@ -115,3 +115,15 @@ test("mergeCustomEpics: rascunhos entram; criado no Jira + já na planilha não 
   assert.equal(out.filter((e) => e.key === "SELLER-301").length, 1);
   assert.equal(out.find((e) => e.key === "SELLER-1").createdBy, undefined, "épico da planilha continua sem dono");
 });
+
+test("diff do cliente leva projeto e descrição do rascunho (resumo) ao servidor", () => {
+  const base = { ...EMPTY, customEpics: [epic("NOVO-1", "a@x.com")] };
+  const next = { ...EMPTY, customEpics: [{ ...epic("NOVO-1", "a@x.com"), project: "STL IA", resumo: "texto" }] };
+  const d = diffRoadmap(base, next);
+  assert.equal(d.customEpics.upsert.length, 1);
+  assert.equal(d.customEpics.upsert[0].project, "STL IA");
+  assert.equal(d.customEpics.upsert[0].resumo, "texto");
+  const res = applyDiff(baseDoc(base), d, SUPER);
+  assert.equal(res.doc.customEpics[0].resumo, "texto");
+  assert.ok(isEmptyDiff(diffRoadmap(next, next)), "igual -> sem diff");
+});

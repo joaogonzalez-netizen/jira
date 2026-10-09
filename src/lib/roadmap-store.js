@@ -73,7 +73,7 @@ function normPos(p) {
   };
 }
 
-const EPIC_FIELDS = ["key", "project", "summary", "assignee", "reporter", "status", "tipo", "created", "priority", "createdBy"];
+const EPIC_FIELDS = ["key", "project", "summary", "assignee", "reporter", "status", "tipo", "created", "priority", "resumo", "createdBy"];
 const pickEpic = (e) => Object.fromEntries(EPIC_FIELDS.map((f) => [f, e[f] ?? null]));
 
 /** Fila: entrar no fim/sair viram `add`/`remove` (não dependem da ordem atual

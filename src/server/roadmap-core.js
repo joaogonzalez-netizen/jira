@@ -31,6 +31,7 @@ const SNAPSHOT_KEY = "jira:sheet-snapshot";
 const SNAPSHOT_AT_KEY = "jira:sheet-snapshot-at";
 
 const MAX_KEYS = 3000;
+export const MAX_DESCRIPTION = 10000;
 const MAX_SNAPSHOT_BYTES = 3.5 * 1024 * 1024;
 const MAX_CAS_ATTEMPTS = 6;
 
@@ -156,6 +157,7 @@ function cleanEpic(e) {
     tipo: str(e.tipo, 60),
     created: str(e.created, 40),
     priority: str(e.priority, 40),
+    resumo: str(e.resumo, MAX_DESCRIPTION),
     epic: true,
     createdBy: str(e.createdBy, 160),
   };

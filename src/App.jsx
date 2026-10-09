@@ -515,15 +515,23 @@ function DataProvider({ children }) {
     const summary = typeof patch.summary === "string" ? patch.summary.trim() : "";
 
     if (key.startsWith("NOVO-")) {
-      if (jiraOn && position.roadmapLane) {
+      // O projeto (= onde nasce no Jira) pode ser escolhido à parte da camada do Gantt;
+      // sem projeto, vale a camada. Camada de produto precisa ser a do projeto.
+      const project = patch.project || position.roadmapLane || null;
+      const description = typeof patch.description === "string" ? patch.description.trim() : "";
+      if (position.roadmapLane && project && position.roadmapLane !== project) {
+        return { ok: false, message: 'A camada precisa ser a mesma do projeto (ou "Para priorização").' };
+      }
+      if (jiraOn && project) {
         if (roadmapModeRef.current !== "server") return { ok: false, message: "O Roadmap precisa estar no servidor pra criar no Jira." };
         if (!summary) return { ok: false, message: "Dê um nome ao épico antes de criar no Jira." };
-        const r = await jiraApi.createEpic({ key, summary, product: position.roadmapLane, position });
+        const r = await jiraApi.createEpic({ key, summary, product: project, description, position });
         if (!r.ok) return { ok: false, message: r.message };
         applyServerDoc(r);
+        if (r.warning) setRoadmapError(r.warning);
         return { ok: true, oldKey: key, newKey: r.key };
       }
-      const nextCustom = customEpics.map((e) => (e.key === key ? { ...e, summary: patch.summary } : e));
+      const nextCustom = customEpics.map((e) => (e.key === key ? { ...e, summary: patch.summary, project, resumo: description || null } : e));
       setCustomEpics(nextCustom);
       setPositions((prev) => { const next = { ...prev, [key]: position }; persistRoadmap(next, nextCustom, prioOrder, filaProdutoOrder, filaUxOrder); return next; });
       return { ok: true };
@@ -769,9 +777,11 @@ function EpicDrawer({ epic, onClose, weeks, onSave, onDelete, canEdit, jiraConfi
   const [lane, setLane] = useState(epic?.roadmapLane || PRIORIZACAO_KEY);
   const [startWeek, setStartWeek] = useState(epic?.startWeek ?? 0);
   const [duration, setDuration] = useState(epic?.durationWeeks ?? 2);
+  const [project, setProject] = useState(epic?.project || "");
+  const [description, setDescription] = useState(epic?.resumo || "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
-  useEffect(() => { setSummary(epic?.summary || ""); setLane(epic?.roadmapLane || PRIORIZACAO_KEY); setStartWeek(epic?.startWeek ?? 0); setDuration(epic?.durationWeeks ?? 2); setError(null); }, [epic]);
+  useEffect(() => { setSummary(epic?.summary || ""); setLane(epic?.roadmapLane || PRIORIZACAO_KEY); setStartWeek(epic?.startWeek ?? 0); setDuration(epic?.durationWeeks ?? 2); setProject(epic?.project || ""); setDescription(epic?.resumo || ""); setError(null); }, [epic]);
   if (!epic) return null;
   const prod = PRODUCT_STYLE[epic.project] || PRODUCT_STYLE["Backoffice"];
   const isCustom = schedulable && epic.key.startsWith("NOVO-");
@@ -790,10 +800,21 @@ function EpicDrawer({ epic, onClose, weeks, onSave, onDelete, canEdit, jiraConfi
       setBusy(false);
     }
   };
-  const handleSave = () => run(() => onSave(epic.key, { summary, roadmapLane: lane === PRIORIZACAO_KEY ? null : lane, startWeek: lane === PRIORIZACAO_KEY ? null : startWeek, durationWeeks: duration }));
+  const handleSave = () => {
+    if (isCustom && project && lane !== PRIORIZACAO_KEY && lane !== project) {
+      setError('A camada precisa ser a mesma do projeto (ou "Para priorização").');
+      return Promise.resolve();
+    }
+    return run(() => onSave(epic.key, {
+      summary, roadmapLane: lane === PRIORIZACAO_KEY ? null : lane, startWeek: lane === PRIORIZACAO_KEY ? null : startWeek, durationWeeks: duration,
+      ...(isCustom ? { project: project || null, description } : {}),
+    }));
+  };
+  // Projeto efetivo do rascunho: o escolhido, ou a camada de produto.
+  const draftProject = project || (lane !== PRIORIZACAO_KEY ? lane : "");
   const handleDelete = () => run(() => onDelete(epic.key));
   const hint = !jiraConfigured || !canEdit ? null
-    : isCustom ? (lane === PRIORIZACAO_KEY ? "Escolha uma camada (produto) para criar este épico no Jira. Até lá ele é só um rascunho daqui." : `Ao salvar, este épico será criado no Jira (produto ${lane}).`)
+    : isCustom ? (draftProject ? `Ao salvar, este épico será criado no Jira (projeto ${draftProject}).` : "Escolha o projeto para criar este épico no Jira. Até lá ele é só um rascunho daqui.")
     : isJira ? "Mudar o nome aqui também muda no Jira." : null;
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 50, display: "flex", justifyContent: "flex-end", background: "rgba(0,0,0,0.45)" }}>
@@ -814,6 +835,41 @@ function EpicDrawer({ epic, onClose, weeks, onSave, onDelete, canEdit, jiraConfi
             style={{ marginTop: 10, width: "100%", background: T.bg1, border: `1px solid ${T.border2}`, borderRadius: 8, padding: "8px 10px", fontSize: 15, fontWeight: 600, color: T.ink0, fontFamily: "'Plus Jakarta Sans', sans-serif" }} />
         ) : (
           <h3 style={{ marginTop: 8, fontSize: 17, fontWeight: 700, color: T.ink0, fontFamily: "'Plus Jakarta Sans', sans-serif" }}>{epic.summary}</h3>
+        )}
+
+        {isCustom && (
+          <>
+            <p style={{ marginTop: 14, marginBottom: 6, fontSize: 12, fontWeight: 500, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>Projeto</p>
+            <select
+              value={project} onChange={(e) => setProject(e.target.value)} disabled={!canEdit || busy}
+              style={{ width: "100%", borderRadius: 8, border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink0, fontSize: 13, padding: "7px 8px", fontFamily: "'Inter Tight', sans-serif" }}
+            >
+              <option value="">Selecione o projeto…</option>
+              {PRODUCTS.map((p) => <option key={p} value={p}>{p}</option>)}
+            </select>
+
+            <p style={{ marginTop: 14, marginBottom: 6, fontSize: 12, fontWeight: 500, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>Descrição</p>
+            <textarea
+              value={description} onChange={(e) => setDescription(e.target.value)} disabled={!canEdit || busy}
+              rows={5} maxLength={10000} placeholder="Descreva o épico: contexto, objetivo, o que entra e o que não entra."
+              style={{ width: "100%", resize: "vertical", borderRadius: 8, border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink0, fontSize: 13, lineHeight: 1.45, padding: "8px 10px", fontFamily: "'Inter Tight', sans-serif" }}
+            />
+
+            {draftProject && (
+              <>
+                <p style={{ marginTop: 14, marginBottom: 6, fontSize: 12, fontWeight: 500, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>Iniciativa</p>
+                <select
+                  value={initiativeByEpicKey[epic.key]?.id || ""}
+                  onChange={(e) => assignEpicToInitiative(epic.key, e.target.value || null)}
+                  disabled={!canCreateCard}
+                  style={{ width: "100%", borderRadius: 8, border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink0, fontSize: 13, padding: "7px 8px", fontFamily: "'Inter Tight', sans-serif" }}
+                >
+                  <option value="">Nenhuma</option>
+                  {initiatives.filter((i) => i.product === draftProject).map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
+                </select>
+              </>
+            )}
+          </>
         )}
 
         {!isCustom && (
@@ -858,28 +914,13 @@ function EpicDrawer({ epic, onClose, weeks, onSave, onDelete, canEdit, jiraConfi
         {schedulable && (
           <>
             <p style={{ marginTop: 20, marginBottom: 6, fontSize: 12, fontWeight: 500, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>Camada</p>
-            <select value={lane} onChange={(e) => setLane(e.target.value)} disabled={!canEdit} style={{ width: "100%", borderRadius: 8, border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink0, fontSize: 13, padding: "7px 8px", fontFamily: "'Inter Tight', sans-serif" }}>
+            <select value={lane} onChange={(e) => { setLane(e.target.value); if (isCustom && e.target.value !== PRIORIZACAO_KEY && !project) setProject(e.target.value); }} disabled={!canEdit} style={{ width: "100%", borderRadius: 8, border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink0, fontSize: 13, padding: "7px 8px", fontFamily: "'Inter Tight', sans-serif" }}>
               <option value={PRIORIZACAO_KEY}>Para priorização</option>
               {PRODUCTS.map((p) => <option key={p} value={p}>{p}</option>)}
             </select>
 
             {lane !== PRIORIZACAO_KEY && (
               <>
-                {isCustom && (
-                  <>
-                    <p style={{ marginTop: 16, marginBottom: 6, fontSize: 12, fontWeight: 500, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>Iniciativa</p>
-                    <select
-                      value={initiativeByEpicKey[epic.key]?.id || ""}
-                      onChange={(e) => assignEpicToInitiative(epic.key, e.target.value || null)}
-                      disabled={!canCreateCard}
-                      style={{ width: "100%", borderRadius: 8, border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink0, fontSize: 13, padding: "7px 8px", fontFamily: "'Inter Tight', sans-serif" }}
-                    >
-                      <option value="">Nenhuma</option>
-                      {initiatives.filter((i) => i.product === lane).map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
-                    </select>
-                  </>
-                )}
-
                 <p style={{ marginTop: 16, marginBottom: 6, fontSize: 12, fontWeight: 500, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>Semana inicial</p>
                 <select value={startWeek} onChange={(e) => setStartWeek(Number(e.target.value))} disabled={!canEdit} style={{ width: "100%", borderRadius: 8, border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink0, fontSize: 13, padding: "7px 8px", fontFamily: "'Inter Tight', sans-serif" }}>
                   {weeks.map((w) => <option key={w.index} value={w.index}>Semana de {fmtWeek(w.start)}</option>)}

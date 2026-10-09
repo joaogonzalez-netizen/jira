@@ -18,7 +18,7 @@
  * "Excluir" nunca usa a API de exclusão do Jira: faz a transição do épico para
  * o status Cancelado (reversível) e o esconde do Roadmap.
  */
-import { readDoc, writeDoc, touchDoc, viewDoc, canWriteSession } from "./roadmap-core.js";
+import { readDoc, writeDoc, touchDoc, viewDoc, canWriteSession, MAX_DESCRIPTION } from "./roadmap-core.js";
 
 const DEFAULT_BASE_URL = "https://joaogonzalezstlflix.atlassian.net";
 
@@ -101,6 +101,7 @@ function jiraHttpError(status, data) {
     const err = new JiraError(400, `O Jira recusou${suffix || ": dados inválidos"}`);
     const hit = Object.entries(data?.errors || {}).find(([field, msg]) => /^customfield_\d+$/.test(field) && /epic name/i.test(String(msg)));
     if (hit) err.epicNameField = hit[0];
+    if (typeof data?.errors?.description === "string") err.descriptionRejected = true;
     return err;
   }
   if (status === 429) return new JiraError(429, "O Jira limitou as requisições — tente de novo em instantes.");
@@ -145,16 +146,34 @@ async function epicTypeId(j, projectKey) {
 }
 
 /** Cria o épico; projetos com "Epic Name" obrigatório respondem 400 apontando o campo. */
-async function createJiraEpic(j, projectKey, summary) {
+async function createJiraEpic(j, projectKey, summary, description) {
   const issuetype = { id: await epicTypeId(j, projectKey) };
-  const fields = { project: { key: projectKey }, issuetype, summary };
-  try {
-    return await jiraFetch(j, "POST", "/rest/api/3/issue", { fields });
-  } catch (e) {
-    const needsEpicName = e instanceof JiraError && e.status === 400 && e.epicNameField;
-    if (!needsEpicName) throw e;
-    return jiraFetch(j, "POST", "/rest/api/3/issue", { fields: { ...fields, [e.epicNameField]: summary } });
+  let fields = { project: { key: projectKey }, issuetype, summary };
+  let withDescription = false;
+  if (description) {
+    fields = { ...fields, description: descriptionToAdf(description) };
+    withDescription = true;
   }
+  const post = (f) => jiraFetch(j, "POST", "/rest/api/3/issue", { fields: f });
+  // Tenta, e a cada recusa conhecida do Jira corrige UMA coisa e tenta de novo:
+  // "Epic Name" obrigatório -> preenche; descrição fora da tela do projeto -> cria sem ela.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const created = await post(fields);
+      return { created, descriptionDropped: !!description && !withDescription };
+    } catch (e) {
+      if (!(e instanceof JiraError) || e.status !== 400) throw e;
+      if (e.epicNameField && !(e.epicNameField in fields)) { fields = { ...fields, [e.epicNameField]: summary }; continue; }
+      if (e.descriptionRejected && withDescription) {
+        const { description: _drop, ...rest } = fields;
+        fields = rest;
+        withDescription = false;
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw new JiraError(502, "O Jira continuou recusando a criação do épico");
 }
 
 async function getEpicIssue(j, key) {
@@ -167,6 +186,29 @@ async function getEpicIssue(j, key) {
 /* ---------------------------------------------------------------------
    Validação e permissão
    --------------------------------------------------------------------- */
+
+/** Texto simples -> documento ADF (o REST v3 do Jira só aceita descrição nesse formato).
+    Linha em branco separa parágrafos; quebra simples vira quebra de linha. */
+export function descriptionToAdf(text) {
+  const blocks = String(text).replace(/\r\n?/g, "\n").split(/\n{2,}/).map((b) => b.trim()).filter(Boolean);
+  const content = blocks.map((block) => {
+    const nodes = [];
+    block.split("\n").forEach((line, i) => {
+      if (i > 0) nodes.push({ type: "hardBreak" });
+      if (line) nodes.push({ type: "text", text: line });
+    });
+    return { type: "paragraph", content: nodes };
+  });
+  return { type: "doc", version: 1, content };
+}
+
+function cleanDescription(v) {
+  if (v === undefined || v === null) return "";
+  if (typeof v !== "string") throw new JiraError(400, "A descrição precisa ser um texto");
+  const t = v.trim();
+  if (t.length > MAX_DESCRIPTION) throw new JiraError(400, `A descrição passa de ${MAX_DESCRIPTION} caracteres`);
+  return t;
+}
 
 const forbidden = (message = "Sem permissão para alterar épicos no Jira") => ({ status: 403, body: { message } });
 const bad = (message) => ({ status: 400, body: { message } });
@@ -250,6 +292,7 @@ export async function handleCreateEpic(input, session, rcfg, j) {
     if (!summary) return bad(`O nome do épico é obrigatório (até ${MAX_SUMMARY} caracteres)`);
     const projectKey = PRODUCT_TO_PROJECT[product];
     if (!projectKey) return bad("Escolha o produto (camada) antes de criar no Jira");
+    const description = cleanDescription(input?.description);
     const position = cleanPosition(input?.position);
     if (position && position.roadmapLane !== null && position.roadmapLane !== product) {
       return bad("A camada do épico precisa ser o produto escolhido");
@@ -261,7 +304,7 @@ export async function handleCreateEpic(input, session, rcfg, j) {
     if (!draft) return { status: 404, body: { message: "Esse épico não existe mais (ou já foi criado no Jira)" } };
     if (!mayTouchEpic(session, doc, oldKey)) return forbidden("Esse épico é de outra pessoa");
 
-    const created = await createJiraEpic(j, projectKey, summary);
+    const { created, descriptionDropped } = await createJiraEpic(j, projectKey, summary, description);
     const newKey = created?.key;
     if (typeof newKey !== "string" || !JIRA_KEY_RE.test(newKey)) throw new JiraError(502, "O Jira não devolveu a chave do épico criado");
 
@@ -280,7 +323,7 @@ export async function handleCreateEpic(input, session, rcfg, j) {
       positions[newKey] = position || oldPos || { roadmapLane: null, startWeek: null, durationWeeks: 2 };
       return touchDoc({
         ...cur,
-        customEpics: cur.customEpics.map((e) => (e.key === oldKey ? { ...e, key: newKey, project: product, summary, status } : e)),
+        customEpics: cur.customEpics.map((e) => (e.key === oldKey ? { ...e, key: newKey, project: product, summary, status, resumo: description || null } : e)),
         positions,
         prioOrder: swapKey(cur.prioOrder, oldKey, newKey),
         filaProdutoOrder: swapKey(cur.filaProdutoOrder, oldKey, newKey),
@@ -291,7 +334,13 @@ export async function handleCreateEpic(input, session, rcfg, j) {
       const why = result.reason === "contention" ? "muitas alterações ao mesmo tempo" : "o rascunho sumiu daqui";
       return { status: 409, body: { message: `Criado no Jira como ${newKey}, mas não consegui atualizar o Roadmap (${why}). Recarregue a página.`, jiraKey: newKey } };
     }
-    return { status: 200, body: { ...viewDoc(result.doc), key: newKey, oldKey } };
+    return {
+      status: 200,
+      body: {
+        ...viewDoc(result.doc), key: newKey, oldKey,
+        ...(descriptionDropped ? { warning: `Épico ${newKey} criado, mas o Jira não aceitou a descrição na tela desse projeto — ela ficou só aqui.` } : {}),
+      },
+    };
   });
 }
 

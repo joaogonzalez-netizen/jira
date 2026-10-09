@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createMemoryKv, handleGet, handleSeed, loadConfig } from "./roadmap-core.js";
 import {
   PRODUCT_TO_PROJECT,
+  descriptionToAdf,
   handleCancelEpic,
   handleCreateEpic,
   handleRenameEpic,
@@ -49,6 +50,7 @@ function fakeJira(opts = {}) {
     if (method === "POST" && u.pathname === "/rest/api/3/issue") {
       const f = body.fields;
       if (opts.epicNameRequired && !f.customfield_10011) return reply(400, { errors: { customfield_10011: "Epic Name is required." } });
+      if (opts.rejectDescription && f.description) return reply(400, { errors: { description: "Field 'description' cannot be set. It is not on the appropriate screen, or unknown." } });
       counters[f.project.key] = (counters[f.project.key] || 300) + 1;
       const key = `${f.project.key}-${counters[f.project.key]}`;
       issues.set(key, { summary: f.summary, status: "Backlog", type: epicType });
@@ -398,4 +400,83 @@ test("cancelar: admin cancela só o próprio (já criado no Jira); remove o regi
   assert.equal(s.customEpics.some((e) => e.key === key), false);
   assert.equal(s.filaProdutoOrder.includes(key), false);
   assert.equal(s.epicOverrides[key].removed, true);
+});
+
+/* ------------------------------ descrição (novo) ------------------------------ */
+
+test("descriptionToAdf: parágrafos, quebras de linha e texto vazio válidos pro Jira", () => {
+  assert.deepEqual(descriptionToAdf("Uma linha"), { type: "doc", version: 1, content: [{ type: "paragraph", content: [{ type: "text", text: "Uma linha" }] }] });
+  const doc = descriptionToAdf("Linha 1\nLinha 2\n\n\nSegundo parágrafo\r\ncom quebra");
+  assert.equal(doc.content.length, 2);
+  assert.deepEqual(doc.content[0].content, [{ type: "text", text: "Linha 1" }, { type: "hardBreak" }, { type: "text", text: "Linha 2" }]);
+  assert.deepEqual(doc.content[1].content, [{ type: "text", text: "Segundo parágrafo" }, { type: "hardBreak" }, { type: "text", text: "com quebra" }]);
+  // o ADF não aceita nó de texto vazio
+  const json = JSON.stringify(descriptionToAdf("a\n\n\n   \n\nb\n"));
+  assert.ok(!json.includes('"text":""'));
+});
+
+test("criar com descrição: vai ao Jira em ADF, fica salva no épico e aparece como resumo", async () => {
+  const { rcfg, jira, j } = await setup();
+  const r = await handleCreateEpic({ key: "NOVO-100", summary: "Com descrição", product: "STL IA", description: "  Contexto do épico.\n\nSegundo parágrafo.  " }, SUPER, rcfg, j);
+  assert.equal(r.status, 200);
+  assert.equal(r.body.warning, undefined);
+  const post = jira.calls.find((c) => c.method === "POST" && c.path === "/rest/api/3/issue");
+  assert.deepEqual(post.body.fields.description, descriptionToAdf("Contexto do épico.\n\nSegundo parágrafo."));
+  const rec = (await state(rcfg)).state.customEpics.find((e) => e.key === "IA-301");
+  assert.equal(rec.resumo, "Contexto do épico.\n\nSegundo parágrafo.");
+});
+
+test("criar sem descrição: não manda o campo ao Jira", async () => {
+  const { rcfg, jira, j } = await setup();
+  await handleCreateEpic({ key: "NOVO-100", summary: "x", product: "STL IA", description: "   " }, SUPER, rcfg, j);
+  const post = jira.calls.find((c) => c.method === "POST" && c.path === "/rest/api/3/issue");
+  assert.equal("description" in post.body.fields, false);
+  assert.equal((await state(rcfg)).state.customEpics.find((e) => e.key === "IA-301").resumo, null);
+});
+
+test("criar: descrição inválida (não-texto ou enorme) é recusada antes do Jira", async () => {
+  const { rcfg, jira, j } = await setup();
+  assert.equal((await handleCreateEpic({ key: "NOVO-100", summary: "x", product: "STL IA", description: { a: 1 } }, SUPER, rcfg, j)).status, 400);
+  assert.equal((await handleCreateEpic({ key: "NOVO-100", summary: "x", product: "STL IA", description: "a".repeat(10001) }, SUPER, rcfg, j)).status, 400);
+  assert.equal(jira.calls.length, 0);
+});
+
+test("criar: Jira não aceita 'description' na tela do projeto -> cria sem ela, avisa e guarda aqui", async () => {
+  const { rcfg, jira, j } = await setup({ rejectDescription: true });
+  const r = await handleCreateEpic({ key: "NOVO-100", summary: "Sem tela de descrição", product: "STLFLIX", description: "Texto importante" }, SUPER, rcfg, j);
+  assert.equal(r.status, 200);
+  assert.equal(r.body.key, "FLIX-301");
+  assert.match(r.body.warning, /FLIX-301.*não aceitou a descrição/);
+  assert.equal(jira.calls.filter((c) => c.method === "POST" && c.path === "/rest/api/3/issue").length, 2, "tentou com e sem descrição");
+  assert.equal((await state(rcfg)).state.customEpics.find((e) => e.key === "FLIX-301").resumo, "Texto importante");
+});
+
+test("criar: 'Epic Name' obrigatório + descrição recusada juntos — resolve os dois", async () => {
+  const { rcfg, jira, j } = await setup({ epicNameRequired: true, rejectDescription: true });
+  const r = await handleCreateEpic({ key: "NOVO-100", summary: "Duplo", product: "STL Loja", description: "d" }, SUPER, rcfg, j);
+  assert.equal(r.status, 200);
+  const last = jira.calls.filter((c) => c.method === "POST" && c.path === "/rest/api/3/issue").pop();
+  assert.equal(last.body.fields.customfield_10011, "Duplo");
+  assert.equal("description" in last.body.fields, false);
+});
+
+test("criar com Projeto e camada 'Para priorização' (sem posição no Gantt): cria no projeto e continua na priorização", async () => {
+  const { rcfg, jira, j } = await setup();
+  const r = await handleCreateEpic({ key: "NOVO-100", summary: "Só no projeto", product: "STL Seller", position: { roadmapLane: null, startWeek: null, durationWeeks: 2 } }, SUPER, rcfg, j);
+  assert.equal(r.status, 200);
+  assert.equal(jira.calls.find((c) => c.method === "POST" && c.path === "/rest/api/3/issue").body.fields.project.key, "SELLER");
+  const s = (await state(rcfg)).state;
+  assert.deepEqual(s.positions["SELLER-301"], { roadmapLane: null, startWeek: null, durationWeeks: 2 });
+  assert.equal(s.customEpics.find((e) => e.key === "SELLER-301").project, "STL Seller");
+});
+
+test("rascunho: projeto e descrição persistem no Roadmap (resumo) e não se perdem num PATCH", async () => {
+  const { rcfg } = await setup();
+  const { handlePatch } = await import("./roadmap-core.js");
+  const r = await handlePatch({ customEpics: { upsert: [{ key: "NOVO-100", summary: "Rascunho", project: "STL IA", resumo: "Minha descrição", createdBy: "joao@x.com" }] } }, SUPER, rcfg);
+  assert.equal(r.status, 200);
+  const rec = r.body.state.customEpics.find((e) => e.key === "NOVO-100");
+  assert.equal(rec.project, "STL IA");
+  assert.equal(rec.resumo, "Minha descrição");
+  assert.equal((await handlePatch({ customEpics: { upsert: [{ key: "NOVO-100", summary: "x", resumo: "a".repeat(10001), createdBy: "joao@x.com" }] } }, SUPER, rcfg)).body.state.customEpics.find((e) => e.key === "NOVO-100").resumo.length, 10000, "descrição enorme é cortada, não derruba o save");
 });

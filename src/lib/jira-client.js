@@ -21,7 +21,7 @@ async function call(method, url, body) {
 
 const result = (r) =>
   r.ok
-    ? { ok: true, state: r.data.state, rev: r.data.rev, key: r.data.key, oldKey: r.data.oldKey }
+    ? { ok: true, state: r.data.state, rev: r.data.rev, key: r.data.key, oldKey: r.data.oldKey, warning: r.data.warning }
     : { ok: false, status: r.status, message: r.data?.message || `Erro ${r.status}`, jiraKey: r.data?.jiraKey };
 
 export const jiraApi = {
@@ -30,7 +30,7 @@ export const jiraApi = {
     const r = await call("GET", "/api/jira/epics");
     return r.ok ? !!r.data.configured : null;
   },
-  createEpic: async ({ key, summary, product, position }) => result(await call("POST", "/api/jira/epics", { key, summary, product, position })),
+  createEpic: async ({ key, summary, product, description, position }) => result(await call("POST", "/api/jira/epics", { key, summary, product, description, position })),
   renameEpic: async ({ key, summary }) => result(await call("PATCH", "/api/jira/epics", { key, summary })),
   cancelEpic: async ({ key }) => result(await call("DELETE", `/api/jira/epics?key=${encodeURIComponent(key)}`)),
 };
