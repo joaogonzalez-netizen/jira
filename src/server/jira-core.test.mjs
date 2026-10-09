@@ -747,3 +747,10 @@ test("criar: se o Jira nunca aceita o Tipo de entrega, o erro diz o que foi tent
   assert.match(r.body.message, /metadados/);
   assert.equal(jira.calls.filter((c) => c.method === "POST").length, 4);
 });
+
+test("criar: erro de Tipo de entrega sem id de campo (e sem createmeta) mostra as chaves do erro", async () => {
+  const { rcfg, j } = await setup({ forceStatus: { path: /\/rest\/api\/3\/issue$/, method: "POST", status: 400, body: { errors: { tipoEntrega: "Preencha o campo: Tipo de entrega" } } } });
+  const r = await handleCreateEpic({ key: "NOVO-100", summary: "X", product: "STL Seller", tipo: "Inovação", position: pos(null, null) }, SUPER, rcfg, j);
+  assert.equal(r.status, 400);
+  assert.match(r.body.message, /chaves do erro: tipoEntrega/);
+});

@@ -106,6 +106,8 @@ function jiraHttpError(status, data) {
     if (typeof data?.errors?.description === "string") err.descriptionRejected = true;
     const tipoHit = Object.entries(data?.errors || {}).find(([field, msg]) => /^customfield_\d+$/.test(field) && norm(msg).includes("tipo de entrega"));
     if (tipoHit) err.tipoField = tipoHit[0];
+    err.tipoMentioned = norm(detail).includes("tipo de entrega");
+    err.errorKeys = Object.keys(data?.errors || {});
     return err;
   }
   if (status === 429) return new JiraError(429, "O Jira limitou as requisições — tente de novo em instantes.");
@@ -194,11 +196,13 @@ async function createJiraEpic(j, projectKey, summary, description, tipo) {
 
   // Tipo de entrega: descobre o campo do projeto (id, tipo e opções) e já manda o valor certo.
   let tipoNote = "";
+  let tipoFieldId = null;
   try {
     const metaFields = await createFields(j, projectKey, typeId);
     const found = resolveTipoEntrega(metaFields, tipo);
     if (found) fields = { ...fields, [found.fieldId]: found.value };
     const f = metaFields.find((x) => norm(x?.name) === "tipo de entrega");
+    tipoFieldId = f?.fieldId || null;
     tipoNote = f
       ? `campo ${f.fieldId}, tipo ${f.schema?.type || "?"}/${f.schema?.custom?.split(":").pop() || "?"}, opções: ${(f.allowedValues || []).map((o) => o?.value ?? o?.name).join(", ") || "(nenhuma listada)"}`
       : "o campo não aparece nos metadados de criação do projeto";
@@ -231,12 +235,17 @@ async function createJiraEpic(j, projectKey, summary, description, tipo) {
         withDescription = false;
         continue;
       }
-      if (e.tipoField) {
+      // O Jira nem sempre aponta o campo pelo id: se a mensagem fala do Tipo de entrega, usa o id dos metadados.
+      const tipoField = e.tipoField || (e.tipoMentioned ? tipoFieldId : null);
+      if (e.tipoMentioned && !tipoField) {
+        throw new JiraError(400, `${e.message} — não sei qual é o id do campo (chaves do erro: ${e.errorKeys?.join(", ") || "nenhuma"}); ${tipoNote}.`);
+      }
+      if (tipoField) {
         if (!tipo) throw new JiraError(400, `O projeto exige o Tipo de entrega — escolha uma opção (${TIPOS_ENTREGA.join(", ")}).`);
-        if (!(e.tipoField in fields)) { fields = { ...fields, [e.tipoField]: { value: tipo } }; continue; }
-        if (!triedTipoArray.has(e.tipoField)) { triedTipoArray.add(e.tipoField); fields = { ...fields, [e.tipoField]: [{ value: tipo }] }; continue; }
-        if (!triedTipoArray.has(`${e.tipoField}:text`)) { triedTipoArray.add(`${e.tipoField}:text`); fields = { ...fields, [e.tipoField]: tipo }; continue; }
-        throw new JiraError(400, `${e.message} — mandei "${tipo}" no campo ${e.tipoField} como opção, lista e texto e o Jira não aceitou; ${tipoNote}.`);
+        if (!(tipoField in fields)) { fields = { ...fields, [tipoField]: { value: tipo } }; continue; }
+        if (!triedTipoArray.has(tipoField)) { triedTipoArray.add(tipoField); fields = { ...fields, [tipoField]: [{ value: tipo }] }; continue; }
+        if (!triedTipoArray.has(`${tipoField}:text`)) { triedTipoArray.add(`${tipoField}:text`); fields = { ...fields, [tipoField]: tipo }; continue; }
+        throw new JiraError(400, `${e.message} — mandei "${tipo}" no campo ${tipoField} como opção, lista e texto e o Jira não aceitou; ${tipoNote}.`);
       }
       throw e;
     }
