@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useMemo, useCall
 import { ChevronUp, ChevronDown, ChevronRight, ChevronLeft, X, BarChart3, Sun, Moon, Calendar, Plus, Minus, RefreshCw, LogOut, Lock, Layers, Trash2, Users } from "lucide-react";
 import { BarChart, Bar, LineChart, Line, PieChart, Pie, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell, LabelList } from "recharts";
 import storage from "./lib/storage";
+import { roadmapStore, diffRoadmap, isEmptyDiff, summarizeRoadmap, emptyRoadmap } from "./lib/roadmap-store";
 import { AuthProvider, useAuth } from "./lib/auth-context";
 
 const EPICS_SEED_INITIAL = [{"key": "SELLER-256", "project": "STL Seller", "type": "Epic", "summary": "Vincular calculadora com Produtos", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Backlog", "stage": "Backlog", "tipo": "Inovação", "parent": null, "created": "07/08/2026 15:06:01", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "SELLER-255", "project": "STL Seller", "type": "Epic", "summary": "[Shopee] Gerador de anúncios", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Backlog", "stage": "Backlog", "tipo": "Inovação", "parent": null, "created": "07/08/2026 14:29:05", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "SELLER-250", "project": "STL Seller", "type": "Epic", "summary": "Cancelamento do Oferta/Seller", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Backlog", "stage": "Backlog", "tipo": "Sustentação", "parent": null, "created": "05/08/2026 08:53:47", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "SELLER-249", "project": "STL Seller", "type": "Epic", "summary": "Calculadora na Flix", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Backlog", "stage": "Backlog", "tipo": "Inovação", "parent": null, "created": "04/08/2026 14:02:28", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": "Testar uma prévia da calculadora de preços do STLSeller direto na página do modelo na STLFLIX, usando o cálculo como gatilho de ativação cross-produto no momento da descoberta."}, {"key": "SELLER-248", "project": "STL Seller", "type": "Epic", "summary": "Calculadora na IA", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Backlog", "stage": "Backlog", "tipo": "Inovação", "parent": null, "created": "04/08/2026 14:02:42", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "SELLER-200", "project": "STL Seller", "type": "Epic", "summary": "[v2] Produtos", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Backlog", "stage": "Backlog", "tipo": "Melhoria", "parent": null, "created": "29/07/2026 20:19:26", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "SELLER-199", "project": "STL Seller", "type": "Epic", "summary": "[v2] Pedidos", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Backlog", "stage": "Backlog", "tipo": "Melhoria", "parent": null, "created": "29/07/2026 20:18:17", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "SELLER-194", "project": "STL Seller", "type": "Epic", "summary": "Publicar anúncio no Mercado Livre", "assignee": "Marcelo Augusto", "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Pronto P/ DEV", "stage": "Pronta pra dev", "tipo": "Inovação", "parent": null, "created": "28/07/2026 11:34:58", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "SELLER-189", "project": "STL Seller", "type": "Epic", "summary": "Dados (Amplitude e Clarity)", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Pronto P/ DEV", "stage": "Pronta pra dev", "tipo": "Inovação", "parent": null, "created": "28/07/2026 09:42:01", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "SELLER-188", "project": "STL Seller", "type": "Epic", "summary": "Integração Amazon", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Backlog", "stage": "Backlog", "tipo": "Inovação", "parent": null, "created": "28/07/2026 09:41:49", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "SELLER-158", "project": "STL Seller", "type": "Epic", "summary": "Cálculos para modelos em resina", "assignee": "João Gonzalez", "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Backlog", "stage": "Backlog", "tipo": "Inovação", "parent": null, "created": "16/07/2026 15:56:01", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": "Avaliar uma calculadora de resina indicada pelo time de pesquisa, com estrutura de custo diferente da calculadora atual."}, {"key": "SELLER-155", "project": "STL Seller", "type": "Epic", "summary": "[v2] Calculadora", "assignee": "Marcelo Augusto", "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Em DEV", "stage": "Em dev", "tipo": "Inovação", "parent": null, "created": "16/07/2026 15:50:08", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": "Evoluir a calculadora de preços para guardar impressoras/filamentos/custos reutilizáveis, suportar Pix e ajudar o maker a decidir se vale anunciar — reduzindo o retrabalho de recomeçar cada cálculo do zero."}, {"key": "SELLER-154", "project": "STL Seller", "type": "Epic", "summary": "[v2] Finder", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Produto", "stage": null, "tipo": "Inovação", "parent": null, "created": "16/07/2026 15:49:13", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "SELLER-153", "project": "STL Seller", "type": "Epic", "summary": "[v2] Gerador de anúncios", "assignee": "Marcelo Augusto", "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Em refinamento Técnico", "stage": "Análise técnica", "tipo": "Inovação", "parent": null, "created": "16/07/2026 15:47:22", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "SELLER-152", "project": "STL Seller", "type": "Epic", "summary": "[Shopee] Postagem de anúncio", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Backlog", "stage": "Backlog", "tipo": "Inovação", "parent": null, "created": "16/07/2026 15:45:12", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": "Criar prompts de IA para gerar automaticamente títulos e descrições de anúncios da Shopee, seguindo as boas práticas de SEO e os limites de caracteres da plataforma."}, {"key": "SELLER-88", "project": "STL Seller", "type": "Epic", "summary": "Global", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Done", "stage": "Concluído", "tipo": "Inovação", "parent": null, "created": "28/06/2026 21:59:13", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "SELLER-48", "project": "STL Seller", "type": "Epic", "summary": "Seller", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Done", "stage": "Concluído", "tipo": "Inovação", "parent": null, "created": "27/05/2026 14:15:10", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "SELLER-46", "project": "STL Seller", "type": "Epic", "summary": "Cobrança de créditos STLSeller", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Em DEV", "stage": "Em dev", "tipo": "Inovação", "parent": null, "created": "20/05/2026 14:57:03", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "SELLER-42", "project": "STL Seller", "type": "Epic", "summary": "[Seller] Calculadora", "assignee": "João Gonzalez", "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Done", "stage": "Concluído", "tipo": "Inovação", "parent": null, "created": "20/05/2026 10:27:14", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "SELLER-29", "project": "STL Seller", "type": "Epic", "summary": "Finder", "assignee": "João Gonzalez", "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Done", "stage": "Concluído", "tipo": "Inovação", "parent": null, "created": "11/05/2026 13:07:07", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "SELLER-14", "project": "STL Seller", "type": "Epic", "summary": "[Seller] Pedidos", "assignee": "João Gonzalez", "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Done", "stage": "Concluído", "tipo": "Inovação", "parent": null, "created": "07/05/2026 17:29:12", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "SELLER-11", "project": "STL Seller", "type": "Epic", "summary": "Produtos", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Done", "stage": "Concluído", "tipo": "Inovação", "parent": null, "created": "04/05/2026 11:32:10", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": "Instrumentar a tela de Estoque no Amplitude (acessos, filtros, alertas de ruptura, exportação, detalhe de produto) para medir engajamento e embasar decisões de evolução."}, {"key": "SELLER-10", "project": "STL Seller", "type": "Epic", "summary": "Avaliador de anúncios", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Backlog", "stage": "Backlog", "tipo": "Inovação", "parent": null, "created": "21/04/2026 10:28:28", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": "Criar um avaliador de anúncios do Mercado Livre que analisa qualidade e performance de um anúncio e recomenda melhorias, começando pelo orgânico e podendo evoluir para Product Ads."}, {"key": "SELLER-8", "project": "STL Seller", "type": "Epic", "summary": "[IA] My Ads: Geração de Anúncios com IA", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Done", "stage": "Concluído", "tipo": "Inovação", "parent": null, "created": "16/04/2026 11:22:45", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "LOJA-60", "project": "STL Loja", "type": "Epic", "summary": "Atualização Loja", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Backlog", "stage": "Backlog", "tipo": "Melhoria", "parent": null, "created": "04/08/2026 14:08:43", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "LOJA-34", "project": "STL Loja", "type": "Epic", "summary": "Automatizar sincronização de planos entre WooCommerce e Backend (STLFLIX/STLAI)", "assignee": "João Gonzalez", "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Em refinamento Técnico", "stage": "Análise técnica", "tipo": "Melhoria", "parent": null, "created": "25/06/2026 14:27:27", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": "Automatizar o cadastro de planos no Backend (STLFLIX/STLAI) direto pelo WooCommerce via API, eliminando o cadastro manual duplicado que hoje deixa clientes sem acesso quando é esquecido."}, {"key": "LOJA-6", "project": "STL Loja", "type": "Epic", "summary": "Reestruturação da Loja STLFLIX", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Done", "stage": "Concluído", "tipo": "Melhoria", "parent": null, "created": "17/03/2026 11:17:35", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "IA-264", "project": "STL IA", "type": "Epic", "summary": "[IA] Barra de pesquisa", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Em DEV", "stage": "Em dev", "tipo": "Inovação", "parent": null, "created": "05/08/2026 15:36:28", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "IA-156", "project": "STL IA", "type": "Epic", "summary": "Padronização e tradução de campos e modais de filtros para 2D dos customizadores STLAI", "assignee": null, "reporter": "silvana souza", "developer": null, "tester": null, "status": "Em DEV", "stage": "Em dev", "tipo": "Melhoria", "parent": null, "created": "25/05/2026 14:49:30", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "High", "resumo": "Padronizar o layout dos modais de filtros entre os customizadores da STLAI e garantir que todos os textos respeitem o idioma selecionado pelo usuário."}, {"key": "IA-144", "project": "STL IA", "type": "Epic", "summary": "Workbench STLAI: criação de modelos 3D por imagem e edição integrada com Tools", "assignee": "silvana souza", "reporter": "silvana souza", "developer": null, "tester": null, "status": "Em design", "stage": "Em design", "tipo": "Inovação", "parent": null, "created": "19/05/2026 16:10:21", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "High", "resumo": "Evoluir a seção Tools da STLAI para uma Workbench, começando por gerar modelos 3D a partir de fotos/texto (Image to 3D V1) e permitir editar o resultado nas ferramentas existentes."}, {"key": "IA-129", "project": "STL IA", "type": "Epic", "summary": "Multi-Color: Filtro modelos coloridos", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Em DEV", "stage": "Em dev", "tipo": "Inovação", "parent": null, "created": "21/04/2026 10:57:35", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "IA-112", "project": "STL IA", "type": "Epic", "summary": "Padronização da experiência e arquitetura dos customizadores (STLAI)", "assignee": "silvana souza", "reporter": "silvana souza", "developer": null, "tester": null, "status": "Produto", "stage": null, "tipo": "Inovação", "parent": null, "created": "22/04/2026 11:26:54", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": "Padronizar a experiência e a arquitetura dos customizadores da STLAI para resolver inconsistência de UX, retrabalho de desenvolvimento e dependência de devs específicos entre os lançamentos."}, {"key": "IA-89", "project": "STL IA", "type": "Epic", "summary": "Análise de comportamento dos usuários nos customizadores", "assignee": "silvana souza", "reporter": "silvana souza", "developer": null, "tester": null, "status": "Produto", "stage": null, "tipo": "Sustentação", "parent": null, "created": "17/04/2026 17:51:19", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "High", "resumo": "Instrumentar o funil de uso dos customizadores da STLAI (2D→3D, erros, satisfação) para entender onde os usuários desistem e o que diferencia quem ativa de quem cancela."}, {"key": "IA-70", "project": "STL IA", "type": "Epic", "summary": "Multi-Color: Exportação colorida para Bambu e Orca", "assignee": "silvana souza", "reporter": "silvana souza", "developer": null, "tester": null, "status": "Done", "stage": "Concluído", "tipo": "Inovação", "parent": null, "created": "14/04/2026 15:20:34", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Highest", "resumo": "Permitir gerar e exportar modelos 3D já coloridos da STLAI prontos para Bambu Studio e Orca, sem precisar de pós-processamento manual em ferramentas externas."}, {"key": "IA-21", "project": "STL IA", "type": "Epic", "summary": "Gerar modelo com qualidade realista superior", "assignee": "silvana souza", "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Done", "stage": "Concluído", "tipo": "Inovação", "parent": null, "created": "12/03/2026 15:19:59", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "FLIX-352", "project": "STLFLIX", "type": "Epic", "summary": "Projeto Evolt", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Backlog", "stage": "Backlog", "tipo": "Inovação", "parent": null, "created": "05/08/2026 12:00:23", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": "Ideia trazida pelo Lincoln para Portugal: cupom gratuito seguido de uma VSL logo na entrada para converter o usuário em outra assinatura."}, {"key": "FLIX-305", "project": "STLFLIX", "type": "Epic", "summary": "[Flix] Ecossistema", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Produto", "stage": null, "tipo": "Inovação", "parent": null, "created": "27/07/2026 09:20:01", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "FLIX-283", "project": "STLFLIX", "type": "Epic", "summary": "Flix em Espanhol", "assignee": "João Gonzalez", "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Em rollout", "stage": "Em rollout", "tipo": "Inovação", "parent": null, "created": "20/07/2026 09:47:20", "dataInicio": null, "dataConcl": "21/04/2026", "intercom": false, "epic": true, "priority": "Medium", "resumo": "Adicionar espanhol (LatAm) como terceiro idioma da plataforma, reaproveitando a infraestrutura de i18n já construída para PT-BR."}, {"key": "FLIX-257", "project": "STLFLIX", "type": "Epic", "summary": "[AR] MercadoPago", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Em refinamento Técnico", "stage": "Análise técnica", "tipo": "Melhoria", "parent": null, "created": "13/07/2026 10:59:50", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "FLIX-168", "project": "STLFLIX", "type": "Epic", "summary": "[Explore] Novos Filtros", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Done", "stage": "Concluído", "tipo": "Melhoria", "parent": null, "created": "15/06/2026 11:43:03", "dataInicio": null, "dataConcl": "24/07/2026", "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "FLIX-142", "project": "STLFLIX", "type": "Epic", "summary": "Lote especial", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Done", "stage": "Concluído", "tipo": "Sustentação", "parent": null, "created": "02/06/2026 10:48:09", "dataInicio": null, "dataConcl": "24/07/2026", "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "FLIX-3", "project": "STLFLIX", "type": "Epic", "summary": "[Flix em PT-BR] 01 - Infraestrutura de Idioma", "assignee": "João Gonzalez", "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Done", "stage": "Concluído", "tipo": "Inovação", "parent": null, "created": "10/03/2026 10:25:38", "dataInicio": null, "dataConcl": "21/04/2026", "intercom": false, "epic": true, "priority": "Medium", "resumo": "Criar a base técnica de multi-idioma da STLFlix, começando por PT-BR, com detecção automática, seletor manual e fallback para inglês."}, {"key": "BACK-52", "project": "Backoffice", "type": "Epic", "summary": "Integração ARCA MP", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Backlog", "stage": "Backlog", "tipo": "Inovação", "parent": null, "created": "07/08/2026 15:02:07", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "BACK-51", "project": "Backoffice", "type": "Epic", "summary": "Novos Headers", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Em DEV", "stage": "Em dev", "tipo": "Inovação", "parent": null, "created": "06/08/2026 10:24:42", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "BACK-50", "project": "Backoffice", "type": "Epic", "summary": "[v2] Onboarding GetDemo", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Backlog", "stage": "Backlog", "tipo": "Melhoria", "parent": null, "created": "06/08/2026 09:41:56", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "BACK-46", "project": "Backoffice", "type": "Epic", "summary": "GetDemo", "assignee": "João Gonzalez", "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Em rollout", "stage": "Em rollout", "tipo": "Inovação", "parent": null, "created": "15/06/2026 10:44:41", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "BACK-45", "project": "Backoffice", "type": "Epic", "summary": "Onboarding", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Done", "stage": "Concluído", "tipo": "Inovação", "parent": null, "created": "18/06/2026 10:35:33", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}, {"key": "BACK-35", "project": "Backoffice", "type": "Epic", "summary": "[V1] Backoffice seller", "assignee": "João Gonzalez", "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Produto", "stage": null, "tipo": "Sustentação", "parent": null, "created": "23/07/2026 10:20:34", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": "Dar ao time de suporte uma ferramenta interna com autonomia e rastreabilidade para ações de conta do STLSeller (senha, crédito, assinatura), com log de auditoria e visibilidade das integrações de marketplace."}, {"key": "BACK-2", "project": "Backoffice", "type": "Epic", "summary": "Melhorias no Model Shop", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Done", "stage": "Concluído", "tipo": "Sustentação", "parent": null, "created": "16/03/2026 16:01:40", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": "Evoluir o backoffice do Model Shop para reduzir trabalho manual no cadastro/publicação de produtos, começando por suportar arquivos grandes para produtos de resina e cosplay."}, {"key": "ACADEMY-45", "project": "STL Academy", "type": "Epic", "summary": "Ambiente novo (Cursos livres, ao vivo, mentorias)", "assignee": null, "reporter": "João Gonzalez", "developer": null, "tester": null, "status": "Backlog", "stage": "Backlog", "tipo": "Inovação", "parent": null, "created": "05/08/2026 10:13:53", "dataInicio": null, "dataConcl": null, "intercom": false, "epic": true, "priority": "Medium", "resumo": null}];
@@ -182,70 +183,257 @@ function DataProvider({ children }) {
   // criados à mão) mora aqui, não em RoadmapScreen, porque o drawer de épico
   // é o mesmo em Projetos e Roadmap — as duas telas precisam ler e escrever
   // o mesmo estado pra abrir/editar o card der onde vier.
+  //
+  // A fonte da verdade é o servidor (`/api/roadmap`, Redis): todo mundo vê as
+  // mesmas mudanças. `roadmapMode` diz de onde o estado veio:
+  //   loading         — ainda buscando
+  //   server          — compartilhado; cada mudança vai pro servidor como diff
+  //   needs-migration — servidor ainda vazio; o super envia os dados deste navegador
+  //   local           — servidor indisponível (ex.: dev sem Redis): só neste navegador
   const [positions, setPositions] = useState({});
   const [customEpics, setCustomEpics] = useState([]);
   const [prioOrder, setPrioOrder] = useState([]);
   const [filaProdutoOrder, setFilaProdutoOrder] = useState([]);
   const [filaUxOrder, setFilaUxOrder] = useState([]);
   const [roadmapSaving, setRoadmapSaving] = useState(false);
+  const [roadmapMode, setRoadmapMode] = useState("loading");
+  const [roadmapError, setRoadmapError] = useState(null);
+  const [roadmapLoaded, setRoadmapLoaded] = useState(false);
+  const [localSummary, setLocalSummary] = useState(null);
 
-  useEffect(() => {
-    (async () => {
-      let savedPositions = {};
-      let savedCustom = [];
-      let savedPrioOrder = [];
-      let savedFilaProdutoOrder = [];
-      let savedFilaUxOrder = [];
-      try {
-        const res = await storage.get(ROADMAP_STORAGE_KEY, true);
-        if (res && res.value) {
-          const saved = JSON.parse(res.value);
-          savedPositions = saved.positions || {};
-          savedCustom = saved.customEpics || [];
-          savedPrioOrder = saved.prioOrder || [];
+  const roadmapModeRef = useRef("loading");
+  const serverRef = useRef({ state: null, rev: 0, snapshotAt: null });
+  const pendingRef = useRef(0);
+  const projetosStatusRef = useRef({});
+  const latestRef = useRef({});
+  latestRef.current = { positions, customEpics, prioOrder, filaProdutoOrder, filaUxOrder, lastSync, canWriteShared };
+
+  const setMode = useCallback((m) => { roadmapModeRef.current = m; setRoadmapMode(m); }, []);
+
+  const adoptState = useCallback((st) => {
+    setPositions(st.positions || {});
+    setCustomEpics(st.customEpics || []);
+    setPrioOrder(st.prioOrder || []);
+    setFilaProdutoOrder(st.filaProdutoOrder || []);
+    setFilaUxOrder(st.filaUxOrder || []);
+  }, []);
+
+  const readLocalRoadmap = useCallback(async () => {
+    try {
+      const res = await storage.get(ROADMAP_STORAGE_KEY);
+      if (res && res.value) {
+        const saved = JSON.parse(res.value);
+        return {
+          positions: saved.positions || {},
+          customEpics: saved.customEpics || [],
+          prioOrder: saved.prioOrder || [],
           // migração: a fila era única (Produto e UX misturados); dado antigo
           // vira a fila de Produto, e UX começa vazia.
-          savedFilaProdutoOrder = saved.filaProdutoOrder || saved.filaOrder || [];
-          savedFilaUxOrder = saved.filaUxOrder || [];
-        }
-      } catch (e) {}
-      setPrioOrder(savedPrioOrder);
-      setFilaProdutoOrder(savedFilaProdutoOrder);
-      setFilaUxOrder(savedFilaUxOrder);
+          filaProdutoOrder: saved.filaProdutoOrder || saved.filaOrder || [],
+          filaUxOrder: saved.filaUxOrder || [],
+        };
+      }
+    } catch (e) {}
+    return null;
+  }, []);
 
-      let projetosStatus = {};
+  // Espelho local: no modo servidor guarda a última versão vista, e é dele que o
+  // super consegue re-enviar tudo se um dia o Redis for zerado.
+  const writeLocalRoadmap = useCallback(async (st) => {
+    try { await storage.set(ROADMAP_STORAGE_KEY, JSON.stringify(st)); } catch (e) {}
+  }, []);
+
+  const resyncFromServer = useCallback(async () => {
+    const r = await roadmapStore.fetchState();
+    if (r.kind === "ok") {
+      serverRef.current = { state: r.state, rev: r.rev, snapshotAt: r.snapshotAt };
+      adoptState(r.state);
+      writeLocalRoadmap(r.state);
+    }
+  }, [adoptState, writeLocalRoadmap]);
+
+  // Dados da planilha (épicos/tarefas do último "Atualizar") também são do
+  // servidor: sem isso só o navegador do super veria o que ele sincronizou.
+  const applySnapshot = useCallback(async (snapshotAt) => {
+    if (!snapshotAt || latestRef.current.lastSync === snapshotAt) return;
+    const snap = await roadmapStore.fetchSnapshot();
+    if (!snap) return;
+    setEpics(withResumoFallback(snap.epics));
+    setTasks(snap.tasks);
+    setLastSync(snap.syncedAt);
+    try { await storage.set(DATA_OVERRIDE_KEY, JSON.stringify({ epics: snap.epics, tasks: snap.tasks, syncedAt: snap.syncedAt })); } catch (e) {}
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
       try {
-        const res2 = await storage.get("fila-projetos-order-v2", true);
-        if (res2 && res2.value) {
-          const saved2 = JSON.parse(res2.value);
-          projetosStatus = saved2.status || {};
-        }
+        const res2 = await storage.get("fila-projetos-order-v2");
+        if (res2 && res2.value) projetosStatusRef.current = JSON.parse(res2.value).status || {};
       } catch (e) {}
 
-      setCustomEpics(savedCustom);
-      setPositions((prev) => {
-        const next = { ...prev, ...savedPositions };
-        let changed = false;
-        epics.forEach((ep) => {
-          if (Object.prototype.hasOwnProperty.call(savedPositions, ep.key)) return; // respeita escolha manual, mesmo remoção explícita
-          const status = projetosStatus[ep.key] || ep.status;
-          if (status === "Pronto P/ DEV") {
-            next[ep.key] = { roadmapLane: ep.project, startWeek: 0, durationWeeks: 2 };
-            changed = true;
-          }
-        });
-        if (changed) persistRoadmap(next, savedCustom, savedPrioOrder, savedFilaProdutoOrder, savedFilaUxOrder);
-        return next;
-      });
+      const r = await roadmapStore.fetchState();
+      if (!alive) return;
+      if (r.kind === "ok") {
+        serverRef.current = { state: r.state, rev: r.rev, snapshotAt: r.snapshotAt };
+        adoptState(r.state);
+        writeLocalRoadmap(r.state);
+        setMode("server");
+        applySnapshot(r.snapshotAt);
+      } else if (r.kind === "empty") {
+        // Servidor ainda sem Roadmap: nada é enviado sozinho. O super vê o que
+        // este navegador tem e escolhe enviar (ou importa um backup).
+        const local = await readLocalRoadmap();
+        const hasLocal = !!local && (Object.keys(local.positions).length > 0 || local.customEpics.length > 0);
+        setLocalSummary(hasLocal ? summarizeRoadmap(local) : null);
+        adoptState(hasLocal && latestRef.current.canWriteShared ? local : emptyRoadmap());
+        setMode("needs-migration");
+        applySnapshot(r.snapshotAt);
+      } else {
+        // servidor indisponível (ex.: dev local sem Redis) — comportamento antigo
+        const local = await readLocalRoadmap();
+        adoptState(local || emptyRoadmap());
+        setMode("local");
+      }
+      setRoadmapLoaded(true);
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [epics]);
+    return () => { alive = false; };
+  }, [adoptState, applySnapshot, readLocalRoadmap, setMode, writeLocalRoadmap]);
+
+  // Quem abre o app depois vê o que os outros mudaram: relê ao voltar pra aba e
+  // a cada 45s. Não aplica nada enquanto há gravação em andamento.
+  const refreshFromServer = useCallback(async () => {
+    const mode = roadmapModeRef.current;
+    if ((mode !== "server" && mode !== "needs-migration") || pendingRef.current > 0) return;
+    const r = await roadmapStore.fetchState();
+    if (pendingRef.current > 0) return;
+    if (r.kind === "ok") {
+      if (mode === "needs-migration") setMode("server"); // alguém migrou
+      if (r.rev !== serverRef.current.rev || mode === "needs-migration") {
+        serverRef.current = { state: r.state, rev: r.rev, snapshotAt: r.snapshotAt };
+        adoptState(r.state);
+        writeLocalRoadmap(r.state);
+      }
+      applySnapshot(r.snapshotAt);
+    } else if (r.kind === "empty") {
+      applySnapshot(r.snapshotAt);
+    }
+  }, [adoptState, applySnapshot, setMode, writeLocalRoadmap]);
+
+  useEffect(() => {
+    if (!roadmapLoaded) return undefined;
+    const onVisible = () => { if (document.visibilityState === "visible") refreshFromServer(); };
+    const id = setInterval(refreshFromServer, 45000);
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+    };
+  }, [roadmapLoaded, refreshFromServer]);
+
+  useEffect(() => {
+    if (!roadmapError) return undefined;
+    const id = setTimeout(() => setRoadmapError(null), 12000);
+    return () => clearTimeout(id);
+  }, [roadmapError]);
 
   const persistRoadmap = useCallback(async (nextPositions, nextCustom, nextPrioOrder, nextFilaProdutoOrder, nextFilaUxOrder) => {
+    const next = { positions: nextPositions, customEpics: nextCustom, prioOrder: nextPrioOrder, filaProdutoOrder: nextFilaProdutoOrder, filaUxOrder: nextFilaUxOrder };
+    const mode = roadmapModeRef.current;
+    if (mode === "local") {
+      setRoadmapSaving(true);
+      await writeLocalRoadmap(next);
+      setRoadmapSaving(false);
+      return;
+    }
+    if (mode !== "server") {
+      setRoadmapError("O Roadmap ainda não está no servidor — veja o aviso no topo da tela antes de editar.");
+      return;
+    }
+    const diff = diffRoadmap(serverRef.current.state, next);
+    if (isEmptyDiff(diff)) return;
+
+    pendingRef.current += 1;
     setRoadmapSaving(true);
-    try { await storage.set(ROADMAP_STORAGE_KEY, JSON.stringify({ positions: nextPositions, customEpics: nextCustom, prioOrder: nextPrioOrder, filaProdutoOrder: nextFilaProdutoOrder, filaUxOrder: nextFilaUxOrder }), true); } catch (e) {}
-    setRoadmapSaving(false);
-  }, []);
+    const r = await roadmapStore.patch(diff);
+    pendingRef.current -= 1;
+    if (r.ok) {
+      serverRef.current = { ...serverRef.current, state: r.state, rev: r.rev };
+      setRoadmapError(null);
+      // traz junto o que outras pessoas mudaram nesse meio-tempo
+      if (pendingRef.current === 0) { adoptState(r.state); writeLocalRoadmap(r.state); }
+    } else {
+      setRoadmapError(r.message || "Não foi possível salvar no servidor.");
+      if (pendingRef.current === 0) await resyncFromServer(); // volta ao que o servidor tem
+    }
+    if (pendingRef.current === 0) setRoadmapSaving(false);
+  }, [adoptState, resyncFromServer, writeLocalRoadmap]);
+
+  // Colocação automática no Gantt: épico "Pronto P/ DEV" sem posição salva entra
+  // na camada do produto, semana 0. No servidor só o super grava isso (e só se a
+  // chave ainda não existe, pra nunca atropelar uma escolha manual de outra pessoa).
+  useEffect(() => {
+    if (!roadmapLoaded) return;
+    const mode = roadmapModeRef.current;
+    if (mode === "loading" || mode === "needs-migration") return;
+    if (mode === "server" && !latestRef.current.canWriteShared) return;
+    const cur = latestRef.current;
+    const adds = {};
+    epics.forEach((ep) => {
+      if (Object.prototype.hasOwnProperty.call(cur.positions, ep.key)) return; // respeita escolha manual, mesmo remoção explícita
+      const status = projetosStatusRef.current[ep.key] || ep.status;
+      if (status === "Pronto P/ DEV") adds[ep.key] = { roadmapLane: ep.project, startWeek: 0, durationWeeks: 2 };
+    });
+    if (!Object.keys(adds).length) return;
+    setPositions((prev) => ({ ...adds, ...prev }));
+    if (mode === "local") {
+      persistRoadmap({ ...adds, ...cur.positions }, cur.customEpics, cur.prioOrder, cur.filaProdutoOrder, cur.filaUxOrder);
+      return;
+    }
+    (async () => {
+      pendingRef.current += 1;
+      const r = await roadmapStore.patch({ positionsIfAbsent: adds });
+      pendingRef.current -= 1;
+      if (r.ok) {
+        serverRef.current = { ...serverRef.current, state: r.state, rev: r.rev };
+        if (pendingRef.current === 0) { adoptState(r.state); writeLocalRoadmap(r.state); }
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [epics, roadmapLoaded, roadmapMode]);
+
+  // Primeira carga do servidor (só super): usa o Roadmap deste navegador, ou um
+  // backup .json importado, e leva junto os dados da planilha já sincronizados.
+  const migrateToServer = useCallback(async (stateOverride) => {
+    if (!latestRef.current.canWriteShared) return { ok: false, message: "Só o superusuário pode migrar o Roadmap." };
+    const state = stateOverride || (await readLocalRoadmap());
+    if (!state) return { ok: false, message: "Não há dados do Roadmap neste navegador." };
+    let snapshot = null;
+    try {
+      const res = await storage.get(DATA_OVERRIDE_KEY);
+      if (res && res.value) {
+        const o = JSON.parse(res.value);
+        if (Array.isArray(o.epics) && Array.isArray(o.tasks)) snapshot = { epics: o.epics, tasks: o.tasks, syncedAt: o.syncedAt };
+      }
+    } catch (e) {}
+    const r = await roadmapStore.seed(state, snapshot);
+    if (!r.ok) {
+      if (r.code === "already-initialized") {
+        await resyncFromServer();
+        setMode("server");
+        return { ok: false, message: "O Roadmap já estava no servidor — carreguei a versão de lá." };
+      }
+      return { ok: false, message: r.message };
+    }
+    serverRef.current = { state: r.state, rev: r.rev, snapshotAt: r.snapshotAt };
+    adoptState(r.state);
+    writeLocalRoadmap(r.state);
+    setMode("server");
+    setRoadmapError(null);
+    return { ok: true };
+  }, [adoptState, readLocalRoadmap, resyncFromServer, setMode, writeLocalRoadmap]);
 
   const allEpicsWithCustom = useMemo(() => [...epics, ...customEpics], [epics, customEpics]);
   const byKeyWithCustom = useMemo(() => Object.fromEntries(allEpicsWithCustom.map((e) => [e.key, e])), [allEpicsWithCustom]);
@@ -329,6 +517,12 @@ function DataProvider({ children }) {
       setLastSync(syncedAt);
       setSyncStatus("idle");
       try { await storage.set(DATA_OVERRIDE_KEY, JSON.stringify({ epics: nextEpics, tasks: nextTasks, syncedAt }), true); } catch (e) {}
+      const mode = roadmapModeRef.current;
+      if (mode === "server" || mode === "needs-migration") {
+        const pub = await roadmapStore.putSnapshot({ epics: nextEpics, tasks: nextTasks, syncedAt });
+        if (pub.ok) serverRef.current = { ...serverRef.current, snapshotAt: syncedAt };
+        else setRoadmapError(`Atualizou aqui, mas não conseguiu compartilhar com os outros usuários: ${pub.message}`);
+      }
       return { ok: true };
     } catch (e) {
       setSyncStatus("error");
@@ -337,15 +531,19 @@ function DataProvider({ children }) {
     }
   }, [canWriteShared]);
 
+  const clearRoadmapError = useCallback(() => setRoadmapError(null), []);
+
   const value = useMemo(() => ({
     epics, tasks, setEpics, setTasks, syncFromSheet, lastSync, syncStatus, syncError,
     positions, setPositions, customEpics, setCustomEpics, prioOrder, setPrioOrder,
     filaProdutoOrder, setFilaProdutoOrder, filaUxOrder, setFilaUxOrder,
     roadmapSaving, persistRoadmap, updatePosition, addEpic, deleteEpic, saveDrawer, roadmapWeeks,
+    roadmapMode, roadmapError, clearRoadmapError, localSummary, migrateToServer,
   }), [
     epics, tasks, syncFromSheet, lastSync, syncStatus, syncError,
     positions, customEpics, prioOrder, filaProdutoOrder, filaUxOrder,
     roadmapSaving, persistRoadmap, updatePosition, addEpic, deleteEpic, saveDrawer, roadmapWeeks,
+    roadmapMode, roadmapError, clearRoadmapError, localSummary, migrateToServer,
   ]);
   return <DataCtx.Provider value={value}>{children}</DataCtx.Provider>;
 }
@@ -1486,6 +1684,7 @@ function RoadmapScreen() {
     positions, setPositions, customEpics, setCustomEpics, prioOrder, setPrioOrder,
     filaProdutoOrder, setFilaProdutoOrder, filaUxOrder, setFilaUxOrder,
     roadmapSaving: saving, persistRoadmap: persist, updatePosition, addEpic: addEpicShared, deleteEpic: deleteEpicShared, saveDrawer: saveDrawerShared,
+    roadmapMode, roadmapError, clearRoadmapError, localSummary, migrateToServer,
   } = useData();
   // Único lugar onde o admin escreve: cria card e mexe NOS DELE (posição no
   // Gantt, fila, nome, duração, exclusão). Épico da planilha não tem dono, então
@@ -1494,6 +1693,35 @@ function RoadmapScreen() {
   const { initiatives, createInitiative, deleteInitiative, assignEpicToInitiative } = useInitiatives();
   const [weekCount, setWeekCount] = useState(13);
   const [openKey, setOpenKey] = useState(null);
+  const [migrating, setMigrating] = useState(false);
+  const [migrationMsg, setMigrationMsg] = useState(null);
+  const importInputRef = useRef(null);
+  const runMigration = async (stateOverride) => {
+    setMigrating(true);
+    setMigrationMsg(null);
+    const r = await migrateToServer(stateOverride);
+    setMigrating(false);
+    if (!r.ok) setMigrationMsg(r.message);
+  };
+  const onImportFile = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    try {
+      const parsed = JSON.parse(await file.text());
+      const st = parsed && parsed.positions !== undefined ? parsed : null;
+      if (!st) throw new Error("formato");
+      await runMigration({
+        positions: st.positions || {},
+        customEpics: st.customEpics || [],
+        prioOrder: st.prioOrder || [],
+        filaProdutoOrder: st.filaProdutoOrder || st.filaOrder || [],
+        filaUxOrder: st.filaUxOrder || [],
+      });
+    } catch (err) {
+      setMigrationMsg("Arquivo inválido: use o JSON de backup do Roadmap (com positions, customEpics e as filas).");
+    }
+  };
   const [showAddInitiative, setShowAddInitiative] = useState(false);
   const [newInitName, setNewInitName] = useState("");
   const [newInitProduct, setNewInitProduct] = useState(PRODUCTS[0]);
@@ -1810,6 +2038,45 @@ function RoadmapScreen() {
           </div>
         </div>
       </div>
+
+      {(roadmapMode === "needs-migration" || roadmapMode === "local" || roadmapError) && (
+        <div style={{ borderBottom: `1px solid ${T.border1}`, padding: "10px 24px", display: "flex", flexDirection: "column", gap: 8, fontFamily: "'Inter Tight', sans-serif", fontSize: 12.5 }}>
+          {roadmapMode === "needs-migration" && canWriteShared && (
+            <div style={{ borderRadius: 10, border: "1px solid #d1700055", background: "#d170000d", padding: "10px 12px", color: T.ink0 }}>
+              <p style={{ fontWeight: 600 }}>O Roadmap ainda está salvo só no navegador — por isso cada pessoa vê uma versão diferente.</p>
+              <p style={{ marginTop: 3, color: T.ink1 }}>
+                {localSummary
+                  ? `Este navegador tem ${localSummary.positions} posições e ${localSummary.customEpics} épicos criados à mão. Se for a versão certa, envie para o servidor: a partir daí todos veem e editam a mesma coisa.`
+                  : "Este navegador não tem dados do Roadmap. Abra o app no navegador onde estavam seus dados, ou importe um backup .json."}
+              </p>
+              <div className="flex items-center" style={{ gap: 8, marginTop: 8 }}>
+                {localSummary && (
+                  <button disabled={migrating} onClick={() => runMigration()} style={{ borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 600, border: "none", cursor: migrating ? "default" : "pointer", background: "#5166e6", color: "#fff", opacity: migrating ? 0.7 : 1 }}>
+                    {migrating ? "Enviando…" : "Enviar os dados deste navegador"}
+                  </button>
+                )}
+                <button disabled={migrating} onClick={() => importInputRef.current && importInputRef.current.click()} style={{ borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 500, border: `1px solid ${T.border2}`, cursor: migrating ? "default" : "pointer", background: T.bg1, color: T.ink0 }}>
+                  Importar backup (.json)
+                </button>
+                <input ref={importInputRef} type="file" accept="application/json,.json" onChange={onImportFile} style={{ display: "none" }} />
+              </div>
+              {migrationMsg && <p style={{ marginTop: 6, color: "#e08585" }}>{migrationMsg}</p>}
+            </div>
+          )}
+          {roadmapMode === "needs-migration" && !canWriteShared && (
+            <p style={{ color: T.ink1 }}>O Roadmap ainda não foi migrado para o servidor — aguarde o superusuário. Por enquanto as mudanças não são compartilhadas.</p>
+          )}
+          {roadmapMode === "local" && (
+            <p style={{ color: "#d17000" }}>Servidor do Roadmap indisponível: as mudanças ficam só neste navegador e ninguém mais as vê.</p>
+          )}
+          {roadmapError && (
+            <p style={{ color: "#e08585" }}>
+              {roadmapError}{" "}
+              <button onClick={clearRoadmapError} style={{ background: "none", border: "none", color: T.ink1, cursor: "pointer", textDecoration: "underline", fontSize: 12 }}>fechar</button>
+            </p>
+          )}
+        </div>
+      )}
 
       <div className="flex" style={{ padding: "16px 24px", borderBottom: `1px solid ${T.border1}` }}>
         {/* Painel fixo (produto + iniciativa) — nunca rola horizontalmente, então
