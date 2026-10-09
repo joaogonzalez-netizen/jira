@@ -112,7 +112,8 @@ export async function fetchSheetRows(config) {
   return rowsFromValues(body.values);
 }
 
-export async function handleSync(config) {
-  const rows = await fetchSheetRows(config);
+export async function handleSync(config, overrideSheetId) {
+  const effective = overrideSheetId ? { ...config, sheetId: overrideSheetId } : config;
+  const rows = await fetchSheetRows(effective);
   return { status: 200, body: rows };
 }

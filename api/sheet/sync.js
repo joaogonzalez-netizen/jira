@@ -1,7 +1,9 @@
 import { configError, handleSync, loadSheetConfig } from "../../src/server/sheet-core.js";
+import { loadConfig as loadKvConfig, readSheetIdOverride } from "../../src/server/sheet-config-core.js";
 import { sendJson } from "../_lib/respond.js";
 
 const config = loadSheetConfig(process.env);
+const kvConfig = loadKvConfig(process.env);
 
 export default async function handler(req, res) {
   if (req.method !== "GET") {
@@ -11,7 +13,8 @@ export default async function handler(req, res) {
   if (misconfigured) return sendJson(res, misconfigured);
 
   try {
-    return sendJson(res, await handleSync(config));
+    const override = await readSheetIdOverride(kvConfig);
+    return sendJson(res, await handleSync(config, override));
   } catch (e) {
     console.error("[sheet/sync]", e);
     return sendJson(res, { status: 500, body: { message: e.message || "Erro interno" } });

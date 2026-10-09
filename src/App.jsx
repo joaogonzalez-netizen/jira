@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { ChevronUp, ChevronDown, ChevronRight, ChevronLeft, X, BarChart3, Sun, Moon, Calendar, Plus, Minus, RefreshCw, LogOut, Lock, Layers, Trash2, Users } from "lucide-react";
+import { ChevronUp, ChevronDown, ChevronRight, ChevronLeft, X, BarChart3, Sun, Moon, Calendar, Plus, Minus, RefreshCw, LogOut, Lock, Layers, Trash2, Users, Settings } from "lucide-react";
 import { BarChart, Bar, LineChart, Line, PieChart, Pie, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell, LabelList } from "recharts";
 import storage from "./lib/storage";
 import { roadmapStore, diffRoadmap, isEmptyDiff, summarizeRoadmap, emptyRoadmap } from "./lib/roadmap-store";
@@ -2545,6 +2545,7 @@ function AppShell() {
   const { syncFromSheet, lastSync, syncStatus, syncError } = useData();
   const { user, role, logout, canWriteShared } = useAuth();
   const [menu, setMenu] = useState("roadmap");
+  const [showSheetConfig, setShowSheetConfig] = useState(false);
 
   return (
     <div style={{ minHeight: "100vh", background: T.bg0, color: T.ink0, fontFamily: "'Inter Tight', sans-serif", display: "flex", flexDirection: "column", overflowX: "hidden" }}>
@@ -2598,6 +2599,14 @@ function AppShell() {
               {syncStatus === "loading" ? "Atualizando…" : "Atualizar"}
             </button>
           )}
+          {canWriteShared && (
+            <button
+              onClick={() => setShowSheetConfig(true)} title="Configurar qual planilha alimenta este board"
+              style={{ display: "flex", alignItems: "center", gap: 6, borderRadius: 8, padding: "6px 10px", border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink1, fontSize: 12, fontWeight: 500, cursor: "pointer", fontFamily: "'Inter Tight', sans-serif" }}
+            >
+              <Settings size={13} /> Configurações
+            </button>
+          )}
           <button
             onClick={toggleTheme}
             style={{ display: "flex", alignItems: "center", gap: 6, borderRadius: 8, padding: "6px 10px", border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink1, fontSize: 12, fontWeight: 500, cursor: "pointer", fontFamily: "'Inter Tight', sans-serif" }}
@@ -2627,6 +2636,119 @@ function AppShell() {
       </div>
 
       {menu === "iniciativas" ? <IniciativasScreen /> : menu === "analises" ? <AnaliseScreen /> : menu === "desenvolvedores" ? <DevelopersScreen /> : <RoadmapScreen />}
+
+      {showSheetConfig && <SheetConfigModal onClose={() => setShowSheetConfig(false)} />}
+    </div>
+  );
+}
+
+/* =====================================================================
+   CONFIGURAÇÕES — qual planilha alimenta este board (pra reusar o projeto
+   em outro desenvolvimento sem precisar de redeploy)
+   ===================================================================== */
+
+function SheetConfigModal({ onClose }) {
+  const { T } = useTheme();
+  const { syncFromSheet } = useData();
+  const [loading, setLoading] = useState(true);
+  const [sheetId, setSheetId] = useState(null);
+  const [serviceAccountEmail, setServiceAccountEmail] = useState(null);
+  const [input, setInput] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+  const [savedMsg, setSavedMsg] = useState(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch("/api/sheet/config", { credentials: "same-origin" });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
+        setSheetId(data.sheetId || null);
+        setServiceAccountEmail(data.serviceAccountEmail || null);
+        setInput(data.sheetId || "");
+      } catch (e) {
+        setError(e.message || "Não foi possível carregar a configuração atual.");
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  const onSave = async () => {
+    const value = input.trim();
+    if (!value) { setError("Cole o ID ou o link da planilha."); return; }
+    if (!window.confirm("Trocar a planilha muda os dados que TODOS os usuários veem (épicos, tarefas e Análises) assim que a sincronização terminar.\n\nA planilha nova precisa estar no mesmo formato de colunas e compartilhada com a conta de serviço. Continuar?")) return;
+    setSaving(true);
+    setError(null);
+    setSavedMsg(null);
+    try {
+      const res = await fetch("/api/sheet/config", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ sheetId: value }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
+      setSheetId(data.sheetId);
+      setInput(data.sheetId);
+      setSavedMsg("Planilha salva — testando sincronização…");
+      const r = await syncFromSheet();
+      setSavedMsg(r.ok ? "Planilha salva e sincronizada com sucesso." : `Planilha salva, mas a sincronização falhou: ${r.reason || ""}`);
+    } catch (e) {
+      setError(e.message || "Não foi possível salvar.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: T.bg1, border: `1px solid ${T.border2}`, borderRadius: 12, padding: 20, width: 420, boxShadow: T.cardShadow }}>
+        <h3 style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", fontWeight: 700, fontSize: 15, color: T.ink0, marginBottom: 4 }}>Planilha de dados</h3>
+        <p style={{ fontSize: 12, color: T.ink1, marginBottom: 14, fontFamily: "'Inter Tight', sans-serif" }}>
+          Troque a planilha que este board sincroniza — útil pra reaproveitar o projeto em outro desenvolvimento, sem precisar mexer em código.
+        </p>
+
+        {loading ? (
+          <p style={{ fontSize: 12.5, color: T.ink2, fontFamily: "'Inter Tight', sans-serif" }}>Carregando…</p>
+        ) : (
+          <>
+            <p style={{ fontSize: 12, fontWeight: 500, color: T.ink1, marginBottom: 6, fontFamily: "'Inter Tight', sans-serif" }}>ID ou link da planilha</p>
+            <input
+              autoFocus value={input} onChange={(e) => setInput(e.target.value)}
+              placeholder="https://docs.google.com/spreadsheets/d/..."
+              style={{ width: "100%", borderRadius: 8, border: `1px solid ${T.border2}`, background: T.bg0, color: T.ink0, fontSize: 13, padding: "8px 10px", fontFamily: "'Inter Tight', sans-serif" }}
+            />
+            <p style={{ marginTop: 6, fontSize: 11, color: T.ink2, fontFamily: "'Inter Tight', sans-serif", wordBreak: "break-all" }}>
+              {sheetId ? `Em uso hoje: ${sheetId}` : "Em uso hoje: a planilha padrão configurada no servidor."}
+            </p>
+
+            <div style={{ marginTop: 14, borderRadius: 8, border: `1px solid ${T.border2}`, background: T.bg0, padding: "10px 12px" }}>
+              <p style={{ fontSize: 11.5, color: T.ink1, fontFamily: "'Inter Tight', sans-serif", lineHeight: 1.5 }}>
+                Antes de salvar, compartilhe a planilha (botão "Compartilhar") com este e-mail como <b>Leitor</b>:
+              </p>
+              <p style={{ marginTop: 4, fontSize: 11.5, fontWeight: 600, color: T.ink0, fontFamily: "'Inter Tight', sans-serif", wordBreak: "break-all" }}>
+                {serviceAccountEmail || "— (GOOGLE_SERVICE_ACCOUNT_JSON não configurado)"}
+              </p>
+            </div>
+
+            {error && <p style={{ marginTop: 10, fontSize: 12, color: "#e08585", fontFamily: "'Inter Tight', sans-serif" }}>{error}</p>}
+            {savedMsg && !error && <p style={{ marginTop: 10, fontSize: 12, color: "#00aa6c", fontFamily: "'Inter Tight', sans-serif" }}>{savedMsg}</p>}
+
+            <div className="flex items-center justify-between" style={{ marginTop: 20 }}>
+              <button onClick={onClose} style={{ fontSize: 12, color: T.ink1, background: "none", border: "none", cursor: "pointer", fontFamily: "'Inter Tight', sans-serif" }}>Fechar</button>
+              <button
+                onClick={onSave} disabled={saving}
+                style={{ borderRadius: 8, padding: "7px 14px", fontSize: 12.5, fontWeight: 600, border: "none", cursor: saving ? "default" : "pointer", background: "#5166e6", color: "#fff", fontFamily: "'Inter Tight', sans-serif", opacity: saving ? 0.7 : 1 }}
+              >
+                {saving ? "Salvando…" : "Salvar e sincronizar"}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }
