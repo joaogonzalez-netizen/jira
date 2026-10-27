@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { ChevronUp, ChevronDown, ChevronRight, ChevronLeft, X, BarChart3, Sun, Moon, Calendar, Plus, Minus, RefreshCw, LogOut, Lock, Layers, Trash2, Users, Settings } from "lucide-react";
+import { ChevronUp, ChevronDown, ChevronRight, ChevronLeft, X, BarChart3, Sun, Moon, Calendar, Plus, Minus, RefreshCw, LogOut, Lock, Layers, Trash2, Users, Settings, Sparkles, Square, Target, Flag } from "lucide-react";
 import { BarChart, Bar, LineChart, Line, PieChart, Pie, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell, LabelList } from "recharts";
 import storage from "./lib/storage";
 import { roadmapStore, diffRoadmap, isEmptyDiff, summarizeRoadmap, emptyRoadmap, applyEpicOverrides, mergeCustomEpics } from "./lib/roadmap-store";
@@ -2848,6 +2848,339 @@ function IniciativasScreen() {
   );
 }
 
+/* =====================================================================
+   PLANEJAMENTO — Features (épicos do Jira), Objetivos e Releases.
+   Features só lê o que já vem da planilha/Jira; Objetivos e Releases são
+   camadas próprias do app, guardadas em /api/planning (Redis).
+   ===================================================================== */
+
+const JIRA_BROWSE = "https://joaogonzalezstlflix.atlassian.net/browse/";
+const isEpicDone = (e) => e.status === "Done" || e.stage === "Concluído";
+
+const PlanningCtx = createContext(null);
+function usePlanning() { return useContext(PlanningCtx); }
+
+function PlanningProvider({ children }) {
+  const { canCreateCard } = useAuth();
+  const [items, setItems] = useState({ objectives: [], releases: [] });
+  const [status, setStatus] = useState("loading"); // loading | idle | error
+  const [error, setError] = useState(null);
+
+  const reload = useCallback(async () => {
+    setStatus("loading");
+    try {
+      const [objectives, releases] = await Promise.all(["objectives", "releases"].map(async (kind) => {
+        const res = await fetch(`/api/planning?kind=${kind}`, { credentials: "same-origin" });
+        const data = await res.json().catch(() => []);
+        if (!res.ok) throw new Error((data && data.message) || `HTTP ${res.status}`);
+        return Array.isArray(data) ? data : [];
+      }));
+      setItems({ objectives, releases });
+      setStatus("idle");
+      setError(null);
+    } catch (e) {
+      setStatus("error");
+      setError(e.message);
+    }
+  }, []);
+
+  useEffect(() => { reload(); }, [reload]);
+
+  const send = useCallback(async (method, url, body) => {
+    try {
+      const res = await fetch(url, {
+        method, credentials: "same-origin",
+        headers: body ? { "Content-Type": "application/json" } : undefined,
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      const data = await res.json().catch(() => ({}));
+      return res.ok ? { ok: true, data } : { ok: false, message: data.message || `Erro ${res.status}` };
+    } catch (e) {
+      return { ok: false, message: "Sem conexão com o servidor" };
+    }
+  }, []);
+
+  const create = useCallback(async (kind, fields) => {
+    if (!canCreateCard) return { ok: false };
+    const r = await send("POST", "/api/planning", { kind, ...fields });
+    if (r.ok) setItems((p) => ({ ...p, [kind]: [...p[kind], r.data] }));
+    return r;
+  }, [canCreateCard, send]);
+
+  const update = useCallback(async (kind, id, patch) => {
+    if (!canCreateCard) return { ok: false };
+    const r = await send("PATCH", "/api/planning", { kind, id, ...patch });
+    if (r.ok) setItems((p) => ({ ...p, [kind]: p[kind].map((i) => (i.id === id ? r.data : i)) }));
+    return r;
+  }, [canCreateCard, send]);
+
+  const remove = useCallback(async (kind, id) => {
+    if (!canCreateCard) return { ok: false };
+    const r = await send("DELETE", `/api/planning?kind=${kind}&id=${encodeURIComponent(id)}`);
+    if (r.ok) setItems((p) => ({ ...p, [kind]: p[kind].filter((i) => i.id !== id) }));
+    return r;
+  }, [canCreateCard, send]);
+
+  const value = useMemo(
+    () => ({ items, status, error, reload, create, update, remove }),
+    [items, status, error, reload, create, update, remove]
+  );
+  return <PlanningCtx.Provider value={value}>{children}</PlanningCtx.Provider>;
+}
+
+function PageTitle({ title, sub, children }) {
+  const { T } = useTheme();
+  return (
+    <div className="flex items-center justify-between" style={{ marginBottom: 16, gap: 12 }}>
+      <div>
+        <h1 style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", fontWeight: 700, fontSize: 18, color: T.ink0, margin: 0 }}>{title}</h1>
+        {sub && <p style={{ fontSize: 12, color: T.ink2, margin: "2px 0 0" }}>{sub}</p>}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function ProgressBar({ done, total }) {
+  const { T } = useTheme();
+  const pct = total ? Math.round((done / total) * 100) : 0;
+  return (
+    <div className="flex items-center" style={{ gap: 8 }}>
+      <div style={{ flex: 1, height: 6, borderRadius: 999, background: T.bg2, overflow: "hidden" }}>
+        <div style={{ width: `${pct}%`, height: "100%", background: "#00aa6c" }} />
+      </div>
+      <span style={{ fontSize: 11, color: T.ink1, whiteSpace: "nowrap" }}>{total ? `${done}/${total} · ${pct}%` : "sem épicos"}</span>
+    </div>
+  );
+}
+
+const fieldStyle = (T) => ({ borderRadius: 8, border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink0, fontSize: 12.5, padding: "6px 8px", fontFamily: "'Inter Tight', sans-serif" });
+
+/* ---- Features: épicos do Jira, com detalhe no drawer ---- */
+
+function FeaturesScreen() {
+  const { T, PRODUCT_STYLE } = useTheme();
+  const { epics, lastSync } = useData();
+  const { initiativeByEpicKey } = useInitiatives();
+  const { items } = usePlanning();
+  const [q, setQ] = useState("");
+  const [product, setProduct] = useState("all");
+  const [status, setStatus] = useState("all");
+  const [openKey, setOpenKey] = useState(null);
+
+  const releaseByEpic = useMemo(() => {
+    const map = {};
+    items.releases.forEach((r) => (r.epicKeys || []).forEach((k) => { map[k] = r; }));
+    return map;
+  }, [items.releases]);
+  const statuses = useMemo(() => [...new Set(epics.map((e) => e.status).filter(Boolean))].sort(), [epics]);
+
+  const rows = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    return epics
+      .filter((e) => (product === "all" || e.project === product) && (status === "all" || e.status === status))
+      .filter((e) => !needle || `${e.key} ${e.summary} ${e.assignee || ""}`.toLowerCase().includes(needle))
+      .sort((a, b) => (parseBRDate(b.created) || 0) - (parseBRDate(a.created) || 0));
+  }, [epics, q, product, status]);
+
+  const openEpic = openKey ? epics.find((e) => e.key === openKey) : null;
+  const cols = "96px minmax(220px, 1fr) 110px 150px 140px 150px 120px";
+
+  return (
+    <div className="pp-scroll" style={{ overflow: "auto", flex: 1, padding: "20px 24px" }}>
+      <PageTitle title="Features" sub={`${rows.length} de ${epics.length} épicos do Jira${lastSync ? ` · dados da planilha de ${fmtSyncTime(lastSync)}` : ""}`}>
+        <div className="flex items-center" style={{ gap: 6 }}>
+          <input placeholder="Buscar chave, título ou responsável" value={q} onChange={(e) => setQ(e.target.value)} style={{ ...fieldStyle(T), width: 260 }} />
+          <select value={product} onChange={(e) => setProduct(e.target.value)} style={fieldStyle(T)}>
+            <option value="all">Todos os produtos</option>
+            {PRODUCTS.map((p) => <option key={p} value={p}>{p}</option>)}
+          </select>
+          <select value={status} onChange={(e) => setStatus(e.target.value)} style={fieldStyle(T)}>
+            <option value="all">Todos os status</option>
+            {statuses.map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
+        </div>
+      </PageTitle>
+
+      <div style={{ minWidth: 900, border: `1px solid ${T.border2}`, borderRadius: 10, overflow: "hidden" }}>
+        <div style={{ display: "grid", gridTemplateColumns: cols, gap: 12, padding: "8px 12px", background: T.bg1, fontSize: 11.5, fontWeight: 500, color: T.ink2 }}>
+          <span>Chave</span><span>Título</span><span>Produto</span><span>Status</span><span>Responsável</span><span>Iniciativa</span><span>Release</span>
+        </div>
+        {rows.map((e) => {
+          const style = PRODUCT_STYLE[e.project];
+          const init = initiativeByEpicKey[e.key];
+          const rel = releaseByEpic[e.key];
+          return (
+            <div
+              key={e.key} className="pp-card" onClick={() => setOpenKey(e.key)}
+              style={{ display: "grid", gridTemplateColumns: cols, gap: 12, padding: "9px 12px", alignItems: "center", fontSize: 12.5, color: T.ink0, borderTop: `1px solid ${T.border2}`, cursor: "pointer" }}
+            >
+              <a href={`${JIRA_BROWSE}${e.key}`} target="_blank" rel="noreferrer" onClick={(ev) => ev.stopPropagation()} title="Abrir no Jira" style={{ color: "#5166e6", textDecoration: "none", fontWeight: 500 }}>{e.key}</a>
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={e.summary}>{e.summary}</span>
+              <span>{style ? <Badge bg={style.subtle} color={style.text}>{e.project}</Badge> : <span style={{ color: T.ink2 }}>{e.project || "—"}</span>}</span>
+              <span style={{ color: isEpicDone(e) ? "#00aa6c" : T.ink1 }}>{e.status || "—"}</span>
+              <span style={{ color: T.ink1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.assignee || "—"}</span>
+              <span style={{ color: T.ink1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{init ? init.name : "—"}</span>
+              <span style={{ color: T.ink1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{rel ? rel.name : "—"}</span>
+            </div>
+          );
+        })}
+        {rows.length === 0 && <div style={{ padding: 16, fontSize: 12.5, color: T.ink2 }}>Nenhum épico com esses filtros.</div>}
+      </div>
+
+      {openEpic && <EpicDrawer epic={openEpic} onClose={() => setOpenKey(null)} canEdit={false} jiraConfigured={false} />}
+    </div>
+  );
+}
+
+/* ---- Objetivos e Releases: mesma tela, dois tipos ---- */
+
+const PLANNING_KINDS = {
+  objectives: {
+    title: "Objetivos", placeholder: "Novo objetivo", empty: "Nenhum objetivo ainda.",
+    statuses: ["Em andamento", "Concluído", "Cancelado"], linkField: "initiativeIds", linkTitle: "Iniciativas",
+  },
+  releases: {
+    title: "Releases", placeholder: "Nova release", empty: "Nenhuma release ainda.",
+    statuses: ["Planejada", "Lançada", "Cancelada"], linkField: "epicKeys", linkTitle: "Épicos",
+  },
+};
+
+function PlanningCard({ kind, item, linkOptions, progress }) {
+  const { T } = useTheme();
+  const { canCreateCard } = useAuth();
+  const { update, remove } = usePlanning();
+  const def = PLANNING_KINDS[kind];
+  const [name, setName] = useState(item.name);
+  const [description, setDescription] = useState(item.description || "");
+  const [error, setError] = useState(null);
+  useEffect(() => { setName(item.name); setDescription(item.description || ""); }, [item.name, item.description]);
+
+  const links = item[def.linkField] || [];
+  const labelOf = (id) => (linkOptions.find((o) => o.id === id) || { label: id }).label;
+  const save = async (patch) => {
+    const r = await update(kind, item.id, patch);
+    setError(r.ok ? null : r.message || null);
+  };
+  const ro = !canCreateCard;
+
+  return (
+    <div style={{ border: `1px solid ${T.border2}`, borderRadius: 10, padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
+      <div className="flex items-center" style={{ gap: 8 }}>
+        <input
+          value={name} disabled={ro} onChange={(e) => setName(e.target.value)}
+          onBlur={() => { const n = name.trim(); if (!n) setName(item.name); else if (n !== item.name) save({ name: n }); }}
+          style={{ ...fieldStyle(T), flex: 1, fontSize: 14, fontWeight: 600, background: "transparent", border: "1px solid transparent" }}
+        />
+        {kind === "releases" && (
+          <input type="date" value={item.date || ""} disabled={ro} onChange={(e) => save({ date: e.target.value })} style={fieldStyle(T)} />
+        )}
+        <select value={item.status} disabled={ro} onChange={(e) => save({ status: e.target.value })} style={fieldStyle(T)}>
+          {def.statuses.map((s) => <option key={s} value={s}>{s}</option>)}
+        </select>
+        {!ro && (
+          <button onClick={() => remove(kind, item.id)} title="Excluir" style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 26, height: 26, borderRadius: 6, border: "none", background: "transparent", color: T.ink2, cursor: "pointer" }}>
+            <Trash2 size={14} />
+          </button>
+        )}
+      </div>
+
+      <textarea
+        rows={2} value={description} disabled={ro} placeholder={ro ? "" : "Descrição"} onChange={(e) => setDescription(e.target.value)}
+        onBlur={() => { if (description.trim() !== (item.description || "")) save({ description }); }}
+        style={{ ...fieldStyle(T), width: "100%", resize: "vertical", lineHeight: 1.45 }}
+      />
+
+      <ProgressBar done={progress.done} total={progress.total} />
+
+      <div>
+        <p style={{ fontSize: 11.5, fontWeight: 500, color: T.ink2, margin: "0 0 4px" }}>{def.linkTitle}</p>
+        <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+          {links.map((id) => (
+            <div key={id} className="flex items-center justify-between" style={{ fontSize: 12, color: T.ink1 }}>
+              <span>{labelOf(id)}</span>
+              {!ro && <button onClick={() => save({ [def.linkField]: links.filter((l) => l !== id) })} style={{ border: "none", background: "transparent", color: T.ink2, cursor: "pointer", fontSize: 11, fontFamily: "'Inter Tight', sans-serif" }}>remover</button>}
+            </div>
+          ))}
+          {links.length === 0 && <span style={{ fontSize: 12, color: T.ink2 }}>Nada vinculado.</span>}
+        </div>
+        {!ro && (
+          <select value="" onChange={(e) => { if (e.target.value) save({ [def.linkField]: [...links, e.target.value] }); }} style={{ ...fieldStyle(T), width: "100%", marginTop: 6 }}>
+            <option value="">Vincular…</option>
+            {linkOptions.filter((o) => !links.includes(o.id)).map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+          </select>
+        )}
+      </div>
+      {error && <span style={{ fontSize: 11.5, color: "#e08585" }}>{error}</span>}
+    </div>
+  );
+}
+
+function PlanningScreen({ kind }) {
+  const { T } = useTheme();
+  const { epics } = useData();
+  const { canCreateCard } = useAuth();
+  const { initiatives } = useInitiatives();
+  const { items, status, error, create } = usePlanning();
+  const [name, setName] = useState("");
+  const [createError, setCreateError] = useState(null);
+  const def = PLANNING_KINDS[kind];
+
+  const epicByKey = useMemo(() => Object.fromEntries(epics.map((e) => [e.key, e])), [epics]);
+  const initiativeById = useMemo(() => Object.fromEntries(initiatives.map((i) => [i.id, i])), [initiatives]);
+  const linkOptions = useMemo(
+    () => (kind === "objectives"
+      ? initiatives.map((i) => ({ id: i.id, label: `${i.name} · ${i.product}` }))
+      : epics.map((e) => ({ id: e.key, label: `${e.key} — ${e.summary}` }))),
+    [kind, initiatives, epics]
+  );
+
+  // Progresso = épicos concluídos / épicos alcançados. Objetivo alcança os épicos
+  // das iniciativas vinculadas; Release, os épicos vinculados direto.
+  const progressOf = (item) => {
+    const keys = kind === "objectives"
+      ? [...new Set((item.initiativeIds || []).flatMap((id) => (initiativeById[id] ? initiativeById[id].epicKeys || [] : [])))]
+      : item.epicKeys || [];
+    const list = keys.map((k) => epicByKey[k]).filter(Boolean);
+    return { done: list.filter(isEpicDone).length, total: list.length };
+  };
+
+  const list = items[kind];
+  const add = async () => {
+    const n = name.trim();
+    if (!n) return;
+    const r = await create(kind, { name: n });
+    if (r.ok) { setName(""); setCreateError(null); } else setCreateError(r.message || null);
+  };
+
+  if (status === "error") {
+    return <div style={{ padding: 24, fontSize: 13, color: T.ink1 }}>Não foi possível carregar {def.title.toLowerCase()}{error ? `: ${error}` : ""}.</div>;
+  }
+
+  return (
+    <div className="pp-scroll" style={{ overflowY: "auto", flex: 1, padding: "20px 24px" }}>
+      <PageTitle title={def.title} sub={`${list.length} ${list.length === 1 ? "item" : "itens"}`}>
+        {canCreateCard && (
+          <div className="flex items-center" style={{ gap: 6 }}>
+            <input placeholder={def.placeholder} value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") add(); }} style={{ ...fieldStyle(T), width: 220 }} />
+            <button onClick={add} style={{ borderRadius: 8, padding: "6px 10px", fontSize: 12, fontWeight: 500, border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink0, cursor: "pointer", fontFamily: "'Inter Tight', sans-serif" }}>Criar</button>
+          </div>
+        )}
+      </PageTitle>
+      {createError && <p style={{ fontSize: 12, color: "#e08585", marginBottom: 8 }}>{createError}</p>}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(380px, 1fr))", gap: 12 }}>
+        {list.map((item) => <PlanningCard key={item.id} kind={kind} item={item} linkOptions={linkOptions} progress={progressOf(item)} />)}
+      </div>
+      {status === "idle" && list.length === 0 && <p style={{ fontSize: 13, color: T.ink2 }}>{def.empty}</p>}
+    </div>
+  );
+}
+
+const SIDEBAR_GROUPS = [
+  { title: "Produto", items: [["iniciativas", "Iniciativas", Sparkles], ["features", "Features", Square], ["objetivos", "Objetivos", Target], ["releases", "Releases", Flag]] },
+  { title: "Planejamento", items: [["roadmap", "Roadmap", Calendar], ["analises", "Análises", BarChart3], ["desenvolvedores", "Desenvolvedores", Users]] },
+];
+
 function AppShell() {
   const { T, theme, toggleTheme } = useTheme();
   const { syncFromSheet, lastSync, syncStatus, syncError } = useData();
@@ -2856,7 +3189,7 @@ function AppShell() {
   const [showSheetConfig, setShowSheetConfig] = useState(false);
 
   return (
-    <div style={{ minHeight: "100vh", background: T.bg0, color: T.ink0, fontFamily: "'Inter Tight', sans-serif", display: "flex", flexDirection: "column", overflowX: "hidden" }}>
+    <div style={{ minHeight: "100vh", background: T.bg0, color: T.ink0, fontFamily: "'Inter Tight', sans-serif", display: "flex", overflowX: "hidden" }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@700&family=Inter+Tight:wght@400;500;600;700&display=swap');
         .pp-card:hover { background: ${T.bg2} !important; border-color: ${T.borderStrong} !important; }
@@ -2866,26 +3199,35 @@ function AppShell() {
         @keyframes pp-spin-anim { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
       `}</style>
 
-      <div style={{ borderBottom: `1px solid ${T.border1}`, padding: "0 20px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 4, height: 46 }}>
-        <div className="flex" style={{ alignItems: "center", gap: 4, height: 46 }}>
-          {[["roadmap", "Roadmap", Calendar], ["iniciativas", "Iniciativas", Layers], ["analises", "Análises", BarChart3], ["desenvolvedores", "Desenvolvedores", Users]].map(([key, label, Icon]) => {
-            const active = menu === key;
-            return (
-              <button
-                key={key}
-                onClick={() => setMenu(key)}
-                style={{
-                  display: "flex", alignItems: "center", gap: 6, height: 46, padding: "0 4px", marginBottom: -1,
-                  borderBottom: active ? "2px solid #5166e6" : "2px solid transparent",
-                  background: "none", border: "none", cursor: "pointer",
-                  color: active ? T.ink0 : T.ink1, fontSize: 13, fontWeight: 500, fontFamily: "'Inter Tight', sans-serif",
-                }}
-              >
-                <Icon size={14} /> {label}
-              </button>
-            );
-          })}
-        </div>
+      <aside style={{ width: 224, flexShrink: 0, position: "sticky", top: 0, height: "100vh", overflowY: "auto", borderRight: `1px solid ${T.border2}`, background: T.bg1, padding: "16px 12px", boxSizing: "border-box" }}>
+        <div style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", fontWeight: 700, fontSize: 15, color: T.ink0, padding: "2px 8px 16px" }}>Product Ops</div>
+        {SIDEBAR_GROUPS.map((group) => (
+          <div key={group.title} style={{ marginBottom: 18 }}>
+            <p style={{ fontSize: 12, fontWeight: 500, color: T.ink2, margin: "0 0 6px", padding: "0 8px" }}>{group.title}</p>
+            {group.items.map(([key, label, Icon]) => {
+              const active = menu === key;
+              return (
+                <button
+                  key={key}
+                  onClick={() => setMenu(key)}
+                  aria-current={active ? "page" : undefined}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 10, width: "100%", height: 36, padding: "0 10px", marginBottom: 2,
+                    borderRadius: 8, border: "none", cursor: "pointer", textAlign: "left",
+                    background: active ? "rgba(81,102,230,0.12)" : "transparent",
+                    color: active ? "#5166e6" : T.ink0, fontSize: 14, fontWeight: 500, fontFamily: "'Inter Tight', sans-serif",
+                  }}
+                >
+                  <Icon size={16} /> {label}
+                </button>
+              );
+            })}
+          </div>
+        ))}
+      </aside>
+
+      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
+      <div style={{ borderBottom: `1px solid ${T.border1}`, padding: "0 20px", display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 4, height: 46 }}>
         <div className="flex items-center" style={{ gap: 8 }}>
           {syncStatus === "error" && (
             <span style={{ fontSize: 11, color: "#e08585", fontFamily: "'Inter Tight', sans-serif" }} title={syncError || ""}>
@@ -2943,9 +3285,16 @@ function AppShell() {
         </div>
       </div>
 
-      {menu === "iniciativas" ? <IniciativasScreen /> : menu === "analises" ? <AnaliseScreen /> : menu === "desenvolvedores" ? <DevelopersScreen /> : <RoadmapScreen />}
+      {menu === "iniciativas" ? <IniciativasScreen />
+        : menu === "features" ? <FeaturesScreen />
+        : menu === "objetivos" ? <PlanningScreen kind="objectives" />
+        : menu === "releases" ? <PlanningScreen kind="releases" />
+        : menu === "analises" ? <AnaliseScreen />
+        : menu === "desenvolvedores" ? <DevelopersScreen />
+        : <RoadmapScreen />}
 
       {showSheetConfig && <SheetConfigModal onClose={() => setShowSheetConfig(false)} />}
+      </div>
     </div>
   );
 }
@@ -3071,7 +3420,9 @@ export default function App() {
         <AuthGate>
           <DataProvider>
             <InitiativesProvider>
-              <AppShell />
+              <PlanningProvider>
+                <AppShell />
+              </PlanningProvider>
             </InitiativesProvider>
           </DataProvider>
         </AuthGate>
