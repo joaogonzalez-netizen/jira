@@ -42,7 +42,7 @@ test("cria objetivo com padrões e exige nome", async () => {
   assert.equal(r.status, 201);
   assert.equal(r.body.name, "Crescer MRR");
   assert.equal(r.body.status, "Em andamento");
-  assert.deepEqual(r.body.initiativeIds, []);
+  assert.deepEqual(r.body.epicKeys, []);
   assert.equal(r.body.createdBy, "ana@x.com");
   assert.deepEqual((await handleList("objectives", config)).body.map((o) => o.id), [r.body.id]);
 });
@@ -71,10 +71,10 @@ test("release valida data e status e guarda épicos sem duplicar", async () => {
 });
 
 test("update não troca o nome por vazio e ignora campos de outro tipo", () => {
-  const base = { id: "a", name: "Nome", status: "Em andamento", initiativeIds: [] };
-  const next = applyFields("objectives", base, { name: " ", epicKeys: ["X-1"], date: "2026-01-01" });
+  const base = { id: "a", name: "Nome", status: "Em andamento", epicKeys: [] };
+  const next = applyFields("objectives", base, { name: " ", product: "STL Seller", date: "2026-01-01" });
   assert.equal(next.name, "Nome");
-  assert.equal("epicKeys" in next, false);
+  assert.equal("product" in next, false);
   assert.equal("date" in next, false);
 });
 
@@ -86,4 +86,17 @@ test("update e delete devolvem 404 para id inexistente e removem o certo", async
   assert.equal((await handleDelete("objectives", "x", ADMIN, config)).status, 404);
   assert.equal((await handleDelete("objectives", a.id, ADMIN, config)).status, 200);
   assert.deepEqual((await handleList("objectives", config)).body.map((o) => o.id), [b.id]);
+});
+
+test("feature exige produto, guarda épicos e não troca o produto por vazio", async () => {
+  const config = fakeConfig();
+  assert.equal((await handleCreate("features", { name: "Calculadora" }, ADMIN, config)).status, 400);
+  const r = await handleCreate("features", { name: "Calculadora", product: " STL Seller ", epicKeys: ["SELLER-256"] }, ADMIN, config);
+  assert.equal(r.status, 201);
+  assert.equal(r.body.product, "STL Seller");
+  assert.equal(r.body.status, "Ativa");
+  assert.deepEqual(r.body.epicKeys, ["SELLER-256"]);
+  const u = await handleUpdate("features", r.body.id, { product: "  ", status: "Descontinuada" }, ADMIN, config);
+  assert.equal(u.body.product, "STL Seller");
+  assert.equal(u.body.status, "Descontinuada");
 });

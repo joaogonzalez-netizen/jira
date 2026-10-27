@@ -1,6 +1,6 @@
 /**
- * Objetivos e Releases — as duas camadas de planejamento que não existem no
- * Jira nem na planilha, guardadas só dentro deste app. Mesmo desenho das
+ * Objetivos, Features e Releases — as camadas de planejamento que não existem no
+ * Jira nem na planilha (o produto e as iniciativas — épicos — vêm do Jira), guardadas só dentro deste app. Mesmo desenho das
  * Iniciativas (`initiatives-core.js`): uma lista JSON por tipo no Redis, leitura
  * pública, escrita só para `admin` ou `super`.
  *
@@ -19,7 +19,15 @@ export const KINDS = {
     label: "Objetivo",
     statuses: ["Em andamento", "Concluído", "Cancelado"],
     defaultStatus: "Em andamento",
-    links: "initiativeIds",
+    links: "epicKeys", // iniciativa = épico do Jira
+  },
+  features: {
+    key: "jira:features",
+    prefix: "feat",
+    label: "Feature",
+    statuses: ["Ativa", "Em construção", "Descontinuada"],
+    defaultStatus: "Ativa",
+    links: "epicKeys", // épicos que entregam ou evoluem a feature
   },
   releases: {
     key: "jira:releases",
@@ -63,7 +71,7 @@ function forbidden() {
 }
 
 function unknownKind() {
-  return { status: 400, body: { message: "kind deve ser objectives ou releases" } };
+  return { status: 400, body: { message: "kind deve ser objectives, features ou releases" } };
 }
 
 async function readAll(config, kind) {
@@ -101,6 +109,7 @@ export function applyFields(kind, base, patch) {
   if (typeof patch.status === "string" && def.statuses.includes(patch.status)) next.status = patch.status;
   const links = strList(patch[def.links]);
   if (links) next[def.links] = [...new Set(links)];
+  if (kind === "features" && typeof patch.product === "string" && patch.product.trim()) next.product = patch.product.trim();
   if (kind === "releases" && typeof patch.date === "string") {
     const d = patch.date.trim();
     if (d === "" || /^\d{4}-\d{2}-\d{2}$/.test(d)) next.date = d;
@@ -118,6 +127,8 @@ export async function handleCreate(kind, input, session, config) {
   if (!canWrite(session)) return forbidden();
   const name = typeof input.name === "string" ? input.name.trim() : "";
   if (!name) return { status: 400, body: { message: "Nome é obrigatório" } };
+  const product = typeof input.product === "string" ? input.product.trim() : "";
+  if (kind === "features" && !product) return { status: 400, body: { message: "Produto é obrigatório" } };
 
   const def = KINDS[kind];
   const base = {
@@ -127,6 +138,7 @@ export async function handleCreate(kind, input, session, config) {
     status: def.defaultStatus,
     [def.links]: [],
     ...(kind === "releases" ? { date: "" } : {}),
+    ...(kind === "features" ? { product } : {}),
     createdBy: session.user.email || null,
     createdAt: new Date().toISOString(),
   };
