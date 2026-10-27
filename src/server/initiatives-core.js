@@ -87,6 +87,17 @@ async function writeAll(config, list) {
   await client.set(KV_KEY, JSON.stringify(list));
 }
 
+export const INITIATIVE_STATUSES = ["Planejada", "Em andamento", "Concluída", "Pausada", "Cancelada"];
+
+/** Campos de texto livres da iniciativa: descrição e o KR que ela move (id de
+    `jira:key-results`, vazio = nenhum). */
+function applyOptional(next, input) {
+  if (typeof input.description === "string") next.description = input.description.trim();
+  if (typeof input.keyResultId === "string") next.keyResultId = input.keyResultId.trim();
+  if (typeof input.status === "string" && INITIATIVE_STATUSES.includes(input.status)) next.status = input.status;
+  return next;
+}
+
 function genId() {
   return `init_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -98,18 +109,23 @@ export async function handleList(config) {
 export async function handleCreate(input, session, config) {
   if (!canWrite(session)) return forbidden();
   const name = typeof input.name === "string" ? input.name.trim() : "";
+  // Produto é opcional: uma iniciativa como "Reduzir cancelamento" cruza
+  // produtos; os produtos dela aparecem pelos épicos vinculados.
   const product = typeof input.product === "string" ? input.product.trim() : "";
-  if (!name || !product) return { status: 400, body: { message: "Nome e produto são obrigatórios" } };
+  if (!name) return { status: 400, body: { message: "Nome é obrigatório" } };
 
   const list = await readAll(config);
-  const initiative = {
+  const initiative = applyOptional({
     id: genId(),
     name,
     product,
+    description: "",
+    status: "Planejada",
+    keyResultId: "",
     epicKeys: [],
     createdBy: session.user.email || null,
     createdAt: new Date().toISOString(),
-  };
+  }, input);
   await writeAll(config, [...list, initiative]);
   return { status: 201, body: initiative };
 }
@@ -124,7 +140,8 @@ export async function handleUpdate(id, patch, session, config) {
 
   const next = { ...list[idx] };
   if (typeof patch.name === "string" && patch.name.trim()) next.name = patch.name.trim();
-  if (typeof patch.product === "string" && patch.product.trim()) next.product = patch.product.trim();
+  if (typeof patch.product === "string") next.product = patch.product.trim();
+  applyOptional(next, patch);
   if (Array.isArray(patch.epicKeys)) next.epicKeys = patch.epicKeys.filter((k) => typeof k === "string");
 
   // Um épico pertence no máximo a uma iniciativa: ao gravar `epicKeys` aqui,
