@@ -5,6 +5,7 @@ import { sheetApiPlugin } from "./src/server/sheet-api.js";
 import { initiativesApiPlugin } from "./src/server/initiatives-api.js";
 import { roadmapApiPlugin } from "./src/server/roadmap-api.js";
 import { jiraApiPlugin } from "./src/server/jira-api.js";
+import { planningApiPlugin } from "./src/server/planning-api.js";
 
 export default defineConfig(({ mode }) => {
   // Prefixo "" carrega TODAS as variáveis do .env.local para este arquivo, que
@@ -13,6 +14,6 @@ export default defineConfig(({ mode }) => {
   // aqui e passadas aos plugins, nunca vão para o browser.
   const env = loadEnv(mode, process.cwd(), "");
   return {
-    plugins: [react(), authApiPlugin(env), sheetApiPlugin(env), initiativesApiPlugin(env), roadmapApiPlugin(env), jiraApiPlugin(env)],
+    plugins: [react(), authApiPlugin(env), sheetApiPlugin(env), initiativesApiPlugin(env), roadmapApiPlugin(env), jiraApiPlugin(env), planningApiPlugin(env)],
   };
 });
