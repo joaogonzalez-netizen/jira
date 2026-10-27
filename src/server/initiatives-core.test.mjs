@@ -10,7 +10,12 @@ function fakeConfig() {
     kv: {
       connect: async () => {},
       get: async (k) => data.get(k) ?? null,
-      set: async (k, v) => { data.set(k, v); },
+      set: async (k, v, opts) => {
+        if (opts && opts.NX && data.has(k)) return null;
+        data.set(k, v);
+        return "OK";
+      },
+      del: async (k) => (data.delete(k) ? 1 : 0),
     },
     kvReady: null,
   };
@@ -44,12 +49,25 @@ test("update troca status válido, ignora inválido e aceita KR e produto vazios
   assert.equal((await handleUpdate(ini.id, { status: "Sei lá" }, ADMIN, config)).body.status, "Em andamento");
 });
 
-test("iniciativa antiga, sem os campos novos, continua sendo lida", async () => {
+test("iniciativa de OKR antiga (sem produto) continua sendo lida e editada", async () => {
   const config = fakeConfig();
-  await config.kv.set("jira:initiatives", JSON.stringify([{ id: "init_old", name: "Antiga", product: "STL IA", epicKeys: ["IA-1"] }]));
+  await config.kv.set("jira:initiatives", JSON.stringify([{ id: "init_old", name: "Antiga", product: "", epicKeys: ["IA-1"] }]));
   const list = (await handleList(config)).body;
   assert.equal(list[0].name, "Antiga");
   const u = await handleUpdate("init_old", { status: "Concluída" }, ADMIN, config);
   assert.equal(u.body.status, "Concluída");
   assert.deepEqual(u.body.epicKeys, ["IA-1"]);
+});
+
+test("ao listar, as iniciativas do Roadmap (com produto, sem KR) viram features", async () => {
+  const config = fakeConfig();
+  await config.kv.set("jira:initiatives", JSON.stringify([
+    { id: "init_a", name: "Calculadora", product: "STL Seller", epicKeys: ["SELLER-42"] },
+    { id: "init_b", name: "Reduzir cancelamento", product: "STLFLIX", keyResultId: "kr_1", epicKeys: [] },
+  ]));
+  const list = (await handleList(config)).body;
+  assert.deepEqual(list.map((i) => i.id), ["init_b"]);
+  const features = JSON.parse(await config.kv.get("jira:features"));
+  assert.equal(features[0].name, "Calculadora");
+  assert.deepEqual(features[0].epicKeys, ["SELLER-42"]);
 });

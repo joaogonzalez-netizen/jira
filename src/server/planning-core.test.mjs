@@ -11,7 +11,12 @@ function fakeConfig() {
     kv: {
       connect: async () => {},
       get: async (k) => data.get(k) ?? null,
-      set: async (k, v) => { data.set(k, v); },
+      set: async (k, v, opts) => {
+        if (opts && opts.NX && data.has(k)) return null;
+        data.set(k, v);
+        return "OK";
+      },
+      del: async (k) => (data.delete(k) ? 1 : 0),
     },
     kvReady: null,
   };
@@ -151,4 +156,16 @@ test("check-ins semanais: um por semana, ordenados, e o último vira o valor atu
   const x = (await handleCreate("experiments", { name: "E", opportunityId: opp.id, checkins: [{ week: "2026-10-26", value: 38 }] }, ADMIN, config)).body;
   assert.equal(x.result, 38);
   assert.equal((await handleUpdate("experiments", x.id, { checkins: [] }, ADMIN, config)).body.result, 38);
+});
+
+test("um épico fica numa feature só: vincular numa tira da outra", async () => {
+  const config = fakeConfig();
+  const a = (await handleCreate("features", { name: "Calculadora", product: "STL Seller", epicKeys: ["SELLER-42", "SELLER-155"] }, ADMIN, config)).body;
+  const b = (await handleCreate("features", { name: "Finder", product: "STL Seller", epicKeys: ["SELLER-42"] }, ADMIN, config)).body;
+  let list = (await handleList("features", config)).body;
+  assert.deepEqual(list.find((f) => f.id === a.id).epicKeys, ["SELLER-155"]);
+  await handleUpdate("features", a.id, { epicKeys: ["SELLER-155", "SELLER-42"] }, ADMIN, config);
+  list = (await handleList("features", config)).body;
+  assert.deepEqual(list.map((f) => f.id), [a.id, b.id]); // ordem preservada
+  assert.deepEqual(list.find((f) => f.id === b.id).epicKeys, []);
 });

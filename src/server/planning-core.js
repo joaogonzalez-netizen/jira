@@ -15,6 +15,7 @@
  * da Vercel (`api/planning.js`), por isso não conhece `req` nem `res`.
  */
 import { loadConfig as loadInitiativesConfig, resolveSessionFromCookie } from "./initiatives-core.js";
+import { migrateInitiativesToFeatures } from "./legacy-migration.js";
 
 export { resolveSessionFromCookie };
 
@@ -250,8 +251,19 @@ function defaults(kind) {
   return out;
 }
 
+/** Põe `item` na lista (no índice `at`, ou no fim). Em Features, um épico fica
+    numa só: os épicos de `item` saem das outras — é o que o Roadmap agrupa. */
+function releaseEpics(kind, others, item, at = others.length) {
+  const mine = kind === "features" ? new Set(item.epicKeys || []) : null;
+  const rest = mine && mine.size
+    ? others.map((o) => ((o.epicKeys || []).some((k) => mine.has(k)) ? { ...o, epicKeys: o.epicKeys.filter((k) => !mine.has(k)) } : o))
+    : others;
+  return [...rest.slice(0, at), item, ...rest.slice(at)];
+}
+
 export async function handleList(kind, config) {
   if (!isKind(kind)) return unknownKind();
+  await migrateInitiativesToFeatures(await ensureConnected(config));
   return { status: 200, body: await readAll(config, kind) };
 }
 
@@ -267,7 +279,7 @@ export async function handleCreate(kind, input, session, config) {
   const missing = Object.entries(def.fields).find(([field, spec]) => spec.required && !item[field]);
   if (missing) return { status: 400, body: { message: `${missing[0]} é obrigatório` } };
 
-  await writeAll(config, kind, [...(await readAll(config, kind)), item]);
+  await writeAll(config, kind, releaseEpics(kind, await readAll(config, kind), item));
   return { status: 201, body: item };
 }
 
@@ -281,7 +293,7 @@ export async function handleUpdate(kind, id, patch, session, config) {
   if (idx === -1) return { status: 404, body: { message: `${KINDS[kind].label} não encontrado` } };
 
   const next = applyFields(kind, list[idx], patch);
-  await writeAll(config, kind, list.map((item, i) => (i === idx ? next : item)));
+  await writeAll(config, kind, releaseEpics(kind, list.filter((_, i) => i !== idx), next, idx));
   return { status: 200, body: next };
 }
 

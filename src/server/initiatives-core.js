@@ -22,6 +22,7 @@
  */
 import { createClient } from "redis";
 import { loadConfig as loadAuthConfig, readCookie, resolveSession, AUTH_COOKIE } from "./auth-core.js";
+import { migrateInitiativesToFeatures } from "./legacy-migration.js";
 
 const KV_KEY = "jira:initiatives";
 
@@ -103,6 +104,7 @@ function genId() {
 }
 
 export async function handleList(config) {
+  await migrateInitiativesToFeatures(await ensureConnected(config));
   return { status: 200, body: await readAll(config) };
 }
 
