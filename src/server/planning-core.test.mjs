@@ -17,12 +17,18 @@ function fakeConfig() {
   };
 }
 
-test("kind desconhecido é recusado em todas as operações", async () => {
+async function tree(config) {
+  const obj = (await handleCreate("objectives", { name: "Engajamento na Flix", period: "2026-T4" }, ADMIN, config)).body;
+  const kr = (await handleCreate("keyResults", { name: "DAU/MAU", objectiveId: obj.id, unit: "%", baseline: 20, target: 30 }, ADMIN, config)).body;
+  const opp = (await handleCreate("opportunities", { name: "Usuário não acha o que baixar", keyResultId: kr.id }, ADMIN, config)).body;
+  return { obj, kr, opp };
+}
+
+test("kind desconhecido ou herdado do protótipo é recusado", async () => {
   const config = fakeConfig();
-  assert.equal((await handleList("nope", config)).status, 400);
-  assert.equal((await handleList("constructor", config)).status, 400);
-  assert.equal((await handleList("__proto__", config)).status, 400);
-  assert.equal((await handleList(undefined, config)).status, 400);
+  for (const kind of ["nope", "constructor", "__proto__", undefined, "releases", "initiatives"]) {
+    assert.equal((await handleList(kind, config)).status, 400, String(kind));
+  }
   assert.equal((await handleCreate("nope", { name: "x" }, ADMIN, config)).status, 400);
   assert.equal((await handleUpdate("nope", "id", {}, ADMIN, config)).status, 400);
   assert.equal((await handleDelete("nope", "id", ADMIN, config)).status, 400);
@@ -35,68 +41,86 @@ test("só admin ou super escrevem; leitura é aberta", async () => {
   assert.equal((await handleList("objectives", config)).status, 200);
 });
 
-test("cria objetivo com padrões e exige nome", async () => {
+test("cria com padrões do tipo e exige nome", async () => {
   const config = fakeConfig();
   assert.equal((await handleCreate("objectives", { name: "  " }, ADMIN, config)).status, 400);
-  const r = await handleCreate("objectives", { name: "  Crescer MRR " }, ADMIN, config);
+  const r = await handleCreate("objectives", { name: " Engajamento ", period: "2026-T4" }, ADMIN, config);
   assert.equal(r.status, 201);
-  assert.equal(r.body.name, "Crescer MRR");
+  assert.equal(r.body.name, "Engajamento");
+  assert.equal(r.body.period, "2026-T4");
   assert.equal(r.body.status, "Em andamento");
-  assert.deepEqual(r.body.epicKeys, []);
   assert.equal(r.body.createdBy, "ana@x.com");
-  assert.deepEqual((await handleList("objectives", config)).body.map((o) => o.id), [r.body.id]);
 });
 
-test("objetivos e releases ficam em listas separadas", async () => {
+test("filho exige o pai: KR, oportunidade, experimento e feature", async () => {
   const config = fakeConfig();
-  await handleCreate("objectives", { name: "Obj" }, ADMIN, config);
-  await handleCreate("releases", { name: "v1" }, ADMIN, config);
-  assert.equal((await handleList("objectives", config)).body.length, 1);
-  assert.equal((await handleList("releases", config)).body.length, 1);
-});
-
-test("release valida data e status e guarda épicos sem duplicar", async () => {
-  const config = fakeConfig();
-  const r = await handleCreate("releases", { name: "v1", date: "2026-11-30", epicKeys: ["FLIX-1", "FLIX-1", "IA-2", 7] }, ADMIN, config);
-  assert.equal(r.body.date, "2026-11-30");
-  assert.deepEqual(r.body.epicKeys, ["FLIX-1", "IA-2"]);
-
-  const u = await handleUpdate("releases", r.body.id, { date: "30/11/2026", status: "Inventado" }, ADMIN, config);
-  assert.equal(u.body.date, "2026-11-30");
-  assert.equal(u.body.status, "Planejada");
-
-  const lancada = await handleUpdate("releases", r.body.id, { status: "Lançada", date: "" }, ADMIN, config);
-  assert.equal(lancada.body.status, "Lançada");
-  assert.equal(lancada.body.date, "");
-});
-
-test("update não troca o nome por vazio e ignora campos de outro tipo", () => {
-  const base = { id: "a", name: "Nome", status: "Em andamento", epicKeys: [] };
-  const next = applyFields("objectives", base, { name: " ", product: "STL Seller", date: "2026-01-01" });
-  assert.equal(next.name, "Nome");
-  assert.equal("product" in next, false);
-  assert.equal("date" in next, false);
-});
-
-test("update e delete devolvem 404 para id inexistente e removem o certo", async () => {
-  const config = fakeConfig();
-  const a = (await handleCreate("objectives", { name: "A" }, ADMIN, config)).body;
-  const b = (await handleCreate("objectives", { name: "B" }, ADMIN, config)).body;
-  assert.equal((await handleUpdate("objectives", "x", { name: "Z" }, ADMIN, config)).status, 404);
-  assert.equal((await handleDelete("objectives", "x", ADMIN, config)).status, 404);
-  assert.equal((await handleDelete("objectives", a.id, ADMIN, config)).status, 200);
-  assert.deepEqual((await handleList("objectives", config)).body.map((o) => o.id), [b.id]);
-});
-
-test("feature exige produto, guarda épicos e não troca o produto por vazio", async () => {
-  const config = fakeConfig();
+  assert.equal((await handleCreate("keyResults", { name: "KR" }, ADMIN, config)).status, 400);
+  assert.equal((await handleCreate("opportunities", { name: "O" }, ADMIN, config)).status, 400);
+  assert.equal((await handleCreate("experiments", { name: "E" }, ADMIN, config)).status, 400);
   assert.equal((await handleCreate("features", { name: "Calculadora" }, ADMIN, config)).status, 400);
-  const r = await handleCreate("features", { name: "Calculadora", product: " STL Seller ", epicKeys: ["SELLER-256"] }, ADMIN, config);
-  assert.equal(r.status, 201);
-  assert.equal(r.body.product, "STL Seller");
-  assert.equal(r.body.status, "Ativa");
-  assert.deepEqual(r.body.epicKeys, ["SELLER-256"]);
-  const u = await handleUpdate("features", r.body.id, { product: "  ", status: "Descontinuada" }, ADMIN, config);
-  assert.equal(u.body.product, "STL Seller");
-  assert.equal(u.body.status, "Descontinuada");
+  const f = await handleCreate("features", { name: "Calculadora", product: "STL Seller", epicKeys: ["SELLER-1", "SELLER-1"] }, ADMIN, config);
+  assert.equal(f.status, 201);
+  assert.deepEqual(f.body.epicKeys, ["SELLER-1"]);
+});
+
+test("KR guarda números, aceita vírgula e limpa com vazio", async () => {
+  const config = fakeConfig();
+  const { kr } = await tree(config);
+  assert.equal(kr.baseline, 20);
+  assert.equal(kr.current, null);
+  const u = await handleUpdate("keyResults", kr.id, { current: "24,5", target: "abc", dueDate: "2026-12-31" }, ADMIN, config);
+  assert.equal(u.body.current, 24.5);
+  assert.equal(u.body.target, 30);
+  assert.equal(u.body.dueDate, "2026-12-31");
+  assert.equal((await handleUpdate("keyResults", kr.id, { current: "" }, ADMIN, config)).body.current, null);
+});
+
+test("experimento: ICE de 1 a 10, status e resultado validados, épico vinculado", async () => {
+  const config = fakeConfig();
+  const { opp } = await tree(config);
+  const e = (await handleCreate("experiments", {
+    name: "Onboarding com 3 STLs sugeridos", opportunityId: opp.id, hypothesis: "Se sugerirmos…",
+    impact: 8, confidence: "6", ease: 11, status: "Rodando", outcome: "Talvez", dueDate: "2026-11-15", epicKey: "FLIX-9",
+  }, ADMIN, config)).body;
+  assert.equal(e.impact, 8);
+  assert.equal(e.confidence, 6);
+  assert.equal(e.ease, null);
+  assert.equal(e.status, "Rodando");
+  assert.equal(e.outcome, "");
+  assert.equal(e.epicKey, "FLIX-9");
+  const done = await handleUpdate("experiments", e.id, { status: "Concluído", outcome: "Validado", result: 27 }, ADMIN, config);
+  assert.equal(done.body.outcome, "Validado");
+  assert.equal(done.body.result, 27);
+});
+
+test("update não troca nome nem pai obrigatório por vazio", () => {
+  const base = { id: "a", name: "Nome", objectiveId: "obj_1" };
+  const next = applyFields("keyResults", base, { name: " ", objectiveId: "", epicKeys: ["X-1"] });
+  assert.equal(next.name, "Nome");
+  assert.equal(next.objectiveId, "obj_1");
+  assert.equal("epicKeys" in next, false);
+});
+
+test("pai com filhos não é apagado; sem filhos, sai", async () => {
+  const config = fakeConfig();
+  const { obj, kr, opp } = await tree(config);
+  const sub = (await handleCreate("opportunities", { name: "Sub", keyResultId: kr.id, parentId: opp.id }, ADMIN, config)).body;
+
+  assert.equal((await handleDelete("objectives", obj.id, ADMIN, config)).status, 409);
+  assert.equal((await handleDelete("keyResults", kr.id, ADMIN, config)).status, 409);
+  assert.equal((await handleDelete("opportunities", opp.id, ADMIN, config)).status, 409);
+
+  assert.equal((await handleDelete("opportunities", sub.id, ADMIN, config)).status, 200);
+  assert.equal((await handleDelete("opportunities", opp.id, ADMIN, config)).status, 200);
+  assert.equal((await handleDelete("keyResults", kr.id, ADMIN, config)).status, 200);
+  assert.equal((await handleDelete("objectives", obj.id, ADMIN, config)).status, 200);
+  assert.equal((await handleDelete("objectives", obj.id, ADMIN, config)).status, 404);
+});
+
+test("objetivo antigo (com epicKeys) continua legível e editável", async () => {
+  const config = fakeConfig();
+  await config.kv.set("jira:objectives", JSON.stringify([{ id: "obj_old", name: "Antigo", status: "Em andamento", epicKeys: ["X-1"] }]));
+  const u = await handleUpdate("objectives", "obj_old", { period: "2026-T4" }, ADMIN, config);
+  assert.equal(u.status, 200);
+  assert.equal(u.body.period, "2026-T4");
 });

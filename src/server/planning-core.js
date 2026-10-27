@@ -1,43 +1,107 @@
 /**
- * Objetivos, Features e Releases — as camadas de planejamento que não existem no
- * Jira nem na planilha (o produto e as iniciativas — épicos — vêm do Jira), guardadas só dentro deste app. Mesmo desenho das
- * Iniciativas (`initiatives-core.js`): uma lista JSON por tipo no Redis, leitura
- * pública, escrita só para `admin` ou `super`.
+ * Camadas de planejamento que não existem no Jira nem na planilha, guardadas só
+ * neste app: OKRs (Objetivos e Key Results), a árvore de Oportunidades com os
+ * Experimentos de growth, e as Features de cada produto. As Iniciativas ficam
+ * em `initiatives-core.js` (a mesma lista que o Roadmap já usa) e os épicos e
+ * produtos vêm do Jira.
  *
- * Um core para os dois tipos (`kind`), porque o CRUD é idêntico e só os campos
- * mudam. Roda no plugin do Vite (`planning-api.js`) e na função da Vercel
- * (`api/planning.js`), por isso não conhece `req` nem `res`.
+ *   Objetivo → Key Result → Iniciativa (→ épicos) e Oportunidade → Experimento
+ *   Produto (Jira) → Feature (→ épicos)
+ *
+ * Mesmo desenho das Iniciativas: uma lista JSON por tipo no Redis, leitura
+ * pública, escrita só para `admin` ou `super`. Um core para todos os tipos
+ * (`kind`), porque o CRUD é idêntico e só os campos mudam — cada tipo declara
+ * os seus em `fields`. Roda no plugin do Vite (`planning-api.js`) e na função
+ * da Vercel (`api/planning.js`), por isso não conhece `req` nem `res`.
  */
 import { loadConfig as loadInitiativesConfig, resolveSessionFromCookie } from "./initiatives-core.js";
 
 export { resolveSessionFromCookie };
+
+const SCORE = { type: "score" }; // 1–10, ou null
 
 export const KINDS = {
   objectives: {
     key: "jira:objectives",
     prefix: "obj",
     label: "Objetivo",
-    statuses: ["Em andamento", "Concluído", "Cancelado"],
-    defaultStatus: "Em andamento",
-    links: "epicKeys", // iniciativa = épico do Jira
+    fields: {
+      description: { type: "text" },
+      period: { type: "text" }, // ex.: 2026-T4
+      status: { type: "enum", options: ["Em andamento", "Concluído", "Cancelado"], default: "Em andamento" },
+    },
+  },
+  keyResults: {
+    key: "jira:key-results",
+    prefix: "kr",
+    label: "Key Result",
+    parent: { field: "objectiveId", kind: "objectives" },
+    fields: {
+      objectiveId: { type: "ref", required: true },
+      description: { type: "text" },
+      unit: { type: "text" }, // %, R$, usuários…
+      baseline: { type: "number" },
+      target: { type: "number" },
+      current: { type: "number" },
+      dueDate: { type: "date" },
+      status: { type: "enum", options: ["Em andamento", "Concluído", "Cancelado"], default: "Em andamento" },
+    },
+  },
+  opportunities: {
+    key: "jira:opportunities",
+    prefix: "opp",
+    label: "Oportunidade",
+    parent: { field: "keyResultId", kind: "keyResults" },
+    fields: {
+      keyResultId: { type: "ref", required: true },
+      parentId: { type: "ref" }, // sub-oportunidade
+      description: { type: "text" }, // dor, evidência
+      status: { type: "enum", options: ["Aberta", "Explorando", "Validada", "Descartada"], default: "Aberta" },
+    },
+  },
+  experiments: {
+    key: "jira:experiments",
+    prefix: "exp",
+    label: "Experimento",
+    parent: { field: "opportunityId", kind: "opportunities" },
+    fields: {
+      opportunityId: { type: "ref", required: true },
+      hypothesis: { type: "text" },
+      metric: { type: "text" },
+      unit: { type: "text" },
+      baseline: { type: "number" },
+      target: { type: "number" },
+      result: { type: "number" },
+      startDate: { type: "date" },
+      dueDate: { type: "date" },
+      status: { type: "enum", options: ["Ideia", "Rodando", "Analisando", "Concluído"], default: "Ideia" },
+      outcome: { type: "enum", options: ["", "Validado", "Invalidado", "Inconclusivo"], default: "" },
+      impact: SCORE,
+      confidence: SCORE,
+      ease: SCORE,
+      epicKey: { type: "ref" }, // épico do Jira em que o experimento virou
+    },
   },
   features: {
     key: "jira:features",
     prefix: "feat",
     label: "Feature",
-    statuses: ["Ativa", "Em construção", "Descontinuada"],
-    defaultStatus: "Ativa",
-    links: "epicKeys", // épicos que entregam ou evoluem a feature
-  },
-  releases: {
-    key: "jira:releases",
-    prefix: "rel",
-    label: "Release",
-    statuses: ["Planejada", "Lançada", "Cancelada"],
-    defaultStatus: "Planejada",
-    links: "epicKeys",
+    fields: {
+      product: { type: "text", required: true },
+      description: { type: "text" },
+      status: { type: "enum", options: ["Ativa", "Em construção", "Descontinuada"], default: "Ativa" },
+      epicKeys: { type: "list" },
+    },
   },
 };
+
+// Quem aponta para cada tipo — apagar um pai com filhos é recusado, para não
+// deixar KR sem objetivo ou experimento sem oportunidade.
+const CHILDREN = {};
+for (const [kind, def] of Object.entries(KINDS)) {
+  if (def.parent) (CHILDREN[def.parent.kind] = CHILDREN[def.parent.kind] || []).push({ kind, field: def.parent.field });
+}
+CHILDREN.opportunities = [...(CHILDREN.opportunities || []), { kind: "opportunities", field: "parentId" }];
 
 // hasOwn: `KINDS["constructor"]` existiria via protótipo e passaria na validação.
 function isKind(kind) {
@@ -71,7 +135,7 @@ function forbidden() {
 }
 
 function unknownKind() {
-  return { status: 400, body: { message: "kind deve ser objectives, features ou releases" } };
+  return { status: 400, body: { message: `kind deve ser um de: ${Object.keys(KINDS).join(", ")}` } };
 }
 
 async function readAll(config, kind) {
@@ -95,26 +159,59 @@ function genId(kind) {
   return `${KINDS[kind].prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function strList(value) {
-  return Array.isArray(value) ? value.filter((v) => typeof v === "string" && v) : null;
+/** Converte um valor do cliente para o tipo do campo. `undefined` = valor
+    inválido, o campo fica como estava. */
+function coerce(spec, value) {
+  switch (spec.type) {
+    case "text":
+    case "ref":
+      return typeof value === "string" ? value.trim() : undefined;
+    case "enum":
+      return typeof value === "string" && spec.options.includes(value) ? value : undefined;
+    case "date":
+      if (typeof value !== "string") return undefined;
+      return value === "" || /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : undefined;
+    case "number": {
+      if (value === null || value === "") return null;
+      const n = typeof value === "number" ? value : Number(String(value).replace(",", "."));
+      return Number.isFinite(n) ? n : undefined;
+    }
+    case "score": {
+      if (value === null || value === "") return null;
+      const n = Number(value);
+      return Number.isInteger(n) && n >= 1 && n <= 10 ? n : undefined;
+    }
+    case "list":
+      return Array.isArray(value) ? [...new Set(value.filter((v) => typeof v === "string" && v))] : undefined;
+    default:
+      return undefined;
+  }
 }
 
-/** Aplica só os campos reconhecidos de `patch` sobre `base`. Texto vazio no
-    nome é ignorado (nome é obrigatório); `description` e `date` aceitam vazio. */
+/** Aplica só os campos reconhecidos de `patch` sobre `base`. Nome vazio é
+    ignorado (nome é obrigatório), assim como um campo obrigatório vazio. */
 export function applyFields(kind, base, patch) {
-  const def = KINDS[kind];
   const next = { ...base };
   if (typeof patch.name === "string" && patch.name.trim()) next.name = patch.name.trim();
-  if (typeof patch.description === "string") next.description = patch.description.trim();
-  if (typeof patch.status === "string" && def.statuses.includes(patch.status)) next.status = patch.status;
-  const links = strList(patch[def.links]);
-  if (links) next[def.links] = [...new Set(links)];
-  if (kind === "features" && typeof patch.product === "string" && patch.product.trim()) next.product = patch.product.trim();
-  if (kind === "releases" && typeof patch.date === "string") {
-    const d = patch.date.trim();
-    if (d === "" || /^\d{4}-\d{2}-\d{2}$/.test(d)) next.date = d;
+  for (const [field, spec] of Object.entries(KINDS[kind].fields)) {
+    if (!(field in patch)) continue;
+    const value = coerce(spec, patch[field]);
+    if (value === undefined) continue;
+    if (spec.required && !value) continue;
+    next[field] = value;
   }
   return next;
+}
+
+function defaults(kind) {
+  const out = {};
+  for (const [field, spec] of Object.entries(KINDS[kind].fields)) {
+    if (spec.type === "enum") out[field] = spec.default;
+    else if (spec.type === "list") out[field] = [];
+    else if (spec.type === "number" || spec.type === "score") out[field] = null;
+    else out[field] = "";
+  }
+  return out;
 }
 
 export async function handleList(kind, config) {
@@ -127,22 +224,13 @@ export async function handleCreate(kind, input, session, config) {
   if (!canWrite(session)) return forbidden();
   const name = typeof input.name === "string" ? input.name.trim() : "";
   if (!name) return { status: 400, body: { message: "Nome é obrigatório" } };
-  const product = typeof input.product === "string" ? input.product.trim() : "";
-  if (kind === "features" && !product) return { status: 400, body: { message: "Produto é obrigatório" } };
 
   const def = KINDS[kind];
-  const base = {
-    id: genId(kind),
-    name,
-    description: "",
-    status: def.defaultStatus,
-    [def.links]: [],
-    ...(kind === "releases" ? { date: "" } : {}),
-    ...(kind === "features" ? { product } : {}),
-    createdBy: session.user.email || null,
-    createdAt: new Date().toISOString(),
-  };
+  const base = { id: genId(kind), name, ...defaults(kind), createdBy: session.user.email || null, createdAt: new Date().toISOString() };
   const item = applyFields(kind, base, input);
+  const missing = Object.entries(def.fields).find(([field, spec]) => spec.required && !item[field]);
+  if (missing) return { status: 400, body: { message: `${missing[0]} é obrigatório` } };
+
   await writeAll(config, kind, [...(await readAll(config, kind)), item]);
   return { status: 201, body: item };
 }
@@ -167,9 +255,16 @@ export async function handleDelete(kind, id, session, config) {
   if (!id) return { status: 400, body: { message: "id é obrigatório" } };
 
   const list = await readAll(config, kind);
-  const next = list.filter((i) => i.id !== id);
-  if (next.length === list.length) return { status: 404, body: { message: `${KINDS[kind].label} não encontrado` } };
+  if (!list.some((i) => i.id === id)) return { status: 404, body: { message: `${KINDS[kind].label} não encontrado` } };
 
-  await writeAll(config, kind, next);
+  for (const child of CHILDREN[kind] || []) {
+    const children = await readAll(config, child.kind);
+    const count = children.filter((c) => c[child.field] === id).length;
+    if (count) {
+      return { status: 409, body: { message: `Não dá para excluir: ${count} ${KINDS[child.kind].label.toLowerCase()}(s) ainda dependem deste item` } };
+    }
+  }
+
+  await writeAll(config, kind, list.filter((i) => i.id !== id));
   return { status: 200, body: { ok: true } };
 }
