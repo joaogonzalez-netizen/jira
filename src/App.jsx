@@ -3815,6 +3815,9 @@ function OpportunitiesScreen() {
 
 /* ---- Épicos: o que vem do Jira, com a iniciativa, o KR e a feature ---- */
 
+// Ordem do fluxo no Jira; status novos entram no fim, em ordem alfabética.
+const EPIC_STATUS_ORDER = ["Backlog", "Produto", "Em design", "Em refinamento Técnico", "Pronto P/ DEV", "Em DEV", "Em rollout", "Done"];
+
 function EpicsScreen() {
   const { T, PRODUCT_STYLE } = useTheme();
   const { epics, lastSync } = useData();
@@ -3825,6 +3828,7 @@ function EpicsScreen() {
   const [status, setStatus] = useState("all");
   const [initiative, setInitiative] = useState("all");
   const [openKey, setOpenKey] = useState(null);
+  const [view, setView] = useState("board"); // board | table
 
   const statuses = useMemo(() => [...new Set(epics.map((e) => e.status).filter(Boolean))].sort(), [epics]);
   const rows = useMemo(() => {
@@ -3841,10 +3845,19 @@ function EpicsScreen() {
 
   const openEpic = openKey ? epics.find((e) => e.key === openKey) : null;
   const cols = "90px minmax(200px, 1fr) 105px 140px 120px 150px 150px 120px";
+  const columns = useMemo(() => {
+    const present = [...new Set(rows.map((e) => e.status || "Sem status"))];
+    return [...EPIC_STATUS_ORDER.filter((s) => present.includes(s)), ...present.filter((s) => !EPIC_STATUS_ORDER.includes(s)).sort()];
+  }, [rows]);
+  const viewBtn = (key, label) => (
+    <button key={key} onClick={() => setView(key)} style={{ ...btnStyle(T), background: view === key ? "rgba(81,102,230,0.12)" : T.bg1, color: view === key ? ACCENT : T.ink1, borderColor: view === key ? "transparent" : T.border2 }}>{label}</button>
+  );
 
   return (
     <ScreenShell>
       <PageTitle title="Épicos" sub={`${rows.length} de ${epics.length} épicos do Jira${lastSync ? ` · planilha de ${fmtSyncTime(lastSync)}` : ""}`}>
+        {viewBtn("board", "Quadro")}
+        {viewBtn("table", "Tabela")}
         <input placeholder="Buscar chave, título ou responsável" value={q} onChange={(e) => setQ(e.target.value)} style={{ ...fieldStyle(T), width: 240 }} />
         <ProductFilter value={product} onChange={setProduct} />
         <select value={status} onChange={(e) => setStatus(e.target.value)} style={fieldStyle(T)}>
@@ -3858,6 +3871,51 @@ function EpicsScreen() {
         </select>
       </PageTitle>
 
+      {view === "board" ? (
+        <div className="pp-scroll" style={{ display: "flex", gap: 10, overflowX: "auto", alignItems: "flex-start", paddingBottom: 8 }}>
+          {columns.map((s) => {
+            const col = rows.filter((e) => (e.status || "Sem status") === s);
+            const sample = col[0];
+            const dot = sample && isEpicDone(sample) ? DONE_COLOR : sample && epicBucket(sample) === "doing" ? ACCENT : T.borderStrong;
+            return (
+              <div key={s} style={{ flex: "0 0 264px", background: T.bg1, borderRadius: 10, padding: 10 }}>
+                <div className="flex items-center justify-between" style={{ marginBottom: 8, padding: "0 2px" }}>
+                  <span className="flex items-center" style={{ gap: 6, fontSize: 12.5, fontWeight: 600, color: T.ink0 }}>
+                    <span style={{ width: 8, height: 8, borderRadius: 999, background: dot }} />{s}
+                  </span>
+                  <span style={{ fontSize: 11, color: T.ink2 }}>{col.length}</span>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {col.map((e) => {
+                    const style = PRODUCT_STYLE[e.project];
+                    const init = idx.initiativeByEpic[e.key];
+                    const feats = idx.featuresByEpic[e.key];
+                    return (
+                      <div key={e.key} onClick={() => setOpenKey(e.key)} className="pp-card" style={{ ...cardStyle(T), padding: 10, cursor: "pointer" }}>
+                        <div className="flex items-center justify-between" style={{ gap: 6, marginBottom: 4 }}>
+                          <a href={`${JIRA_BROWSE}${e.key}`} target="_blank" rel="noreferrer" onClick={(ev) => ev.stopPropagation()} title="Abrir no Jira" style={{ color: ACCENT, textDecoration: "none", fontWeight: 500, fontSize: 12 }}>{e.key}</a>
+                          {style ? <Badge bg={style.subtle} color={style.text}>{e.project}</Badge> : <span style={{ fontSize: 11, color: T.ink2 }}>{e.project || ""}</span>}
+                        </div>
+                        <div style={{ fontSize: 12.5, fontWeight: 500, color: T.ink0, lineHeight: 1.35, display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }} title={e.summary}>{e.summary}</div>
+                        {(init || feats) && (
+                          <div style={{ ...ellipsis, fontSize: 11, color: T.ink2, marginTop: 6 }}>
+                            {[init && init.name, feats && feats.map((f) => f.name).join(", ")].filter(Boolean).join(" · ")}
+                          </div>
+                        )}
+                        <div className="flex items-center" style={{ gap: 6, marginTop: 8 }}>
+                          <span style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 18, height: 18, borderRadius: 999, background: T.bg2, color: T.ink1, fontSize: 8.5, fontWeight: 700, textTransform: "uppercase", flexShrink: 0 }}>{e.assignee ? initials(e.assignee) : "—"}</span>
+                          <span style={{ ...ellipsis, fontSize: 11, color: e.assignee ? T.ink1 : T.ink2 }}>{e.assignee ? shortName(e.assignee) : "sem responsável"}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+          {columns.length === 0 && <Muted>Nenhum épico com esses filtros.</Muted>}
+        </div>
+      ) : (
       <div style={{ minWidth: 1040, border: `1px solid ${T.border2}`, borderRadius: 10, overflow: "hidden" }}>
         <div style={{ display: "grid", gridTemplateColumns: cols, gap: 12, padding: "8px 12px", background: T.bg1, fontSize: 11.5, fontWeight: 500, color: T.ink2 }}>
           <span>Chave</span><span>Título</span><span>Produto</span><span>Status</span><span>Responsável</span><span>Iniciativa</span><span>Key Result</span><span>Feature</span>
@@ -3882,6 +3940,7 @@ function EpicsScreen() {
         })}
         {rows.length === 0 && <div style={{ padding: 16, fontSize: 12.5, color: T.ink2 }}>Nenhum épico com esses filtros.</div>}
       </div>
+      )}
 
       {openEpic && <EpicDrawer epic={openEpic} onClose={() => setOpenKey(null)} canEdit={false} jiraConfigured={false} />}
     </ScreenShell>
