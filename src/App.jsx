@@ -804,12 +804,9 @@ function Badge({ children, bg, color }) {
 function EpicDrawer({ epic, onClose, weeks, onSave, onDelete, canEdit, jiraConfigured }) {
   const { T, PRODUCT_STYLE } = useTheme();
   const { canCreateCard } = useAuth();
-  const { initiatives, initiativeByEpicKey, assignEpicToInitiative } = useInitiatives();
-  const { items: planningItems } = usePlanning();
-  const initiativeLabel = (i) => {
-    const kr = planningItems.keyResults.find((k) => k.id === i.keyResultId);
-    return kr ? `${i.name} · ${kr.name}` : i.name;
-  };
+  // "Iniciativa" aqui é a Feature do épico (as camadas do Roadmap).
+  const { initiatives, initiativeByEpicKey, assignEpicToInitiative } = useRoadmapFeatures();
+  const initiativeLabel = (i) => i.name;
   const schedulable = !!(weeks && onSave);
   const [summary, setSummary] = useState(epic?.summary || "");
   const [lane, setLane] = useState(epic?.roadmapLane || PRIORIZACAO_KEY);
@@ -944,7 +941,7 @@ function EpicDrawer({ epic, onClose, weeks, onSave, onDelete, canEdit, jiraConfi
 
             {draftProject && (
               <>
-                <p style={{ marginTop: 14, marginBottom: 6, fontSize: 12, fontWeight: 500, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>Iniciativa</p>
+                <p style={{ marginTop: 14, marginBottom: 6, fontSize: 12, fontWeight: 500, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>Feature</p>
                 <select
                   value={initiativeByEpicKey[epic.key]?.id || ""}
                   onChange={(e) => assignEpicToInitiative(epic.key, e.target.value || null)}
@@ -972,7 +969,7 @@ function EpicDrawer({ epic, onClose, weeks, onSave, onDelete, canEdit, jiraConfi
 
             {assigneeField}
 
-            <p style={{ marginTop: 14, marginBottom: 6, fontSize: 12, fontWeight: 500, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>Iniciativa</p>
+            <p style={{ marginTop: 14, marginBottom: 6, fontSize: 12, fontWeight: 500, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>Feature</p>
             <select
               value={initiativeByEpicKey[epic.key]?.id || ""}
               onChange={(e) => assignEpicToInitiative(epic.key, e.target.value || null)}
@@ -1915,7 +1912,7 @@ function RoadmapScreen() {
   // Gantt, fila, nome, duração, exclusão). Épico da planilha não tem dono, então
   // só o super o move. Reordenar as listas mexe na ordem de todo mundo: super.
   const { user, canCreateCard, ownsCard, canWriteShared } = useAuth();
-  const { initiatives, createInitiative, deleteInitiative, assignEpicToInitiative, updateInitiative, initiativeByEpicKey } = useInitiatives();
+  const { initiatives, createInitiative, deleteInitiative, assignEpicToInitiative, updateInitiative, initiativeByEpicKey } = useRoadmapFeatures();
   const [weekCount, setWeekCount] = useState(13);
   // "produto" (linhas = produtos, com iniciativas) ou "responsavel" (linhas = pessoas; as barras mantêm a cor do produto).
   const [viewMode, setViewModeState] = useState(() => {
@@ -2324,7 +2321,7 @@ function RoadmapScreen() {
             )}
             {canCreateCard && (
               <button onClick={() => { setNewInitError(null); setShowAddInitiative(true); }} style={{ display: "flex", alignItems: "center", gap: 5, borderRadius: 8, padding: "6px 10px", fontSize: 12, fontWeight: 500, border: `1px solid ${T.border2}`, cursor: "pointer", background: T.bg1, color: T.ink0, fontFamily: "'Inter Tight', sans-serif" }}>
-                <Layers size={12} /> Nova iniciativa
+                <Layers size={12} /> Nova feature
               </button>
             )}
             <div className="flex items-center" style={{ gap: 4 }}>
@@ -2389,7 +2386,7 @@ function RoadmapScreen() {
             não depende de position:sticky sobre um grid rolável (fonte dos vazamentos). */}
         <div style={{ flexShrink: 0, display: "grid", gridTemplateColumns: byAssignee ? `${PROD_COL_PX + INIT_COL_PX}px` : `${PROD_COL_PX}px ${INIT_COL_PX}px`, gridTemplateRows: `32px repeat(${totalRows - 1}, 32px)`, borderRight: `1px solid ${T.border2}` }}>
           <div style={{ gridColumn: 1, gridRow: 1, borderBottom: `1px solid ${T.border2}` }} />
-          {!byAssignee && <div style={{ gridColumn: 2, gridRow: 1, borderBottom: `1px solid ${T.border2}`, display: "flex", alignItems: "center", fontSize: 11, fontWeight: 600, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>Iniciativa</div>}
+          {!byAssignee && <div style={{ gridColumn: 2, gridRow: 1, borderBottom: `1px solid ${T.border2}`, display: "flex", alignItems: "center", fontSize: 11, fontWeight: 600, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>Feature</div>}
 
           {laneMeta.map((lane) => {
             const style = lane.isAssignee ? assigneeStyle : PRODUCT_STYLE[lane.product];
@@ -2473,7 +2470,7 @@ function RoadmapScreen() {
                         {canCreateCard && (
                           <button
                             onClick={() => deleteInitiative(g.initiative.id)}
-                            title="Excluir iniciativa"
+                            title="Excluir feature"
                             style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 16, height: 16, flexShrink: 0, borderRadius: 4, border: "none", background: "transparent", color: style.text, cursor: "pointer", opacity: 0.8 }}
                           >
                             <X size={11} />
@@ -2602,12 +2599,12 @@ function RoadmapScreen() {
       {showAddInitiative && (
         <div onClick={() => setShowAddInitiative(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50 }}>
           <div onClick={(e) => e.stopPropagation()} style={{ background: T.bg1, border: `1px solid ${T.border2}`, borderRadius: 12, padding: 20, width: 320, boxShadow: T.cardShadow }}>
-            <h3 style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", fontWeight: 700, fontSize: 15, color: T.ink0, marginBottom: 14 }}>Nova iniciativa</h3>
+            <h3 style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", fontWeight: 700, fontSize: 15, color: T.ink0, marginBottom: 14 }}>Nova feature</h3>
 
             <p style={{ fontSize: 12, fontWeight: 500, color: T.ink1, marginBottom: 6, fontFamily: "'Inter Tight', sans-serif" }}>Nome</p>
             <input
               autoFocus value={newInitName} onChange={(e) => setNewInitName(e.target.value)}
-              placeholder="Nome da iniciativa"
+              placeholder="Nome da feature (ex.: Calculadora)"
               style={{ width: "100%", borderRadius: 8, border: `1px solid ${T.border2}`, background: T.bg0, color: T.ink0, fontSize: 13, padding: "8px 10px", fontFamily: "'Inter Tight', sans-serif" }}
             />
 
@@ -2629,7 +2626,7 @@ function RoadmapScreen() {
                   if (!name) return;
                   const r = await createInitiative(name, newInitProduct);
                   if (r.ok) { setShowAddInitiative(false); setNewInitName(""); }
-                  else setNewInitError(r.message || "Não foi possível criar a iniciativa.");
+                  else setNewInitError(r.message || "Não foi possível criar a feature.");
                 }}
                 style={{ borderRadius: 8, padding: "7px 14px", fontSize: 12.5, fontWeight: 600, border: "none", cursor: "pointer", background: "#5166e6", color: "#fff", fontFamily: "'Inter Tight', sans-serif" }}
               >
@@ -2781,8 +2778,46 @@ function dueState(item, doneStatus) {
 
 const PLANNING_LOAD = ["objectives", "keyResults", "opportunities", "experiments", "features"];
 
+/** Espelha a regra do servidor: em Features um épico fica numa só. */
+function releaseLocalEpics(kind, list, item) {
+  if (kind !== "features" || !(item.epicKeys || []).length) return list;
+  const mine = new Set(item.epicKeys);
+  return list.map((o) => (o.id !== item.id && (o.epicKeys || []).some((k) => mine.has(k)) ? { ...o, epicKeys: o.epicKeys.filter((k) => !mine.has(k)) } : o));
+}
+
 const PlanningCtx = createContext(null);
 function usePlanning() { return useContext(PlanningCtx); }
+
+/** As camadas do Roadmap são Features (a parte do produto que o épico constrói).
+    Mesma forma que o Roadmap usava com as iniciativas, para não reescrever o Gantt. */
+function useRoadmapFeatures() {
+  const { items, create, update, remove } = usePlanning();
+  const features = items.features;
+  const featureByEpicKey = useMemo(() => {
+    const map = {};
+    features.forEach((f) => (f.epicKeys || []).forEach((k) => { map[k] = f; }));
+    return map;
+  }, [features]);
+  const createFeature = useCallback(async (name, product) => {
+    const r = await create("features", { name, product, status: "Ativa" });
+    return r.ok ? { ok: true, initiative: r.data } : r;
+  }, [create]);
+  const updateFeature = useCallback((id, patch) => update("features", id, patch), [update]);
+  const deleteFeature = useCallback((id) => remove("features", id), [remove]);
+  // O servidor tira o épico da feature anterior ao vincular na nova.
+  const assignEpicToFeature = useCallback(async (epicKey, featureId) => {
+    const current = featureByEpicKey[epicKey];
+    if ((current ? current.id : null) === featureId) return { ok: true };
+    if (!featureId) return current ? update("features", current.id, { epicKeys: current.epicKeys.filter((k) => k !== epicKey) }) : { ok: true };
+    const target = features.find((f) => f.id === featureId);
+    if (!target) return { ok: false, message: "Feature não encontrada" };
+    return update("features", featureId, { epicKeys: [...(target.epicKeys || []), epicKey] });
+  }, [features, featureByEpicKey, update]);
+  return {
+    initiatives: features, initiativeByEpicKey: featureByEpicKey,
+    createInitiative: createFeature, updateInitiative: updateFeature, deleteInitiative: deleteFeature, assignEpicToInitiative: assignEpicToFeature,
+  };
+}
 
 /** Produtos = projetos que aparecem nos épicos do Jira. Os conhecidos primeiro,
     na ordem de sempre; um projeto novo no Jira entra sozinho, no fim. */
@@ -2837,14 +2872,14 @@ function PlanningProvider({ children }) {
   const create = useCallback(async (kind, fields) => {
     if (!canCreateCard) return { ok: false };
     const r = await send("POST", "/api/planning", { kind, ...fields });
-    if (r.ok) setItems((p) => ({ ...p, [kind]: [...p[kind], r.data] }));
+    if (r.ok) setItems((p) => ({ ...p, [kind]: [...releaseLocalEpics(kind, p[kind], r.data), r.data] }));
     return r;
   }, [canCreateCard, send]);
 
   const update = useCallback(async (kind, id, patch) => {
     if (!canCreateCard) return { ok: false };
     const r = await send("PATCH", "/api/planning", { kind, id, ...patch });
-    if (r.ok) setItems((p) => ({ ...p, [kind]: p[kind].map((i) => (i.id === id ? r.data : i)) }));
+    if (r.ok) setItems((p) => ({ ...p, [kind]: releaseLocalEpics(kind, p[kind], r.data).map((i) => (i.id === id ? r.data : i)) }));
     return r;
   }, [canCreateCard, send]);
 
@@ -3917,6 +3952,7 @@ function ProductsScreen() {
   );
 }
 
+const SIDEBAR_KEY = "pp-sidebar-collapsed";
 const SIDEBAR_GROUPS = [
   { title: null, items: [["visao", "Visão geral", LayoutDashboard]] },
   { title: "Estratégia", items: [["okrs", "OKRs", Target], ["iniciativas", "Iniciativas", Sparkles], ["oportunidades", "Oportunidades", Lightbulb]] },
@@ -3930,6 +3966,10 @@ function AppShell() {
   const { syncFromSheet, lastSync, syncStatus, syncError } = useData();
   const { user, role, logout, canWriteShared } = useAuth();
   const [menu, setMenu] = useState("visao");
+  // Menu recolhido = só os ícones. Preferência deste navegador.
+  const [collapsed, setCollapsed] = useState(() => { try { return localStorage.getItem(SIDEBAR_KEY) === "1"; } catch (e) { return false; } });
+  const toggleSidebar = () => setCollapsed((c) => { try { localStorage.setItem(SIDEBAR_KEY, c ? "0" : "1"); } catch (e) {} return !c; });
+  const sidebarWidth = collapsed ? 64 : 224;
   const [showSheetConfig, setShowSheetConfig] = useState(false);
 
   return (
@@ -3943,11 +3983,21 @@ function AppShell() {
         @keyframes pp-spin-anim { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
       `}</style>
 
-      <aside style={{ width: 224, position: "fixed", top: 0, bottom: 0, left: 0, zIndex: 40, overflowY: "auto", borderRight: `1px solid ${T.border2}`, background: T.bg1, padding: "16px 12px", boxSizing: "border-box" }}>
-        <div style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", fontWeight: 700, fontSize: 15, color: T.ink0, padding: "2px 8px 16px" }}>Product Ops</div>
+      <aside style={{ width: sidebarWidth, position: "fixed", top: 0, bottom: 0, left: 0, zIndex: 40, overflowY: "auto", overflowX: "hidden", borderRight: `1px solid ${T.border2}`, background: T.bg1, padding: collapsed ? "14px 10px" : "14px 12px", boxSizing: "border-box", transition: "width .15s ease" }}>
+        <div className="flex items-center" style={{ justifyContent: collapsed ? "center" : "space-between", gap: 8, padding: collapsed ? "0 0 14px" : "0 0 14px 8px" }}>
+          {!collapsed && <span style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", fontWeight: 700, fontSize: 15, color: T.ink0, whiteSpace: "nowrap" }}>Product Ops</span>}
+          <button
+            onClick={toggleSidebar} title={collapsed ? "Mostrar menu" : "Esconder menu"} aria-label={collapsed ? "Mostrar menu" : "Esconder menu"}
+            style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, flexShrink: 0, borderRadius: 999, border: `1px solid ${T.border2}`, background: T.bg0, color: T.ink1, cursor: "pointer" }}
+          >
+            {collapsed ? <ChevronRight size={15} /> : <ChevronLeft size={15} />}
+          </button>
+        </div>
         {SIDEBAR_GROUPS.map((group) => (
-          <div key={group.title || "inicio"} style={{ marginBottom: 18 }}>
-            {group.title && <p style={{ fontSize: 12, fontWeight: 500, color: T.ink2, margin: "0 0 6px", padding: "0 8px" }}>{group.title}</p>}
+          <div key={group.title || "inicio"} style={{ marginBottom: collapsed ? 10 : 18 }}>
+            {group.title && (collapsed
+              ? <div style={{ height: 1, background: T.border2, margin: "0 6px 10px" }} />
+              : <p style={{ fontSize: 12, fontWeight: 500, color: T.ink2, margin: "0 0 6px", padding: "0 8px" }}>{group.title}</p>)}
             {group.items.map(([key, label, Icon]) => {
               const active = menu === key;
               return (
@@ -3955,14 +4005,15 @@ function AppShell() {
                   key={key}
                   onClick={() => setMenu(key)}
                   aria-current={active ? "page" : undefined}
+                  title={collapsed ? label : undefined} aria-label={label}
                   style={{
-                    display: "flex", alignItems: "center", gap: 10, width: "100%", height: 36, padding: "0 10px", marginBottom: 2,
+                    display: "flex", alignItems: "center", justifyContent: collapsed ? "center" : "flex-start", gap: 10, width: "100%", height: 36, padding: collapsed ? 0 : "0 10px", marginBottom: 2, whiteSpace: "nowrap",
                     borderRadius: 8, border: "none", cursor: "pointer", textAlign: "left",
                     background: active ? "rgba(81,102,230,0.12)" : "transparent",
                     color: active ? "#5166e6" : T.ink0, fontSize: 14, fontWeight: 500, fontFamily: "'Inter Tight', sans-serif",
                   }}
                 >
-                  <Icon size={16} /> {label}
+                  <Icon size={16} style={{ flexShrink: 0 }} /> {!collapsed && label}
                 </button>
               );
             })}
@@ -3970,7 +4021,7 @@ function AppShell() {
         ))}
       </aside>
 
-      <div style={{ flex: 1, minWidth: 0, marginLeft: 224, display: "flex", flexDirection: "column" }}>
+      <div style={{ flex: 1, minWidth: 0, marginLeft: sidebarWidth, display: "flex", flexDirection: "column", transition: "margin-left .15s ease" }}>
       <div style={{ borderBottom: `1px solid ${T.border1}`, padding: "0 20px", display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 4, height: 46 }}>
         <div className="flex items-center" style={{ gap: 8 }}>
           {syncStatus === "error" && (
