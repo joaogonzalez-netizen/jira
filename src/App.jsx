@@ -2718,164 +2718,45 @@ function AuthGate({ children }) {
 }
 
 /* =====================================================================
-   INICIATIVAS — árvore Produto → Iniciativa → Épico
-   ===================================================================== */
-
-function IniciativasScreen() {
-  const { T, PRODUCT_STYLE } = useTheme();
-  const { epics } = useData();
-  const { canCreateCard } = useAuth();
-  const { initiatives, status, error, createInitiative, updateInitiative, deleteInitiative, assignEpicToInitiative } = useInitiatives();
-  const [newNameByProduct, setNewNameByProduct] = useState({});
-
-  const epicsByProduct = useMemo(() => {
-    const map = {};
-    PRODUCTS.forEach((p) => { map[p] = []; });
-    epics.forEach((e) => { if (map[e.project]) map[e.project].push(e); });
-    return map;
-  }, [epics]);
-
-  if (status === "error") {
-    return (
-      <div style={{ padding: 24, fontSize: 13, color: T.ink1 }}>
-        Não foi possível carregar as iniciativas{error ? `: ${error}` : ""}.
-      </div>
-    );
-  }
-
-  return (
-    <div className="pp-scroll" style={{ overflowY: "auto", flex: 1, padding: "20px 24px" }}>
-      <h1 style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", fontWeight: 700, fontSize: 18, color: T.ink0, marginBottom: 16 }}>Iniciativas</h1>
-
-      {PRODUCTS.map((product) => {
-        const prodInitiatives = initiatives.filter((i) => i.product === product);
-        const prodEpics = epicsByProduct[product] || [];
-        const assignedKeys = new Set(prodInitiatives.flatMap((i) => i.epicKeys || []));
-        const unassigned = prodEpics.filter((e) => !assignedKeys.has(e.key));
-        const style = PRODUCT_STYLE[product];
-        if (prodEpics.length === 0 && prodInitiatives.length === 0) return null;
-
-        return (
-          <div key={product} style={{ marginBottom: 28 }}>
-            <div className="flex items-center justify-between" style={{ marginBottom: 10 }}>
-              <span style={{ fontSize: 13, fontWeight: 600, color: style ? style.text : T.ink0 }}>{product}</span>
-              {canCreateCard && (
-                <div className="flex items-center" style={{ gap: 6 }}>
-                  <input
-                    placeholder="Nova iniciativa"
-                    value={newNameByProduct[product] || ""}
-                    onChange={(e) => setNewNameByProduct((prev) => ({ ...prev, [product]: e.target.value }))}
-                    style={{ borderRadius: 8, border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink0, fontSize: 12.5, padding: "6px 8px", fontFamily: "'Inter Tight', sans-serif" }}
-                  />
-                  <button
-                    onClick={async () => {
-                      const name = (newNameByProduct[product] || "").trim();
-                      if (!name) return;
-                      const r = await createInitiative(name, product);
-                      if (r.ok) setNewNameByProduct((prev) => ({ ...prev, [product]: "" }));
-                    }}
-                    style={{ borderRadius: 8, padding: "6px 10px", fontSize: 12, fontWeight: 500, border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink0, cursor: "pointer", fontFamily: "'Inter Tight', sans-serif" }}
-                  >
-                    Criar
-                  </button>
-                </div>
-              )}
-            </div>
-
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {prodInitiatives.map((init) => {
-                const initEpics = (init.epicKeys || []).map((k) => prodEpics.find((e) => e.key === k)).filter(Boolean);
-                return (
-                  <div key={init.id} style={{ border: `1px solid ${T.border2}`, borderRadius: 10, padding: 12 }}>
-                    <div className="flex items-center justify-between">
-                      <span style={{ fontSize: 13, fontWeight: 500, color: T.ink0 }}>{init.name}</span>
-                      <div className="flex items-center" style={{ gap: 6 }}>
-                        <span style={{ fontSize: 11, color: T.ink2 }}>{initEpics.length} épico{initEpics.length === 1 ? "" : "s"}</span>
-                        {canCreateCard && (
-                          <button onClick={() => deleteInitiative(init.id)} title="Excluir iniciativa" style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 22, height: 22, borderRadius: 6, border: "none", background: "transparent", color: T.ink1, cursor: "pointer" }}><Trash2 size={13} /></button>
-                        )}
-                      </div>
-                    </div>
-
-                    <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
-                      {initEpics.map((e) => (
-                        <div key={e.key} className="flex items-center justify-between" style={{ fontSize: 12, color: T.ink1 }}>
-                          <span>{e.key} — {e.summary}</span>
-                          {canCreateCard && (
-                            <button
-                              onClick={() => assignEpicToInitiative(e.key, null)}
-                              style={{ border: "none", background: "transparent", color: T.ink2, cursor: "pointer", fontSize: 11, fontFamily: "'Inter Tight', sans-serif" }}
-                            >
-                              remover
-                            </button>
-                          )}
-                        </div>
-                      ))}
-                      {initEpics.length === 0 && <span style={{ fontSize: 12, color: T.ink2 }}>Sem épicos ainda.</span>}
-                    </div>
-
-                    {canCreateCard && unassigned.length > 0 && (
-                      <div style={{ marginTop: 8 }}>
-                        <select
-                          value=""
-                          onChange={(e) => { if (e.target.value) assignEpicToInitiative(e.target.value, init.id); }}
-                          style={{ width: "100%", borderRadius: 8, border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink0, fontSize: 12.5, padding: "6px 8px", fontFamily: "'Inter Tight', sans-serif" }}
-                        >
-                          <option value="">Adicionar épico…</option>
-                          {unassigned.map((e) => <option key={e.key} value={e.key}>{e.key} — {e.summary}</option>)}
-                        </select>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-
-            {unassigned.length > 0 && (
-              <div style={{ marginTop: 10 }}>
-                <p style={{ fontSize: 11.5, fontWeight: 500, color: T.ink2, marginBottom: 4 }}>Sem iniciativa</p>
-                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                  {unassigned.map((e) => (
-                    <span key={e.key} style={{ fontSize: 12, color: T.ink1 }}>{e.key} — {e.summary}</span>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-/* =====================================================================
-   PLANEJAMENTO — Features (épicos do Jira), Objetivos e Releases.
-   Features só lê o que já vem da planilha/Jira; Objetivos e Releases são
-   camadas próprias do app, guardadas em /api/planning (Redis).
+   PLANEJAMENTO — hierarquia: Objetivo → Iniciativas (épicos do Jira).
+   Produto (vem do Jira) → Features (cadastradas aqui) → épicos que as
+   entregam. Releases agrupam épicos. Objetivos, Features e Releases moram
+   em /api/planning (Redis); produtos e épicos vêm da planilha/Jira.
    ===================================================================== */
 
 const JIRA_BROWSE = "https://joaogonzalezstlflix.atlassian.net/browse/";
 const isEpicDone = (e) => e.status === "Done" || e.stage === "Concluído";
+const PLANNING_LOAD = ["objectives", "features", "releases"];
 
 const PlanningCtx = createContext(null);
 function usePlanning() { return useContext(PlanningCtx); }
 
+/** Produtos = projetos que aparecem nos épicos do Jira. Os conhecidos primeiro,
+    na ordem de sempre; um projeto novo no Jira entra sozinho, no fim. */
+function useProducts() {
+  const { epics } = useData();
+  return useMemo(() => {
+    const seen = new Set(epics.map((e) => e.project).filter(Boolean));
+    return [...PRODUCTS.filter((p) => seen.has(p)), ...[...seen].filter((p) => !PRODUCTS.includes(p)).sort()];
+  }, [epics]);
+}
+
 function PlanningProvider({ children }) {
   const { canCreateCard } = useAuth();
-  const [items, setItems] = useState({ objectives: [], releases: [] });
+  const [items, setItems] = useState({ objectives: [], features: [], releases: [] });
   const [status, setStatus] = useState("loading"); // loading | idle | error
   const [error, setError] = useState(null);
 
   const reload = useCallback(async () => {
     setStatus("loading");
     try {
-      const [objectives, releases] = await Promise.all(["objectives", "releases"].map(async (kind) => {
+      const lists = await Promise.all(PLANNING_LOAD.map(async (kind) => {
         const res = await fetch(`/api/planning?kind=${kind}`, { credentials: "same-origin" });
         const data = await res.json().catch(() => []);
         if (!res.ok) throw new Error((data && data.message) || `HTTP ${res.status}`);
         return Array.isArray(data) ? data : [];
       }));
-      setItems({ objectives, releases });
+      setItems(Object.fromEntries(PLANNING_LOAD.map((kind, i) => [kind, lists[i]])));
       setStatus("idle");
       setError(null);
     } catch (e) {
@@ -2949,30 +2830,31 @@ function ProgressBar({ done, total }) {
       <div style={{ flex: 1, height: 6, borderRadius: 999, background: T.bg2, overflow: "hidden" }}>
         <div style={{ width: `${pct}%`, height: "100%", background: "#00aa6c" }} />
       </div>
-      <span style={{ fontSize: 11, color: T.ink1, whiteSpace: "nowrap" }}>{total ? `${done}/${total} · ${pct}%` : "sem épicos"}</span>
+      <span style={{ fontSize: 11, color: T.ink1, whiteSpace: "nowrap" }}>{total ? `${done}/${total} · ${pct}%` : "sem iniciativas"}</span>
     </div>
   );
 }
 
 const fieldStyle = (T) => ({ borderRadius: 8, border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink0, fontSize: 12.5, padding: "6px 8px", fontFamily: "'Inter Tight', sans-serif" });
+const ellipsis = { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" };
 
-/* ---- Features: épicos do Jira, com detalhe no drawer ---- */
+/* ---- Iniciativas = épicos do Jira, com a quem pertencem ---- */
 
-function FeaturesScreen() {
+function EpicsScreen() {
   const { T, PRODUCT_STYLE } = useTheme();
   const { epics, lastSync } = useData();
-  const { initiativeByEpicKey } = useInitiatives();
+  const products = useProducts();
   const { items } = usePlanning();
   const [q, setQ] = useState("");
   const [product, setProduct] = useState("all");
   const [status, setStatus] = useState("all");
   const [openKey, setOpenKey] = useState(null);
 
-  const releaseByEpic = useMemo(() => {
-    const map = {};
-    items.releases.forEach((r) => (r.epicKeys || []).forEach((k) => { map[k] = r; }));
-    return map;
-  }, [items.releases]);
+  const namesByEpic = useMemo(() => {
+    const out = { objectives: {}, features: {}, releases: {} };
+    Object.keys(out).forEach((kind) => items[kind].forEach((it) => (it.epicKeys || []).forEach((k) => { (out[kind][k] = out[kind][k] || []).push(it.name); })));
+    return out;
+  }, [items]);
   const statuses = useMemo(() => [...new Set(epics.map((e) => e.status).filter(Boolean))].sort(), [epics]);
 
   const rows = useMemo(() => {
@@ -2984,16 +2866,17 @@ function FeaturesScreen() {
   }, [epics, q, product, status]);
 
   const openEpic = openKey ? epics.find((e) => e.key === openKey) : null;
-  const cols = "96px minmax(220px, 1fr) 110px 150px 140px 150px 120px";
+  const cols = "90px minmax(200px, 1fr) 105px 140px 130px 150px 130px 110px";
+  const cell = (list) => (list ? list.join(", ") : "—");
 
   return (
     <div className="pp-scroll" style={{ overflow: "auto", flex: 1, padding: "20px 24px" }}>
-      <PageTitle title="Features" sub={`${rows.length} de ${epics.length} épicos do Jira${lastSync ? ` · dados da planilha de ${fmtSyncTime(lastSync)}` : ""}`}>
+      <PageTitle title="Iniciativas" sub={`${rows.length} de ${epics.length} épicos do Jira${lastSync ? ` · planilha de ${fmtSyncTime(lastSync)}` : ""}`}>
         <div className="flex items-center" style={{ gap: 6 }}>
           <input placeholder="Buscar chave, título ou responsável" value={q} onChange={(e) => setQ(e.target.value)} style={{ ...fieldStyle(T), width: 260 }} />
           <select value={product} onChange={(e) => setProduct(e.target.value)} style={fieldStyle(T)}>
             <option value="all">Todos os produtos</option>
-            {PRODUCTS.map((p) => <option key={p} value={p}>{p}</option>)}
+            {products.map((p) => <option key={p} value={p}>{p}</option>)}
           </select>
           <select value={status} onChange={(e) => setStatus(e.target.value)} style={fieldStyle(T)}>
             <option value="all">Todos os status</option>
@@ -3002,26 +2885,25 @@ function FeaturesScreen() {
         </div>
       </PageTitle>
 
-      <div style={{ minWidth: 900, border: `1px solid ${T.border2}`, borderRadius: 10, overflow: "hidden" }}>
+      <div style={{ minWidth: 1000, border: `1px solid ${T.border2}`, borderRadius: 10, overflow: "hidden" }}>
         <div style={{ display: "grid", gridTemplateColumns: cols, gap: 12, padding: "8px 12px", background: T.bg1, fontSize: 11.5, fontWeight: 500, color: T.ink2 }}>
-          <span>Chave</span><span>Título</span><span>Produto</span><span>Status</span><span>Responsável</span><span>Iniciativa</span><span>Release</span>
+          <span>Chave</span><span>Título</span><span>Produto</span><span>Status</span><span>Responsável</span><span>Objetivo</span><span>Feature</span><span>Release</span>
         </div>
         {rows.map((e) => {
           const style = PRODUCT_STYLE[e.project];
-          const init = initiativeByEpicKey[e.key];
-          const rel = releaseByEpic[e.key];
           return (
             <div
               key={e.key} className="pp-card" onClick={() => setOpenKey(e.key)}
               style={{ display: "grid", gridTemplateColumns: cols, gap: 12, padding: "9px 12px", alignItems: "center", fontSize: 12.5, color: T.ink0, borderTop: `1px solid ${T.border2}`, cursor: "pointer" }}
             >
               <a href={`${JIRA_BROWSE}${e.key}`} target="_blank" rel="noreferrer" onClick={(ev) => ev.stopPropagation()} title="Abrir no Jira" style={{ color: "#5166e6", textDecoration: "none", fontWeight: 500 }}>{e.key}</a>
-              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={e.summary}>{e.summary}</span>
+              <span style={ellipsis} title={e.summary}>{e.summary}</span>
               <span>{style ? <Badge bg={style.subtle} color={style.text}>{e.project}</Badge> : <span style={{ color: T.ink2 }}>{e.project || "—"}</span>}</span>
               <span style={{ color: isEpicDone(e) ? "#00aa6c" : T.ink1 }}>{e.status || "—"}</span>
-              <span style={{ color: T.ink1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.assignee || "—"}</span>
-              <span style={{ color: T.ink1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{init ? init.name : "—"}</span>
-              <span style={{ color: T.ink1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{rel ? rel.name : "—"}</span>
+              <span style={{ ...ellipsis, color: T.ink1 }}>{e.assignee || "—"}</span>
+              <span style={{ ...ellipsis, color: T.ink1 }}>{cell(namesByEpic.objectives[e.key])}</span>
+              <span style={{ ...ellipsis, color: T.ink1 }}>{cell(namesByEpic.features[e.key])}</span>
+              <span style={{ ...ellipsis, color: T.ink1 }}>{cell(namesByEpic.releases[e.key])}</span>
             </div>
           );
         })}
@@ -3033,20 +2915,25 @@ function FeaturesScreen() {
   );
 }
 
-/* ---- Objetivos e Releases: mesma tela, dois tipos ---- */
+/* ---- Cartão de Objetivo, Feature ou Release ---- */
 
 const PLANNING_KINDS = {
   objectives: {
-    title: "Objetivos", placeholder: "Novo objetivo", empty: "Nenhum objetivo ainda.",
-    statuses: ["Em andamento", "Concluído", "Cancelado"], linkField: "initiativeIds", linkTitle: "Iniciativas",
+    title: "Objetivos", placeholder: "Novo objetivo (ex.: reduzir cancelamento)", empty: "Nenhum objetivo ainda.",
+    sub: "Cada objetivo reúne as iniciativas (épicos do Jira) que o movem",
+    statuses: ["Em andamento", "Concluído", "Cancelado"], linkTitle: "Iniciativas (épicos)",
+  },
+  features: {
+    statuses: ["Ativa", "Em construção", "Descontinuada"], linkTitle: "Iniciativas (épicos) que entregam esta feature",
   },
   releases: {
     title: "Releases", placeholder: "Nova release", empty: "Nenhuma release ainda.",
-    statuses: ["Planejada", "Lançada", "Cancelada"], linkField: "epicKeys", linkTitle: "Épicos",
+    sub: "Agrupa as iniciativas (épicos) entregues juntas",
+    statuses: ["Planejada", "Lançada", "Cancelada"], linkTitle: "Iniciativas (épicos)",
   },
 };
 
-function PlanningCard({ kind, item, linkOptions, progress }) {
+function PlanningCard({ kind, item, epics }) {
   const { T } = useTheme();
   const { canCreateCard } = useAuth();
   const { update, remove } = usePlanning();
@@ -3056,8 +2943,9 @@ function PlanningCard({ kind, item, linkOptions, progress }) {
   const [error, setError] = useState(null);
   useEffect(() => { setName(item.name); setDescription(item.description || ""); }, [item.name, item.description]);
 
-  const links = item[def.linkField] || [];
-  const labelOf = (id) => (linkOptions.find((o) => o.id === id) || { label: id }).label;
+  const links = item.epicKeys || [];
+  const epicByKey = useMemo(() => Object.fromEntries(epics.map((e) => [e.key, e])), [epics]);
+  const linked = links.map((k) => epicByKey[k]).filter(Boolean);
   const save = async (patch) => {
     const r = await update(kind, item.id, patch);
     setError(r.ok ? null : r.message || null);
@@ -3070,7 +2958,7 @@ function PlanningCard({ kind, item, linkOptions, progress }) {
         <input
           value={name} disabled={ro} onChange={(e) => setName(e.target.value)}
           onBlur={() => { const n = name.trim(); if (!n) setName(item.name); else if (n !== item.name) save({ name: n }); }}
-          style={{ ...fieldStyle(T), flex: 1, fontSize: 14, fontWeight: 600, background: "transparent", border: "1px solid transparent" }}
+          style={{ ...fieldStyle(T), flex: 1, minWidth: 0, fontSize: 14, fontWeight: 600, background: "transparent", border: "1px solid transparent" }}
         />
         {kind === "releases" && (
           <input type="date" value={item.date || ""} disabled={ro} onChange={(e) => save({ date: e.target.value })} style={fieldStyle(T)} />
@@ -3091,23 +2979,26 @@ function PlanningCard({ kind, item, linkOptions, progress }) {
         style={{ ...fieldStyle(T), width: "100%", resize: "vertical", lineHeight: 1.45 }}
       />
 
-      <ProgressBar done={progress.done} total={progress.total} />
+      <ProgressBar done={linked.filter(isEpicDone).length} total={linked.length} />
 
       <div>
         <p style={{ fontSize: 11.5, fontWeight: 500, color: T.ink2, margin: "0 0 4px" }}>{def.linkTitle}</p>
         <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-          {links.map((id) => (
-            <div key={id} className="flex items-center justify-between" style={{ fontSize: 12, color: T.ink1 }}>
-              <span>{labelOf(id)}</span>
-              {!ro && <button onClick={() => save({ [def.linkField]: links.filter((l) => l !== id) })} style={{ border: "none", background: "transparent", color: T.ink2, cursor: "pointer", fontSize: 11, fontFamily: "'Inter Tight', sans-serif" }}>remover</button>}
-            </div>
-          ))}
+          {links.map((k) => {
+            const e = epicByKey[k];
+            return (
+              <div key={k} className="flex items-center justify-between" style={{ fontSize: 12, color: T.ink1, gap: 8 }}>
+                <span style={ellipsis}>{e ? `${k} — ${e.summary}` : `${k} (não encontrado)`}</span>
+                {!ro && <button onClick={() => save({ epicKeys: links.filter((l) => l !== k) })} style={{ border: "none", background: "transparent", color: T.ink2, cursor: "pointer", fontSize: 11, fontFamily: "'Inter Tight', sans-serif", flexShrink: 0 }}>remover</button>}
+              </div>
+            );
+          })}
           {links.length === 0 && <span style={{ fontSize: 12, color: T.ink2 }}>Nada vinculado.</span>}
         </div>
         {!ro && (
-          <select value="" onChange={(e) => { if (e.target.value) save({ [def.linkField]: [...links, e.target.value] }); }} style={{ ...fieldStyle(T), width: "100%", marginTop: 6 }}>
-            <option value="">Vincular…</option>
-            {linkOptions.filter((o) => !links.includes(o.id)).map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+          <select value="" onChange={(e) => { if (e.target.value) save({ epicKeys: [...links, e.target.value] }); }} style={{ ...fieldStyle(T), width: "100%", marginTop: 6 }}>
+            <option value="">Vincular iniciativa…</option>
+            {epics.filter((e) => !links.includes(e.key)).map((e) => <option key={e.key} value={e.key}>{e.key} — {e.summary}</option>)}
           </select>
         )}
       </div>
@@ -3116,36 +3007,25 @@ function PlanningCard({ kind, item, linkOptions, progress }) {
   );
 }
 
+const cardGrid = { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(380px, 1fr))", gap: 12 };
+
+function PlanningLoadError({ what, error }) {
+  const { T } = useTheme();
+  return <div style={{ padding: 24, fontSize: 13, color: T.ink1 }}>Não foi possível carregar {what}{error ? `: ${error}` : ""}.</div>;
+}
+
+/* ---- Objetivos e Releases: lista simples de cartões ---- */
+
 function PlanningScreen({ kind }) {
   const { T } = useTheme();
   const { epics } = useData();
   const { canCreateCard } = useAuth();
-  const { initiatives } = useInitiatives();
   const { items, status, error, create } = usePlanning();
   const [name, setName] = useState("");
   const [createError, setCreateError] = useState(null);
   const def = PLANNING_KINDS[kind];
-
-  const epicByKey = useMemo(() => Object.fromEntries(epics.map((e) => [e.key, e])), [epics]);
-  const initiativeById = useMemo(() => Object.fromEntries(initiatives.map((i) => [i.id, i])), [initiatives]);
-  const linkOptions = useMemo(
-    () => (kind === "objectives"
-      ? initiatives.map((i) => ({ id: i.id, label: `${i.name} · ${i.product}` }))
-      : epics.map((e) => ({ id: e.key, label: `${e.key} — ${e.summary}` }))),
-    [kind, initiatives, epics]
-  );
-
-  // Progresso = épicos concluídos / épicos alcançados. Objetivo alcança os épicos
-  // das iniciativas vinculadas; Release, os épicos vinculados direto.
-  const progressOf = (item) => {
-    const keys = kind === "objectives"
-      ? [...new Set((item.initiativeIds || []).flatMap((id) => (initiativeById[id] ? initiativeById[id].epicKeys || [] : [])))]
-      : item.epicKeys || [];
-    const list = keys.map((k) => epicByKey[k]).filter(Boolean);
-    return { done: list.filter(isEpicDone).length, total: list.length };
-  };
-
   const list = items[kind];
+
   const add = async () => {
     const n = name.trim();
     if (!n) return;
@@ -3153,31 +3033,91 @@ function PlanningScreen({ kind }) {
     if (r.ok) { setName(""); setCreateError(null); } else setCreateError(r.message || null);
   };
 
-  if (status === "error") {
-    return <div style={{ padding: 24, fontSize: 13, color: T.ink1 }}>Não foi possível carregar {def.title.toLowerCase()}{error ? `: ${error}` : ""}.</div>;
-  }
+  if (status === "error") return <PlanningLoadError what={def.title.toLowerCase()} error={error} />;
 
   return (
     <div className="pp-scroll" style={{ overflowY: "auto", flex: 1, padding: "20px 24px" }}>
-      <PageTitle title={def.title} sub={`${list.length} ${list.length === 1 ? "item" : "itens"}`}>
+      <PageTitle title={def.title} sub={`${def.sub} · ${list.length} ${list.length === 1 ? "item" : "itens"}`}>
         {canCreateCard && (
           <div className="flex items-center" style={{ gap: 6 }}>
-            <input placeholder={def.placeholder} value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") add(); }} style={{ ...fieldStyle(T), width: 220 }} />
+            <input placeholder={def.placeholder} value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") add(); }} style={{ ...fieldStyle(T), width: 280 }} />
             <button onClick={add} style={{ borderRadius: 8, padding: "6px 10px", fontSize: 12, fontWeight: 500, border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink0, cursor: "pointer", fontFamily: "'Inter Tight', sans-serif" }}>Criar</button>
           </div>
         )}
       </PageTitle>
       {createError && <p style={{ fontSize: 12, color: "#e08585", marginBottom: 8 }}>{createError}</p>}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(380px, 1fr))", gap: 12 }}>
-        {list.map((item) => <PlanningCard key={item.id} kind={kind} item={item} linkOptions={linkOptions} progress={progressOf(item)} />)}
+      <div style={cardGrid}>
+        {list.map((item) => <PlanningCard key={item.id} kind={kind} item={item} epics={epics} />)}
       </div>
       {status === "idle" && list.length === 0 && <p style={{ fontSize: 13, color: T.ink2 }}>{def.empty}</p>}
     </div>
   );
 }
 
+/* ---- Features: cadastradas por produto (o produto vem do Jira) ---- */
+
+function FeaturesScreen() {
+  const { T, PRODUCT_STYLE } = useTheme();
+  const { epics } = useData();
+  const products = useProducts();
+  const { canCreateCard } = useAuth();
+  const { items, status, error, create } = usePlanning();
+  const [product, setProduct] = useState("");
+  const [name, setName] = useState("");
+  const [createError, setCreateError] = useState(null);
+
+  // Features de um produto que sumiu dos épicos continuam aparecendo, no fim.
+  const groups = useMemo(() => {
+    const extra = [...new Set(items.features.map((f) => f.product))].filter((p) => !products.includes(p)).sort();
+    return [...products, ...extra].map((p) => ({ product: p, features: items.features.filter((f) => f.product === p) }));
+  }, [products, items.features]);
+  const chosen = product || products[0] || "";
+
+  const add = async () => {
+    const n = name.trim();
+    if (!n || !chosen) return;
+    const r = await create("features", { name: n, product: chosen });
+    if (r.ok) { setName(""); setCreateError(null); } else setCreateError(r.message || null);
+  };
+
+  if (status === "error") return <PlanningLoadError what="as features" error={error} />;
+
+  return (
+    <div className="pp-scroll" style={{ overflowY: "auto", flex: 1, padding: "20px 24px" }}>
+      <PageTitle title="Features" sub={`Cadastradas por produto; os produtos vêm do Jira · ${items.features.length} ${items.features.length === 1 ? "feature" : "features"}`}>
+        {canCreateCard && (
+          <div className="flex items-center" style={{ gap: 6 }}>
+            <select value={chosen} onChange={(e) => setProduct(e.target.value)} style={fieldStyle(T)}>
+              {products.map((p) => <option key={p} value={p}>{p}</option>)}
+            </select>
+            <input placeholder="Nova feature (ex.: Calculadora)" value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") add(); }} style={{ ...fieldStyle(T), width: 240 }} />
+            <button onClick={add} style={{ borderRadius: 8, padding: "6px 10px", fontSize: 12, fontWeight: 500, border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink0, cursor: "pointer", fontFamily: "'Inter Tight', sans-serif" }}>Criar</button>
+          </div>
+        )}
+      </PageTitle>
+      {createError && <p style={{ fontSize: 12, color: "#e08585", marginBottom: 8 }}>{createError}</p>}
+
+      {groups.map(({ product: p, features }) => {
+        const style = PRODUCT_STYLE[p];
+        const productEpics = epics.filter((e) => e.project === p);
+        return (
+          <div key={p} style={{ marginBottom: 24 }}>
+            <div className="flex items-center" style={{ gap: 8, marginBottom: 8 }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: style ? style.text : T.ink0 }}>{p}</span>
+              <span style={{ fontSize: 11, color: T.ink2 }}>{features.length} {features.length === 1 ? "feature" : "features"} · {productEpics.length} épicos</span>
+            </div>
+            {features.length === 0
+              ? <p style={{ fontSize: 12, color: T.ink2, margin: 0 }}>Nenhuma feature cadastrada.</p>
+              : <div style={cardGrid}>{features.map((f) => <PlanningCard key={f.id} kind="features" item={f} epics={productEpics} />)}</div>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 const SIDEBAR_GROUPS = [
-  { title: "Produto", items: [["iniciativas", "Iniciativas", Sparkles], ["features", "Features", Square], ["objetivos", "Objetivos", Target], ["releases", "Releases", Flag]] },
+  { title: "Produto", items: [["objetivos", "Objetivos", Target], ["iniciativas", "Iniciativas", Sparkles], ["features", "Features", Square], ["releases", "Releases", Flag]] },
   { title: "Planejamento", items: [["roadmap", "Roadmap", Calendar], ["analises", "Análises", BarChart3], ["desenvolvedores", "Desenvolvedores", Users]] },
 ];
 
@@ -3199,7 +3139,7 @@ function AppShell() {
         @keyframes pp-spin-anim { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
       `}</style>
 
-      <aside style={{ width: 224, flexShrink: 0, position: "sticky", top: 0, height: "100vh", overflowY: "auto", borderRight: `1px solid ${T.border2}`, background: T.bg1, padding: "16px 12px", boxSizing: "border-box" }}>
+      <aside style={{ width: 224, position: "fixed", top: 0, bottom: 0, left: 0, zIndex: 40, overflowY: "auto", borderRight: `1px solid ${T.border2}`, background: T.bg1, padding: "16px 12px", boxSizing: "border-box" }}>
         <div style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", fontWeight: 700, fontSize: 15, color: T.ink0, padding: "2px 8px 16px" }}>Product Ops</div>
         {SIDEBAR_GROUPS.map((group) => (
           <div key={group.title} style={{ marginBottom: 18 }}>
@@ -3226,7 +3166,7 @@ function AppShell() {
         ))}
       </aside>
 
-      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
+      <div style={{ flex: 1, minWidth: 0, marginLeft: 224, display: "flex", flexDirection: "column" }}>
       <div style={{ borderBottom: `1px solid ${T.border1}`, padding: "0 20px", display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 4, height: 46 }}>
         <div className="flex items-center" style={{ gap: 8 }}>
           {syncStatus === "error" && (
@@ -3285,7 +3225,7 @@ function AppShell() {
         </div>
       </div>
 
-      {menu === "iniciativas" ? <IniciativasScreen />
+      {menu === "iniciativas" ? <EpicsScreen />
         : menu === "features" ? <FeaturesScreen />
         : menu === "objetivos" ? <PlanningScreen kind="objectives" />
         : menu === "releases" ? <PlanningScreen kind="releases" />
