@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { ChevronUp, ChevronDown, ChevronRight, ChevronLeft, X, BarChart3, Sun, Moon, Calendar, Plus, Minus, RefreshCw, LogOut, Lock, Layers, Trash2, Users, Settings, Sparkles, Square, Target, Flag } from "lucide-react";
-import { BarChart, Bar, LineChart, Line, PieChart, Pie, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell, LabelList } from "recharts";
+import { ChevronUp, ChevronDown, ChevronRight, ChevronLeft, X, BarChart3, Sun, Moon, Calendar, Plus, Minus, RefreshCw, LogOut, Lock, Layers, Trash2, Users, Settings, Sparkles, Target, LayoutDashboard, Lightbulb, Package, FlaskConical } from "lucide-react";
+import { BarChart, Bar, LineChart, Line, PieChart, Pie, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell, LabelList, ReferenceLine } from "recharts";
 import storage from "./lib/storage";
 import { roadmapStore, diffRoadmap, isEmptyDiff, summarizeRoadmap, emptyRoadmap, applyEpicOverrides, mergeCustomEpics } from "./lib/roadmap-store";
 import { jiraApi } from "./lib/jira-client";
@@ -680,13 +680,14 @@ function InitiativesProvider({ children }) {
 
   useEffect(() => { reload(); }, [reload]);
 
-  const createInitiative = useCallback(async (name, product) => {
+  // `extra`: campos do OKR (status, descrição, KR); o Roadmap só manda nome e produto.
+  const createInitiative = useCallback(async (name, product, extra = {}) => {
     if (!canCreateCard) return { ok: false };
     try {
       const res = await fetch("/api/initiatives", {
         method: "POST", credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, product }),
+        body: JSON.stringify({ ...extra, name, product }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) return { ok: false, message: data.message };
@@ -804,6 +805,11 @@ function EpicDrawer({ epic, onClose, weeks, onSave, onDelete, canEdit, jiraConfi
   const { T, PRODUCT_STYLE } = useTheme();
   const { canCreateCard } = useAuth();
   const { initiatives, initiativeByEpicKey, assignEpicToInitiative } = useInitiatives();
+  const { items: planningItems } = usePlanning();
+  const initiativeLabel = (i) => {
+    const kr = planningItems.keyResults.find((k) => k.id === i.keyResultId);
+    return kr ? `${i.name} · ${kr.name}` : i.name;
+  };
   const schedulable = !!(weeks && onSave);
   const [summary, setSummary] = useState(epic?.summary || "");
   const [lane, setLane] = useState(epic?.roadmapLane || PRIORIZACAO_KEY);
@@ -946,7 +952,7 @@ function EpicDrawer({ epic, onClose, weeks, onSave, onDelete, canEdit, jiraConfi
                   style={{ width: "100%", borderRadius: 8, border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink0, fontSize: 13, padding: "7px 8px", fontFamily: "'Inter Tight', sans-serif" }}
                 >
                   <option value="">Nenhuma</option>
-                  {initiatives.filter((i) => i.product === draftProject).map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
+                  {initiatives.filter((i) => !i.product || i.product === draftProject || (i.epicKeys || []).includes(epic.key)).map((i) => <option key={i.id} value={i.id}>{initiativeLabel(i)}</option>)}
                 </select>
               </>
             )}
@@ -974,7 +980,7 @@ function EpicDrawer({ epic, onClose, weeks, onSave, onDelete, canEdit, jiraConfi
               style={{ width: "100%", borderRadius: 8, border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink0, fontSize: 13, padding: "7px 8px", fontFamily: "'Inter Tight', sans-serif" }}
             >
               <option value="">Nenhuma</option>
-              {initiatives.filter((i) => i.product === epic.project).map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
+              {initiatives.filter((i) => !i.product || i.product === epic.project || (i.epicKeys || []).includes(epic.key)).map((i) => <option key={i.id} value={i.id}>{initiativeLabel(i)}</option>)}
             </select>
 
             <dl style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 8, fontSize: 12.5, fontFamily: "'Inter Tight', sans-serif" }}>
@@ -2050,7 +2056,10 @@ function RoadmapScreen() {
     let rowCursor = 2;
     return PRODUCTS.map((p) => {
       const scheduled = enriched.filter((e) => e.roadmapLane === p && e.startWeek !== null);
-      const prodInitiatives = initiatives.filter((i) => i.product === p);
+      // Iniciativa sem produto (ou que cruza produtos) aparece em toda raia onde
+      // tem épico agendado; com produto, aparece na dela mesmo vazia.
+      const laneKeys = new Set(scheduled.map((e) => e.key));
+      const prodInitiatives = initiatives.filter((i) => i.product === p || (i.epicKeys || []).some((k) => laneKeys.has(k)));
       const startRowForLabel = rowCursor;
       const productCollapsed = collapsedProducts.has(p);
 
@@ -2718,15 +2727,59 @@ function AuthGate({ children }) {
 }
 
 /* =====================================================================
-   PLANEJAMENTO — hierarquia: Objetivo → Iniciativas (épicos do Jira).
-   Produto (vem do Jira) → Features (cadastradas aqui) → épicos que as
-   entregam. Releases agrupam épicos. Objetivos, Features e Releases moram
-   em /api/planning (Redis); produtos e épicos vêm da planilha/Jira.
+   PLANEJAMENTO — OKRs, Iniciativas, Oportunidades/Experimentos, Épicos e
+   Produtos/Features.
+     Objetivo → Key Result → Iniciativas (→ épicos do Jira)
+                          → Oportunidades → Experimentos (→ épico)
+     Produto (Jira) → Features (→ épicos)
+   Iniciativas vêm de /api/initiatives (a mesma lista do Roadmap); o resto de
+   /api/planning (Redis). Produtos e épicos vêm da planilha/Jira.
    ===================================================================== */
 
 const JIRA_BROWSE = "https://joaogonzalezstlflix.atlassian.net/browse/";
+const ACCENT = "#5166e6";
+const DONE_COLOR = "#00aa6c";
+const LATE_COLOR = "#e5484d";
+const SOON_COLOR = "#d98a00";
+const INITIATIVE_STATUSES = ["Em andamento", "Planejada", "Pausada", "Concluída", "Cancelada"];
+const EXPERIMENT_STATUSES = ["Ideia", "Rodando", "Analisando", "Concluído"];
+
 const isEpicDone = (e) => e.status === "Done" || e.stage === "Concluído";
-const PLANNING_LOAD = ["objectives", "features", "releases"];
+function epicBucket(e) {
+  if (isEpicDone(e)) return "done";
+  if (e.status === "Backlog" || e.stage === "Backlog" || e.status === "Produto") return "todo";
+  return "doing";
+}
+const BUCKETS = [["todo", "a fazer"], ["doing", "em andamento"], ["done", "concluídos"]];
+
+const isNum = (v) => typeof v === "number" && Number.isFinite(v);
+function daysUntil(iso) {
+  const [y, m, d] = iso.split("-").map(Number);
+  const t = new Date();
+  return Math.round((Date.UTC(y, m - 1, d) - Date.UTC(t.getFullYear(), t.getMonth(), t.getDate())) / 86400000);
+}
+function fmtDay(iso) {
+  if (!iso) return "";
+  const [y, m, d] = iso.split("-");
+  return `${d}/${m}/${y.slice(2)}`;
+}
+const fmtNum = (v, unit) => (isNum(v) ? `${String(v).replace(".", ",")}${unit ? (unit === "%" ? "%" : ` ${unit}`) : ""}` : "—");
+function krProgress(kr) {
+  if (!isNum(kr.baseline) || !isNum(kr.target) || !isNum(kr.current) || kr.target === kr.baseline) return null;
+  return Math.max(0, Math.min(100, Math.round(((kr.current - kr.baseline) / (kr.target - kr.baseline)) * 100)));
+}
+/** ICE = média de Impacto, Confiança e Facilidade (1–10); null se faltar nota. */
+function iceScore(x) {
+  return isNum(x.impact) && isNum(x.confidence) && isNum(x.ease) ? Math.round(((x.impact + x.confidence + x.ease) / 3) * 10) / 10 : null;
+}
+/** "late" = prazo passou sem concluir; "soon" = vence em até 7 dias. */
+function dueState(item, doneStatus) {
+  if (!item.dueDate || item.status === doneStatus) return null;
+  const d = daysUntil(item.dueDate);
+  return d < 0 ? "late" : d <= 7 ? "soon" : null;
+}
+
+const PLANNING_LOAD = ["objectives", "keyResults", "opportunities", "experiments", "features"];
 
 const PlanningCtx = createContext(null);
 function usePlanning() { return useContext(PlanningCtx); }
@@ -2743,7 +2796,7 @@ function useProducts() {
 
 function PlanningProvider({ children }) {
   const { canCreateCard } = useAuth();
-  const [items, setItems] = useState({ objectives: [], features: [], releases: [] });
+  const [items, setItems] = useState(() => Object.fromEntries(PLANNING_LOAD.map((k) => [k, []])));
   const [status, setStatus] = useState("loading"); // loading | idle | error
   const [error, setError] = useState(null);
 
@@ -2809,101 +2862,986 @@ function PlanningProvider({ children }) {
   return <PlanningCtx.Provider value={value}>{children}</PlanningCtx.Provider>;
 }
 
+/** Índices usados por todas as telas: quem pertence a quem. */
+function usePlanIndex() {
+  const { epics } = useData();
+  const { items } = usePlanning();
+  const { initiatives } = useInitiatives();
+  return useMemo(() => {
+    const byId = (list) => Object.fromEntries(list.map((x) => [x.id, x]));
+    const epicByKey = Object.fromEntries(epics.map((e) => [e.key, e]));
+    const epicsOf = (keys) => (keys || []).map((k) => epicByKey[k]).filter(Boolean);
+    const initiativeByEpic = {};
+    initiatives.forEach((i) => (i.epicKeys || []).forEach((k) => { initiativeByEpic[k] = i; }));
+    const featuresByEpic = {};
+    items.features.forEach((f) => (f.epicKeys || []).forEach((k) => { (featuresByEpic[k] = featuresByEpic[k] || []).push(f); }));
+    const productsOfInitiative = (i) => [...new Set([i.product, ...epicsOf(i.epicKeys).map((e) => e.project)].filter(Boolean))];
+    return {
+      epicByKey, epicsOf, initiativeByEpic, featuresByEpic, productsOfInitiative,
+      objectiveById: byId(items.objectives), krById: byId(items.keyResults), oppById: byId(items.opportunities),
+      krsOfObjective: (id) => items.keyResults.filter((k) => k.objectiveId === id),
+      initiativesOfKr: (id) => initiatives.filter((i) => i.keyResultId === id),
+      oppsOfKr: (id) => items.opportunities.filter((o) => o.keyResultId === id),
+      experimentsOfOpp: (id) => items.experiments.filter((x) => x.opportunityId === id),
+    };
+  }, [epics, items, initiatives]);
+}
+
+/* ---- peças visuais ---- */
+
+const fieldStyle = (T) => ({ borderRadius: 8, border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink0, fontSize: 12.5, padding: "6px 8px", fontFamily: "'Inter Tight', sans-serif" });
+const ellipsis = { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" };
+const btnStyle = (T, primary) => ({
+  display: "inline-flex", alignItems: "center", gap: 5, borderRadius: 8, padding: "6px 10px", fontSize: 12, fontWeight: 500, whiteSpace: "nowrap",
+  border: primary ? `1px solid ${ACCENT}` : `1px solid ${T.border2}`, background: primary ? ACCENT : T.bg1, color: primary ? "#fff" : T.ink0,
+  cursor: "pointer", fontFamily: "'Inter Tight', sans-serif",
+});
+const linkBtn = { border: "none", background: "transparent", color: ACCENT, cursor: "pointer", fontSize: 12, fontWeight: 500, padding: 0, fontFamily: "'Inter Tight', sans-serif", whiteSpace: "nowrap" };
+const cardStyle = (T) => ({ border: `1px solid ${T.border2}`, borderRadius: 10, padding: 14, background: T.bg0, boxShadow: T.cardShadow });
+
 function PageTitle({ title, sub, children }) {
   const { T } = useTheme();
   return (
-    <div className="flex items-center justify-between" style={{ marginBottom: 16, gap: 12 }}>
+    <div className="flex items-center justify-between" style={{ marginBottom: 18, gap: 12, flexWrap: "wrap" }}>
       <div>
         <h1 style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", fontWeight: 700, fontSize: 18, color: T.ink0, margin: 0 }}>{title}</h1>
         {sub && <p style={{ fontSize: 12, color: T.ink2, margin: "2px 0 0" }}>{sub}</p>}
       </div>
+      {children && <div className="flex items-center" style={{ gap: 6, flexWrap: "wrap" }}>{children}</div>}
+    </div>
+  );
+}
+
+function SectionTitleRow({ title, children }) {
+  const { T } = useTheme();
+  return (
+    <div className="flex items-center justify-between" style={{ margin: "0 0 10px", gap: 8 }}>
+      <h2 style={{ fontSize: 13, fontWeight: 600, color: T.ink0, margin: 0 }}>{title}</h2>
       {children}
     </div>
   );
 }
 
-function ProgressBar({ done, total }) {
+function Muted({ children, style }) {
   const { T } = useTheme();
-  const pct = total ? Math.round((done / total) * 100) : 0;
+  return <p style={{ fontSize: 12, color: T.ink2, margin: 0, ...style }}>{children}</p>;
+}
+
+function ProgressTrack({ pct, color = DONE_COLOR }) {
+  const { T } = useTheme();
   return (
-    <div className="flex items-center" style={{ gap: 8 }}>
-      <div style={{ flex: 1, height: 6, borderRadius: 999, background: T.bg2, overflow: "hidden" }}>
-        <div style={{ width: `${pct}%`, height: "100%", background: "#00aa6c" }} />
-      </div>
-      <span style={{ fontSize: 11, color: T.ink1, whiteSpace: "nowrap" }}>{total ? `${done}/${total} · ${pct}%` : "sem iniciativas"}</span>
+    <div style={{ flex: 1, minWidth: 60, height: 6, borderRadius: 999, background: T.bg2, overflow: "hidden" }}>
+      <div style={{ width: `${pct || 0}%`, height: "100%", background: color }} />
     </div>
   );
 }
 
-const fieldStyle = (T) => ({ borderRadius: 8, border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink0, fontSize: 12.5, padding: "6px 8px", fontFamily: "'Inter Tight', sans-serif" });
-const ellipsis = { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" };
+function KrProgress({ kr }) {
+  const { T } = useTheme();
+  const pct = krProgress(kr);
+  return (
+    <div className="flex items-center" style={{ gap: 8, minWidth: 0 }}>
+      <ProgressTrack pct={pct} color={pct === 100 ? DONE_COLOR : ACCENT} />
+      <span style={{ fontSize: 11.5, color: T.ink1, whiteSpace: "nowrap" }}>
+        {fmtNum(kr.current, kr.unit)} <span style={{ color: T.ink2 }}>/ {fmtNum(kr.target, kr.unit)}</span>{pct !== null ? ` · ${pct}%` : ""}
+      </span>
+    </div>
+  );
+}
 
-/* ---- Iniciativas = épicos do Jira, com a quem pertencem ---- */
+function EpicBuckets({ epics }) {
+  const { T } = useTheme();
+  const counts = { todo: 0, doing: 0, done: 0 };
+  epics.forEach((e) => { counts[epicBucket(e)] += 1; });
+  if (!epics.length) return <span style={{ fontSize: 11.5, color: T.ink2 }}>sem épicos</span>;
+  const colors = { todo: T.borderStrong, doing: ACCENT, done: DONE_COLOR };
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
+      <div style={{ display: "flex", height: 6, borderRadius: 999, overflow: "hidden", background: T.bg2 }}>
+        {BUCKETS.map(([k]) => (counts[k] ? <div key={k} style={{ width: `${(counts[k] / epics.length) * 100}%`, background: colors[k] }} /> : null))}
+      </div>
+      <span style={{ fontSize: 11, color: T.ink1, lineHeight: 1.35 }}>{BUCKETS.map(([k, l]) => `${counts[k]} ${l}`).join(" · ")}</span>
+    </div>
+  );
+}
+
+function StatusBadge({ children, tone }) {
+  const { T } = useTheme();
+  const tones = {
+    done: ["rgba(0,170,108,0.14)", DONE_COLOR], active: ["rgba(81,102,230,0.12)", ACCENT],
+    late: ["rgba(229,72,77,0.14)", LATE_COLOR], soon: ["rgba(217,138,0,0.14)", SOON_COLOR],
+  };
+  const [bg, color] = tones[tone] || [T.bg2, T.ink1];
+  return <Badge bg={bg} color={color}>{children}</Badge>;
+}
+const statusTone = (s) => (["Concluído", "Concluída", "Validada", "Validado"].includes(s) ? "done" : ["Em andamento", "Rodando", "Explorando", "Analisando"].includes(s) ? "active" : null);
+
+function EpicStatus({ epic }) {
+  return <StatusBadge tone={isEpicDone(epic) ? "done" : epicBucket(epic) === "doing" ? "active" : null}>{epic.status || "—"}</StatusBadge>;
+}
+
+function EpicLine({ epic, showAssignee }) {
+  const { T } = useTheme();
+  return (
+    <div className="flex items-center" style={{ gap: 8, fontSize: 12, color: T.ink1, minWidth: 0, flex: 1 }}>
+      <a href={`${JIRA_BROWSE}${epic.key}`} target="_blank" rel="noreferrer" onClick={(ev) => ev.stopPropagation()} title="Abrir no Jira" style={{ color: ACCENT, textDecoration: "none", fontWeight: 500, flexShrink: 0 }}>{epic.key}</a>
+      <span style={{ ...ellipsis, flex: 1 }} title={epic.summary}>{epic.summary}</span>
+      {showAssignee && epic.assignee && <span style={{ fontSize: 11, color: T.ink2, whiteSpace: "nowrap" }}>{shortName(epic.assignee)}</span>}
+      <EpicStatus epic={epic} />
+    </div>
+  );
+}
+
+function DueBadge({ item, doneStatus }) {
+  const { T } = useTheme();
+  if (!item.dueDate) return null;
+  const s = dueState(item, doneStatus);
+  if (!s) return <span style={{ fontSize: 11, color: T.ink2, whiteSpace: "nowrap" }}>até {fmtDay(item.dueDate)}</span>;
+  return <StatusBadge tone={s}>{s === "late" ? `atrasado · ${fmtDay(item.dueDate)}` : `vence ${fmtDay(item.dueDate)}`}</StatusBadge>;
+}
+
+/** Segunda-feira da semana (AAAA-MM-DD, horário local) — mesma regra do servidor. */
+function mondayISO(date = new Date()) {
+  const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+const fmtWeekISO = (iso) => iso.slice(8, 10) + "/" + iso.slice(5, 7);
+
+/** Pede check-in quando o item está ativo e a semana atual ainda não tem um. */
+function needsCheckin(item, activeStatuses) {
+  if (!activeStatuses.includes(item.status)) return false;
+  const list = item.checkins || [];
+  return !list.length || list[list.length - 1].week < mondayISO();
+}
+
+function CheckinBadge({ item, activeStatuses }) {
+  if (!needsCheckin(item, activeStatuses)) return null;
+  return <StatusBadge tone="soon">check-in da semana pendente</StatusBadge>;
+}
+
+function WeeklySpark({ checkins, target }) {
+  const data = (checkins || []).slice(-12);
+  if (data.length < 2) return null;
+  return (
+    <div style={{ width: 90, height: 26, flexShrink: 0 }} title={data.map((c) => `${fmtWeekISO(c.week)}: ${c.value}`).join(" · ")}>
+      <ResponsiveContainer width="100%" height="100%">
+        <LineChart data={data} margin={{ top: 3, right: 2, bottom: 3, left: 2 }}>
+          <YAxis hide domain={["dataMin", isNum(target) ? Math.max(target, ...data.map((d) => d.value)) : "dataMax"]} />
+          <Line type="monotone" dataKey="value" stroke={ACCENT} strokeWidth={1.8} dot={false} isAnimationActive={false} />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+function CheckinsInput({ value, onChange, disabled, unit, target, baseline }) {
+  const { T } = useTheme();
+  const list = value || [];
+  const [week, setWeek] = useState(mondayISO());
+  const [val, setVal] = useState("");
+  const [note, setNote] = useState("");
+  const st = { ...fieldStyle(T), boxSizing: "border-box" };
+  const add = () => {
+    const n = Number(String(val).replace(",", "."));
+    if (val === "" || !Number.isFinite(n) || !week) return;
+    const w = mondayISO(new Date(`${week}T00:00:00`));
+    onChange([...list.filter((c) => c.week !== w), { week: w, value: n, note: note.trim() }].sort((a, b) => a.week.localeCompare(b.week)));
+    setVal("");
+    setNote("");
+  };
+  const data = list.map((c) => ({ ...c, label: fmtWeekISO(c.week) }));
+  // Eixo cobre início e meta, para a linha da meta sempre aparecer.
+  const ys = [...list.map((c) => c.value), ...[baseline, target].filter(isNum)];
+  const pad = ys.length ? (Math.max(...ys) - Math.min(...ys)) * 0.08 || 1 : 1;
+  const domain = ys.length ? [Math.floor((Math.min(...ys) - pad) * 10) / 10, Math.ceil((Math.max(...ys) + pad) * 10) / 10] : ["auto", "auto"];
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {data.length > 0 && (
+        <div style={{ height: 150, border: `1px solid ${T.border2}`, borderRadius: 8, padding: "8px 4px 0" }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={data} margin={{ top: 6, right: 12, bottom: 0, left: -18 }}>
+              <CartesianGrid stroke={T.border2} vertical={false} />
+              <XAxis dataKey="label" tick={{ fontSize: 10, fill: T.ink2 }} stroke={T.border2} />
+              <YAxis tick={{ fontSize: 10, fill: T.ink2 }} stroke={T.border2} domain={domain} allowDataOverflow />
+              <Tooltip formatter={(v) => fmtNum(v, unit)} labelFormatter={(l) => `Semana de ${l}`} contentStyle={{ fontSize: 12, background: T.bg0, border: `1px solid ${T.border2}`, borderRadius: 8 }} />
+              {isNum(target) && <ReferenceLine y={target} stroke={DONE_COLOR} strokeDasharray="4 3" label={{ value: "meta", fontSize: 10, fill: DONE_COLOR, position: "insideTopRight" }} />}
+              {isNum(baseline) && <ReferenceLine y={baseline} stroke={T.borderStrong} strokeDasharray="2 3" />}
+              <Line type="monotone" dataKey="value" stroke={ACCENT} strokeWidth={2} dot={{ r: 3 }} isAnimationActive={false} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        {[...list].reverse().map((c, i, arr) => {
+          const prev = arr[i + 1];
+          const delta = prev ? c.value - prev.value : null;
+          return (
+            <div key={c.week} className="flex items-center" style={{ gap: 8, fontSize: 12, color: T.ink1 }}>
+              <span style={{ width: 74, color: T.ink2, flexShrink: 0 }}>sem. {fmtWeekISO(c.week)}</span>
+              <span style={{ width: 70, color: T.ink0, fontWeight: 500, flexShrink: 0 }}>{fmtNum(c.value, unit)}</span>
+              <span style={{ width: 48, flexShrink: 0, fontSize: 11, color: delta > 0 ? DONE_COLOR : delta < 0 ? LATE_COLOR : T.ink2 }}>
+                {delta === null ? "" : `${delta > 0 ? "+" : ""}${String(Math.round(delta * 100) / 100).replace(".", ",")}`}
+              </span>
+              <span style={{ ...ellipsis, flex: 1 }} title={c.note}>{c.note}</span>
+              {!disabled && <button onClick={() => onChange(list.filter((x) => x.week !== c.week))} style={{ ...linkBtn, color: T.ink2, fontSize: 11 }}>remover</button>}
+            </div>
+          );
+        })}
+        {list.length === 0 && <Muted>Nenhum check-in ainda.</Muted>}
+      </div>
+      {!disabled && (
+        <div className="flex items-center" style={{ gap: 6 }}>
+          <input type="date" value={week} onChange={(e) => setWeek(e.target.value)} title="Qualquer dia da semana; conta a semana inteira" style={{ ...st, width: 130 }} />
+          <input type="number" step="any" value={val} placeholder="Valor" onChange={(e) => setVal(e.target.value)} style={{ ...st, width: 80 }} />
+          <input value={note} placeholder="Nota (opcional)" onChange={(e) => setNote(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") add(); }} style={{ ...st, flex: 1, minWidth: 0 }} />
+          <button onClick={add} style={btnStyle(T)}>Registrar</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ProductBadges({ products }) {
+  const { T, PRODUCT_STYLE } = useTheme();
+  if (!products.length) return <span style={{ fontSize: 11.5, color: T.ink2 }}>—</span>;
+  return (
+    <span className="flex flex-wrap" style={{ gap: 4 }}>
+      {products.map((p) => { const s = PRODUCT_STYLE[p]; return <Badge key={p} bg={s ? s.subtle : T.bg2} color={s ? s.text : T.ink1}>{p}</Badge>; })}
+    </span>
+  );
+}
+
+function PlanningLoadError() {
+  const { T } = useTheme();
+  const { error } = usePlanning();
+  return <div style={{ padding: 24, fontSize: 13, color: T.ink1 }}>Não foi possível carregar o planejamento{error ? `: ${error}` : ""}.</div>;
+}
+
+/* ---- painel lateral de edição (um formulário por tipo) ---- */
+
+const toNum = (v) => (v === "" || v === null || v === undefined ? null : Number(String(v).replace(",", ".")));
+const optionsOf = (list) => list.map((x) => ({ value: x.id, label: x.name }));
+const statusOptions = (list) => list.map((s) => ({ value: s, label: s || "—" }));
+
+const FORMS = {
+  objectives: {
+    title: "Objetivo",
+    fields: [
+      { key: "name", label: "Objetivo", placeholder: "Ex.: Engajamento na Flix" },
+      { key: "period", label: "Período", placeholder: "Ex.: 2026-T4", half: true },
+      { key: "status", label: "Status", type: "select", half: true, options: () => statusOptions(["Em andamento", "Concluído", "Cancelado"]) },
+      { key: "description", label: "Descrição", type: "textarea" },
+    ],
+  },
+  keyResults: {
+    title: "Key Result",
+    fields: [
+      { key: "name", label: "Key Result", placeholder: "Ex.: DAU/MAU" },
+      { key: "objectiveId", label: "Objetivo", type: "select", required: true, options: (c) => optionsOf(c.objectives) },
+      { key: "baseline", label: "Início", type: "number", third: true },
+      { key: "current", label: "Atual", type: "number", third: true },
+      { key: "target", label: "Meta", type: "number", third: true },
+      { key: "unit", label: "Unidade", placeholder: "%, R$, usuários…", half: true },
+      { key: "dueDate", label: "Prazo", type: "date", half: true },
+      { key: "status", label: "Status", type: "select", options: () => statusOptions(["Em andamento", "Concluído", "Cancelado"]) },
+      { key: "description", label: "Como medir", type: "textarea" },
+      { key: "checkins", label: "Acompanhamento semanal", type: "checkins", mirror: "current" },
+    ],
+  },
+  initiatives: {
+    title: "Iniciativa",
+    fields: [
+      { key: "name", label: "Iniciativa", placeholder: "Ex.: Reduzir cancelamento" },
+      { key: "keyResultId", label: "Key Result que ela move", type: "select", options: (c) => [{ value: "", label: "Nenhum" }, ...c.keyResults.map((k) => ({ value: k.id, label: `${k.name}${c.objectiveById[k.objectiveId] ? ` · ${c.objectiveById[k.objectiveId].name}` : ""}` }))] },
+      { key: "status", label: "Status", type: "select", half: true, options: () => statusOptions(INITIATIVE_STATUSES) },
+      { key: "product", label: "Produto principal", type: "select", half: true, options: (c) => [{ value: "", label: "Vários / nenhum" }, ...c.products.map((p) => ({ value: p, label: p }))] },
+      { key: "description", label: "Descrição", type: "textarea" },
+      { key: "epicKeys", label: "Épicos do Jira", type: "epics", pool: (c) => c.epics },
+    ],
+  },
+  opportunities: {
+    title: "Oportunidade",
+    fields: [
+      { key: "name", label: "Oportunidade", placeholder: "Dor ou desejo do usuário" },
+      { key: "keyResultId", label: "Key Result", type: "select", required: true, options: (c) => optionsOf(c.keyResults) },
+      { key: "parentId", label: "Dentro de", type: "select", options: (c, d) => [{ value: "", label: "— (direto no KR)" }, ...c.opportunities.filter((o) => o.id !== d.id && o.keyResultId === d.keyResultId).map((o) => ({ value: o.id, label: o.name }))] },
+      { key: "status", label: "Status", type: "select", options: () => statusOptions(["Aberta", "Explorando", "Validada", "Descartada"]) },
+      { key: "description", label: "Evidência", type: "textarea", placeholder: "Dados, entrevistas, tickets que mostram a dor" },
+    ],
+  },
+  experiments: {
+    title: "Experimento",
+    fields: [
+      { key: "name", label: "Experimento", placeholder: "Ex.: Onboarding com 3 STLs sugeridos" },
+      { key: "opportunityId", label: "Oportunidade", type: "select", required: true, options: (c) => optionsOf(c.opportunities) },
+      { key: "hypothesis", label: "Hipótese", type: "textarea", placeholder: "Se fizermos X, a métrica Y muda Z, porque…" },
+      { key: "metric", label: "Métrica", placeholder: "Ex.: ativação D7", half: true },
+      { key: "unit", label: "Unidade", placeholder: "%", half: true },
+      { key: "baseline", label: "Antes", type: "number", third: true },
+      { key: "target", label: "Meta", type: "number", third: true },
+      { key: "result", label: "Resultado", type: "number", third: true },
+      { key: "impact", label: "Impacto", type: "score", third: true },
+      { key: "confidence", label: "Confiança", type: "score", third: true },
+      { key: "ease", label: "Facilidade", type: "score", third: true },
+      { key: "startDate", label: "Início", type: "date", half: true },
+      { key: "dueDate", label: "Prazo", type: "date", half: true },
+      { key: "status", label: "Status", type: "select", half: true, options: () => statusOptions(EXPERIMENT_STATUSES) },
+      { key: "outcome", label: "Conclusão", type: "select", half: true, options: () => statusOptions(["", "Validado", "Invalidado", "Inconclusivo"]) },
+      { key: "epicKey", label: "Épico no Jira", type: "epic" },
+      { key: "checkins", label: "Acompanhamento semanal da métrica", type: "checkins", mirror: "result" },
+    ],
+  },
+  features: {
+    title: "Feature",
+    fields: [
+      { key: "name", label: "Feature", placeholder: "Ex.: Calculadora" },
+      { key: "product", label: "Produto", type: "select", required: true, half: true, options: (c) => c.products.map((p) => ({ value: p, label: p })) },
+      { key: "status", label: "Status", type: "select", half: true, options: () => statusOptions(["Ativa", "Em construção", "Descontinuada"]) },
+      { key: "description", label: "Descrição", type: "textarea" },
+      { key: "epicKeys", label: "Épicos do Jira", type: "epics", pool: (c, d) => c.epics.filter((e) => e.project === d.product) },
+    ],
+  },
+};
+
+function SideDrawer({ title, onClose, children }) {
+  const { T } = useTheme();
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 60, display: "flex", justifyContent: "flex-end", background: "rgba(0,0,0,0.45)" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ height: "100%", width: 460, maxWidth: "100%", overflowY: "auto", borderLeft: `1px solid ${T.border2}`, background: T.bg0, padding: 20, boxSizing: "border-box" }}>
+        <div className="flex items-center justify-between" style={{ marginBottom: 16 }}>
+          <h2 style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", fontWeight: 700, fontSize: 16, color: T.ink0, margin: 0 }}>{title}</h2>
+          <button onClick={onClose} title="Fechar" style={{ display: "flex", border: "none", background: "transparent", color: T.ink1, cursor: "pointer" }}><X size={16} /></button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function FormInput({ field: f, value, onChange, ctx, draft, disabled }) {
+  const { T } = useTheme();
+  const st = { ...fieldStyle(T), width: "100%", boxSizing: "border-box" };
+  if (f.type === "textarea") {
+    return <textarea rows={3} value={value || ""} placeholder={f.placeholder} disabled={disabled} onChange={(e) => onChange(e.target.value)} style={{ ...st, resize: "vertical", lineHeight: 1.45 }} />;
+  }
+  if (f.type === "select") {
+    return (
+      <select value={value ?? ""} disabled={disabled} onChange={(e) => onChange(e.target.value)} style={st}>
+        {f.required && !value && <option value="">Escolha…</option>}
+        {f.options(ctx, draft).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
+    );
+  }
+  if (f.type === "score") {
+    return (
+      <select value={value ?? ""} disabled={disabled} onChange={(e) => onChange(e.target.value === "" ? null : Number(e.target.value))} style={st}>
+        <option value="">—</option>
+        {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => <option key={n} value={n}>{n}</option>)}
+      </select>
+    );
+  }
+  if (f.type === "epic") {
+    return (
+      <select value={value || ""} disabled={disabled} onChange={(e) => onChange(e.target.value)} style={st}>
+        <option value="">Nenhum</option>
+        {ctx.epics.map((e) => <option key={e.key} value={e.key}>{e.key} — {e.summary}</option>)}
+      </select>
+    );
+  }
+  if (f.type === "checkins") {
+    return <CheckinsInput value={value} onChange={onChange} disabled={disabled} unit={draft.unit} target={toNum(draft.target)} baseline={toNum(draft.baseline)} />;
+  }
+  if (f.type === "epics") {
+    const keys = value || [];
+    const byKey = Object.fromEntries(ctx.epics.map((e) => [e.key, e]));
+    const pool = f.pool(ctx, draft).filter((e) => !keys.includes(e.key));
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {keys.map((k) => (
+          <div key={k} className="flex items-center" style={{ gap: 8 }}>
+            {byKey[k] ? <EpicLine epic={byKey[k]} /> : <span style={{ flex: 1, fontSize: 12, color: T.ink2 }}>{k} (não encontrado)</span>}
+            {!disabled && <button onClick={() => onChange(keys.filter((x) => x !== k))} style={{ ...linkBtn, color: T.ink2, fontSize: 11 }}>remover</button>}
+          </div>
+        ))}
+        {keys.length === 0 && <Muted>Nenhum épico vinculado.</Muted>}
+        {!disabled && (
+          <select value="" onChange={(e) => { if (e.target.value) onChange([...keys, e.target.value]); }} style={st}>
+            <option value="">Vincular épico…</option>
+            {pool.map((e) => <option key={e.key} value={e.key}>{e.key} — {e.summary}</option>)}
+          </select>
+        )}
+      </div>
+    );
+  }
+  return (
+    <input
+      type={f.type === "number" ? "number" : f.type === "date" ? "date" : "text"} step={f.type === "number" ? "any" : undefined}
+      value={value ?? ""} placeholder={f.placeholder} disabled={disabled} onChange={(e) => onChange(e.target.value)} style={st}
+    />
+  );
+}
+
+function EditorDrawer({ editor, onClose }) {
+  const { T } = useTheme();
+  const { canCreateCard } = useAuth();
+  const planning = usePlanning();
+  const inits = useInitiatives();
+  const { epics } = useData();
+  const products = useProducts();
+  const idx = usePlanIndex();
+  const { kind, item } = editor;
+  const form = FORMS[kind];
+  const [draft, setDraft] = useState(() => (item ? { ...item } : { ...editor.initial }));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const ro = !canCreateCard;
+  const ctx = { ...planning.items, initiatives: inits.initiatives, epics, products, objectiveById: idx.objectiveById };
+
+  const save = async () => {
+    if (!String(draft.name || "").trim()) { setError("Dê um nome."); return; }
+    const missing = form.fields.find((f) => f.required && !draft[f.key]);
+    if (missing) { setError(`Escolha: ${missing.label}.`); return; }
+    const payload = {};
+    form.fields.forEach((f) => { if (f.key in draft) payload[f.key] = draft[f.key]; });
+    setBusy(true);
+    let r;
+    if (kind === "initiatives") {
+      if (item) r = await inits.updateInitiative(item.id, payload);
+      else {
+        r = await inits.createInitiative(payload.name, payload.product || "", payload);
+        if (r.ok && (payload.epicKeys || []).length) r = await inits.updateInitiative(r.initiative.id, { epicKeys: payload.epicKeys });
+      }
+      // Um épico só cabe numa iniciativa: o servidor tira dos outros; relê a lista.
+      if (r.ok && payload.epicKeys) inits.reload();
+    } else {
+      r = item ? await planning.update(kind, item.id, payload) : await planning.create(kind, payload);
+    }
+    setBusy(false);
+    if (r.ok) onClose(); else setError(r.message || "Não foi possível salvar.");
+  };
+
+  const del = async () => {
+    if (!window.confirm(`Excluir "${item.name}"?`)) return;
+    setBusy(true);
+    const r = kind === "initiatives" ? await inits.deleteInitiative(item.id) : await planning.remove(kind, item.id);
+    setBusy(false);
+    if (r.ok) onClose(); else setError(r.message || "Não foi possível excluir.");
+  };
+
+  return (
+    <SideDrawer title={item ? form.title : `Novo: ${form.title}`} onClose={onClose}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
+        {form.fields.map((f) => (
+          <div key={f.key} style={{ width: f.third ? "calc(33.33% - 8px)" : f.half ? "calc(50% - 6px)" : "100%", display: "flex", flexDirection: "column", gap: 4 }}>
+            <span style={{ fontSize: 11.5, fontWeight: 500, color: T.ink1 }}>{f.label}</span>
+            <FormInput field={f} value={draft[f.key]} onChange={(v) => setDraft((d) => ({ ...d, [f.key]: v, ...(f.mirror && v.length ? { [f.mirror]: v[v.length - 1].value } : {}) }))} ctx={ctx} draft={draft} disabled={ro} />
+          </div>
+        ))}
+      </div>
+      {kind === "experiments" && iceScore(draft) !== null && <Muted style={{ marginTop: 10 }}>ICE: {String(iceScore(draft)).replace(".", ",")}</Muted>}
+      {error && <p style={{ marginTop: 12, fontSize: 12, color: LATE_COLOR }}>{error}</p>}
+      {ro ? (
+        <Muted style={{ marginTop: 16 }}>Somente leitura: só admin edita.</Muted>
+      ) : (
+        <div className="flex items-center justify-between" style={{ marginTop: 20 }}>
+          {item ? <button onClick={del} disabled={busy} style={{ ...linkBtn, color: LATE_COLOR }}>Excluir</button> : <span />}
+          <div className="flex" style={{ gap: 8 }}>
+            <button onClick={onClose} style={btnStyle(T)}>Cancelar</button>
+            <button onClick={save} disabled={busy} style={{ ...btnStyle(T, true), opacity: busy ? 0.6 : 1 }}>{busy ? "Salvando…" : "Salvar"}</button>
+          </div>
+        </div>
+      )}
+    </SideDrawer>
+  );
+}
+
+/** `open(kind, item?, initial?)` abre o painel; `node` é o painel a renderizar. */
+function useEditor() {
+  const [editor, setEditor] = useState(null);
+  const open = useCallback((kind, item = null, initial = {}) => setEditor({ kind, item, initial, n: Date.now() }), []);
+  const close = useCallback(() => setEditor(null), []);
+  return [open, editor ? <EditorDrawer key={editor.n} editor={editor} onClose={close} /> : null];
+}
+
+function NewButton({ label, onClick, disabled, title }) {
+  const { T } = useTheme();
+  const { canCreateCard } = useAuth();
+  if (!canCreateCard) return null;
+  return <button onClick={onClick} disabled={disabled} title={title} style={{ ...btnStyle(T, true), opacity: disabled ? 0.5 : 1, cursor: disabled ? "default" : "pointer" }}><Plus size={13} /> {label}</button>;
+}
+
+function ProductFilter({ value, onChange }) {
+  const { T } = useTheme();
+  const products = useProducts();
+  return (
+    <select value={value} onChange={(e) => onChange(e.target.value)} style={fieldStyle(T)}>
+      <option value="all">Todos os produtos</option>
+      {products.map((p) => <option key={p} value={p}>{p}</option>)}
+    </select>
+  );
+}
+
+function ScreenShell({ children }) {
+  return <div className="pp-scroll" style={{ overflowY: "auto", flex: 1, padding: "20px 24px 40px" }}>{children}</div>;
+}
+
+/* ---- Visão geral ---- */
+
+function Kpi({ label, value, tone }) {
+  const { T } = useTheme();
+  const color = tone === "late" ? LATE_COLOR : tone === "done" ? DONE_COLOR : T.ink0;
+  return (
+    <div style={{ ...cardStyle(T), padding: "12px 14px", minWidth: 140, flex: 1 }}>
+      <div style={{ fontSize: 11.5, color: T.ink2 }}>{label}</div>
+      <div style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", fontSize: 22, fontWeight: 700, color, marginTop: 2 }}>{value}</div>
+    </div>
+  );
+}
+
+function OverviewScreen() {
+  const { T } = useTheme();
+  const { items, status } = usePlanning();
+  const { initiatives } = useInitiatives();
+  const idx = usePlanIndex();
+  const [product, setProduct] = useState("all");
+  const [open, editorNode] = useEditor();
+  if (status === "error") return <PlanningLoadError />;
+
+  const inProduct = (prods) => product === "all" || prods.includes(product);
+  const krProducts = (kr) => [...new Set(idx.initiativesOfKr(kr.id).flatMap(idx.productsOfInitiative))];
+  const objectives = items.objectives
+    .filter((o) => o.status !== "Cancelado")
+    .map((o) => ({ o, krs: idx.krsOfObjective(o.id).filter((kr) => inProduct(krProducts(kr))) }))
+    .filter((x) => product === "all" || x.krs.length);
+  const activeInitiatives = initiatives
+    .filter((i) => i.status !== "Cancelada" && inProduct(idx.productsOfInitiative(i)))
+    .sort((a, b) => INITIATIVE_STATUSES.indexOf(a.status || "Planejada") - INITIATIVE_STATUSES.indexOf(b.status || "Planejada"));
+  const expProducts = (x) => (x.epicKey && idx.epicByKey[x.epicKey] ? [idx.epicByKey[x.epicKey].project] : []);
+  const experiments = items.experiments.filter((x) => product === "all" || expProducts(x).includes(product));
+  const watch = experiments.filter((x) => dueState(x, "Concluído")).sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+  const late = watch.filter((x) => dueState(x, "Concluído") === "late").length;
+  const allKrs = objectives.flatMap((x) => x.krs);
+  const krsDone = allKrs.filter((kr) => krProgress(kr) === 100 || kr.status === "Concluído").length;
+  const pendingCheckins = allKrs.filter((kr) => needsCheckin(kr, ["Em andamento"])).length
+    + experiments.filter((x) => needsCheckin(x, ["Rodando"])).length;
+
+  return (
+    <ScreenShell>
+      <PageTitle title="Visão geral" sub="OKRs, iniciativas e experimentos de growth">
+        <ProductFilter value={product} onChange={setProduct} />
+      </PageTitle>
+
+      <div className="flex" style={{ gap: 10, flexWrap: "wrap", marginBottom: 20 }}>
+        <Kpi label="Objetivos ativos" value={objectives.length} />
+        <Kpi label="Key Results atingidos" value={`${krsDone}/${allKrs.length}`} tone={allKrs.length && krsDone === allKrs.length ? "done" : null} />
+        <Kpi label="Iniciativas em andamento" value={activeInitiatives.filter((i) => i.status === "Em andamento").length} />
+        <Kpi label="Experimentos rodando" value={experiments.filter((x) => x.status === "Rodando").length} />
+        <Kpi label="Experimentos atrasados" value={late} tone={late ? "late" : null} />
+        <Kpi label="Check-ins da semana pendentes" value={pendingCheckins} tone={pendingCheckins ? "late" : "done"} />
+      </div>
+
+      <div style={{ marginBottom: 24 }}>
+        <SectionTitleRow title="Progresso dos OKRs" />
+        {objectives.length === 0 && <Muted>Nenhum objetivo{product !== "all" ? " com iniciativas neste produto" : ""}. Cadastre em OKRs.</Muted>}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(360px, 1fr))", gap: 12 }}>
+          {objectives.map(({ o, krs }) => (
+            <div key={o.id} style={cardStyle(T)}>
+              <div className="flex items-center" style={{ gap: 8, marginBottom: 10 }}>
+                <button onClick={() => open("objectives", o)} style={{ ...linkBtn, color: T.ink0, fontSize: 14, fontWeight: 600 }}>{o.name}</button>
+                {o.period && <Badge bg={T.bg2} color={T.ink1}>{o.period}</Badge>}
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {krs.map((kr) => (
+                  <div key={kr.id} onClick={() => open("keyResults", kr)} style={{ cursor: "pointer" }}>
+                    <div className="flex items-center justify-between" style={{ gap: 8, marginBottom: 4 }}>
+                      <span style={{ ...ellipsis, fontSize: 12.5, color: T.ink0 }}>{kr.name}</span>
+                      <span className="flex items-center" style={{ gap: 6 }}><CheckinBadge item={kr} activeStatuses={["Em andamento"]} /><DueBadge item={kr} doneStatus="Concluído" /></span>
+                    </div>
+                    <div className="flex items-center" style={{ gap: 8 }}><div style={{ flex: 1, minWidth: 0 }}><KrProgress kr={kr} /></div><WeeklySpark checkins={kr.checkins} target={kr.target} /></div>
+                  </div>
+                ))}
+                {krs.length === 0 && <Muted>Sem Key Results.</Muted>}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.5fr) minmax(0, 1fr)", gap: 16, alignItems: "start" }}>
+        <div>
+          <SectionTitleRow title="Iniciativas e épicos" />
+          <div style={{ ...cardStyle(T), padding: 0 }}>
+            {activeInitiatives.map((i, n) => (
+              <div key={i.id} onClick={() => open("initiatives", i)} className="pp-card" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.2fr) minmax(0, 1fr) 110px", gap: 12, alignItems: "center", padding: "10px 14px", borderTop: n ? `1px solid ${T.border2}` : "none", cursor: "pointer" }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ ...ellipsis, fontSize: 12.5, fontWeight: 500, color: T.ink0 }}>{i.name}</div>
+                  <div style={{ ...ellipsis, fontSize: 11, color: T.ink2 }}>{idx.krById[i.keyResultId] ? idx.krById[i.keyResultId].name : "sem KR"}</div>
+                </div>
+                <EpicBuckets epics={idx.epicsOf(i.epicKeys)} />
+                <span style={{ justifySelf: "end" }}><StatusBadge tone={statusTone(i.status)}>{i.status || "Planejada"}</StatusBadge></span>
+              </div>
+            ))}
+            {activeInitiatives.length === 0 && <div style={{ padding: 14 }}><Muted>Nenhuma iniciativa{product !== "all" ? " neste produto" : ""}.</Muted></div>}
+          </div>
+        </div>
+
+        <div>
+          <SectionTitleRow title="Experimentos vencendo ou atrasados" />
+          <div style={{ ...cardStyle(T), padding: 0 }}>
+            {watch.map((x, n) => (
+              <div key={x.id} onClick={() => open("experiments", x)} className="pp-card" style={{ padding: "10px 14px", borderTop: n ? `1px solid ${T.border2}` : "none", cursor: "pointer" }}>
+                <div className="flex items-center justify-between" style={{ gap: 8 }}>
+                  <span style={{ ...ellipsis, fontSize: 12.5, fontWeight: 500, color: T.ink0 }}>{x.name}</span>
+                  <DueBadge item={x} doneStatus="Concluído" />
+                </div>
+                <div style={{ ...ellipsis, fontSize: 11, color: T.ink2, marginTop: 2 }}>{x.status} · {idx.oppById[x.opportunityId] ? idx.oppById[x.opportunityId].name : "—"}</div>
+              </div>
+            ))}
+            {watch.length === 0 && <div style={{ padding: 14 }}><Muted>Nada vencendo nos próximos 7 dias.</Muted></div>}
+          </div>
+        </div>
+      </div>
+      {editorNode}
+    </ScreenShell>
+  );
+}
+
+/* ---- OKRs: Objetivo → Key Results → Iniciativas ---- */
+
+function OkrScreen() {
+  const { T } = useTheme();
+  const { items, status } = usePlanning();
+  const { initiatives } = useInitiatives();
+  const idx = usePlanIndex();
+  const [open, editorNode] = useEditor();
+  if (status === "error") return <PlanningLoadError />;
+  const loose = initiatives.filter((i) => !idx.krById[i.keyResultId]).length;
+
+  return (
+    <ScreenShell>
+      <PageTitle title="OKRs" sub="Objetivo → Key Results (métrica, meta e prazo) → Iniciativas que movem cada KR">
+        <NewButton label="Objetivo" onClick={() => open("objectives", null, { status: "Em andamento" })} />
+      </PageTitle>
+      {status === "idle" && items.objectives.length === 0 && <Muted>Nenhum objetivo ainda. Comece por um, ex.: “Engajamento na Flix”.</Muted>}
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        {items.objectives.map((o) => {
+          const krs = idx.krsOfObjective(o.id);
+          return (
+            <div key={o.id} style={cardStyle(T)}>
+              <div className="flex items-center justify-between" style={{ gap: 10 }}>
+                <div className="flex items-center" style={{ gap: 8, minWidth: 0 }}>
+                  <Target size={16} color={ACCENT} />
+                  <button onClick={() => open("objectives", o)} style={{ ...linkBtn, ...ellipsis, color: T.ink0, fontSize: 15, fontWeight: 600, fontFamily: "'Plus Jakarta Sans', sans-serif" }}>{o.name}</button>
+                  {o.period && <Badge bg={T.bg2} color={T.ink1}>{o.period}</Badge>}
+                  <StatusBadge tone={statusTone(o.status)}>{o.status}</StatusBadge>
+                </div>
+                <NewButton label="Key Result" onClick={() => open("keyResults", null, { objectiveId: o.id, status: "Em andamento" })} />
+              </div>
+              {o.description && <Muted style={{ marginTop: 6 }}>{o.description}</Muted>}
+
+              <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+                {krs.map((kr) => {
+                  const krInits = idx.initiativesOfKr(kr.id);
+                  const opps = idx.oppsOfKr(kr.id);
+                  return (
+                    <div key={kr.id} style={{ border: `1px solid ${T.border2}`, borderRadius: 8, padding: 12, background: T.bg1 }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(200px, 1fr) auto", gap: 12, alignItems: "center" }}>
+                        <button onClick={() => open("keyResults", kr)} style={{ ...linkBtn, ...ellipsis, color: T.ink0, fontSize: 13, textAlign: "left" }}>{kr.name}</button>
+                        <div className="flex items-center" style={{ gap: 8, minWidth: 0 }}><KrProgress kr={kr} /><WeeklySpark checkins={kr.checkins} target={kr.target} /></div>
+                        <span className="flex items-center" style={{ gap: 6 }}><CheckinBadge item={kr} activeStatuses={["Em andamento"]} /><DueBadge item={kr} doneStatus="Concluído" /></span>
+                      </div>
+                      <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+                        {krInits.map((i) => (
+                          <div key={i.id} onClick={() => open("initiatives", i)} className="pp-card" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(180px, 260px) 110px", gap: 12, alignItems: "center", padding: "6px 8px", borderRadius: 6, cursor: "pointer", border: "1px solid transparent" }}>
+                            <span className="flex items-center" style={{ gap: 6, minWidth: 0, fontSize: 12.5, color: T.ink0 }}><Sparkles size={13} color={T.ink2} /><span style={ellipsis}>{i.name}</span></span>
+                            <EpicBuckets epics={idx.epicsOf(i.epicKeys)} />
+                            <span style={{ justifySelf: "end" }}><StatusBadge tone={statusTone(i.status)}>{i.status || "Planejada"}</StatusBadge></span>
+                          </div>
+                        ))}
+                        <div className="flex items-center" style={{ gap: 14, paddingLeft: 8 }}>
+                          {krInits.length === 0 && <Muted>Nenhuma iniciativa movendo este KR.</Muted>}
+                          <AddLink label="Iniciativa" onClick={() => open("initiatives", null, { keyResultId: kr.id, status: "Planejada", product: "", epicKeys: [] })} />
+                          <span style={{ fontSize: 11.5, color: T.ink2 }}>{opps.length} {opps.length === 1 ? "oportunidade" : "oportunidades"}</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+                {krs.length === 0 && <Muted>Sem Key Results. Um objetivo precisa de pelo menos um número para medir.</Muted>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {loose > 0 && <Muted style={{ marginTop: 14 }}>{loose} {loose === 1 ? "iniciativa ainda não move" : "iniciativas ainda não movem"} nenhum KR. Veja em Iniciativas.</Muted>}
+      {editorNode}
+    </ScreenShell>
+  );
+}
+
+function AddLink({ label, onClick }) {
+  const { canCreateCard } = useAuth();
+  if (!canCreateCard) return null;
+  return <button onClick={onClick} style={{ ...linkBtn, fontSize: 11.5, display: "inline-flex", alignItems: "center", gap: 3 }}><Plus size={12} /> {label}</button>;
+}
+
+/* ---- Iniciativas: a aposta grande, com os épicos que a executam ---- */
+
+function InitiativesScreen() {
+  const { T } = useTheme();
+  const { epics } = useData();
+  const { initiatives } = useInitiatives();
+  const idx = usePlanIndex();
+  const [product, setProduct] = useState("all");
+  const [open, editorNode] = useEditor();
+
+  const list = initiatives
+    .filter((i) => product === "all" || idx.productsOfInitiative(i).includes(product))
+    .sort((a, b) => INITIATIVE_STATUSES.indexOf(a.status || "Planejada") - INITIATIVE_STATUSES.indexOf(b.status || "Planejada"));
+  const loose = epics.filter((e) => !idx.initiativeByEpic[e.key] && (product === "all" || e.project === product)).length;
+  const order = { doing: 0, todo: 1, done: 2 };
+
+  return (
+    <ScreenShell>
+      <PageTitle title="Iniciativas" sub={`A aposta grande (ex.: reduzir cancelamento) que reúne vários épicos · ${loose} ${loose === 1 ? "épico" : "épicos"} sem iniciativa`}>
+        <ProductFilter value={product} onChange={setProduct} />
+        <NewButton label="Iniciativa" onClick={() => open("initiatives", null, { status: "Planejada", product: "", keyResultId: "", epicKeys: [] })} />
+      </PageTitle>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        {list.map((i) => {
+          const kr = idx.krById[i.keyResultId];
+          const obj = kr && idx.objectiveById[kr.objectiveId];
+          const iEpics = idx.epicsOf(i.epicKeys).sort((a, b) => order[epicBucket(a)] - order[epicBucket(b)]);
+          return (
+            <div key={i.id} style={cardStyle(T)}>
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(200px, 280px) auto", gap: 14, alignItems: "center" }}>
+                <div style={{ minWidth: 0 }}>
+                  <div className="flex items-center" style={{ gap: 8 }}>
+                    <button onClick={() => open("initiatives", i)} style={{ ...linkBtn, ...ellipsis, color: T.ink0, fontSize: 14, fontWeight: 600 }}>{i.name}</button>
+                    <StatusBadge tone={statusTone(i.status)}>{i.status || "Planejada"}</StatusBadge>
+                  </div>
+                  <div className="flex items-center" style={{ gap: 8, marginTop: 4, flexWrap: "wrap" }}>
+                    <span style={{ fontSize: 11.5, color: T.ink2 }}>{kr ? `Move: ${kr.name}${obj ? ` · ${obj.name}` : ""}` : "Não move nenhum KR"}</span>
+                    <ProductBadges products={idx.productsOfInitiative(i)} />
+                  </div>
+                </div>
+                <EpicBuckets epics={iEpics} />
+                <button onClick={() => open("initiatives", i)} style={btnStyle(T)}>Editar</button>
+              </div>
+              <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 4, borderTop: `1px solid ${T.border2}`, paddingTop: 10 }}>
+                {iEpics.map((e) => <EpicLine key={e.key} epic={e} showAssignee />)}
+                {iEpics.length === 0 && <Muted>Nenhum épico. Vincule em Editar.</Muted>}
+              </div>
+            </div>
+          );
+        })}
+        {list.length === 0 && <Muted>Nenhuma iniciativa{product !== "all" ? " neste produto" : ""}.</Muted>}
+      </div>
+      {editorNode}
+    </ScreenShell>
+  );
+}
+
+/* ---- Oportunidades: árvore (KR → oportunidades → experimentos) e quadro ---- */
+
+function ExperimentMeta({ x }) {
+  const { T } = useTheme();
+  const ice = iceScore(x);
+  return (
+    <span className="flex items-center" style={{ gap: 6, flexWrap: "wrap" }}>
+      {ice !== null && <Badge bg="rgba(81,102,230,0.12)" color={ACCENT}>ICE {String(ice).replace(".", ",")}</Badge>}
+      {x.outcome && <StatusBadge tone={x.outcome === "Validado" ? "done" : x.outcome === "Invalidado" ? "late" : null}>{x.outcome}</StatusBadge>}
+      <DueBadge item={x} doneStatus="Concluído" />
+      <CheckinBadge item={x} activeStatuses={["Rodando"]} />
+      <WeeklySpark checkins={x.checkins} target={x.target} />
+      {x.metric && <span style={{ fontSize: 11, color: T.ink2 }}>{x.metric}: {fmtNum(x.baseline, x.unit)} → {fmtNum(x.target, x.unit)}{isNum(x.result) ? ` (deu ${fmtNum(x.result, x.unit)})` : ""}</span>}
+    </span>
+  );
+}
+
+function OpportunityNode({ opp, depth, open }) {
+  const { T } = useTheme();
+  const { items } = usePlanning();
+  const idx = usePlanIndex();
+  const children = items.opportunities.filter((o) => o.parentId === opp.id);
+  const exps = idx.experimentsOfOpp(opp.id);
+  return (
+    <div style={{ marginLeft: depth ? 18 : 0, paddingLeft: 12, borderLeft: `2px solid ${T.border2}` }}>
+      <div className="flex items-center" style={{ gap: 8, padding: "6px 0", flexWrap: "wrap" }}>
+        <Lightbulb size={14} color={SOON_COLOR} />
+        <button onClick={() => open("opportunities", opp)} style={{ ...linkBtn, color: T.ink0, fontSize: 13 }}>{opp.name}</button>
+        <StatusBadge tone={statusTone(opp.status)}>{opp.status}</StatusBadge>
+        <AddLink label="sub-oportunidade" onClick={() => open("opportunities", null, { keyResultId: opp.keyResultId, parentId: opp.id, status: "Aberta" })} />
+        <AddLink label="experimento" onClick={() => open("experiments", null, { opportunityId: opp.id, status: "Ideia", outcome: "" })} />
+      </div>
+      {exps.map((x) => (
+        <div key={x.id} onClick={() => open("experiments", x)} className="pp-card" style={{ marginLeft: 18, display: "flex", alignItems: "center", gap: 8, padding: "5px 8px", borderRadius: 6, cursor: "pointer", flexWrap: "wrap", border: "1px solid transparent" }}>
+          <FlaskConical size={13} color={ACCENT} />
+          <span style={{ fontSize: 12.5, color: T.ink0 }}>{x.name}</span>
+          <StatusBadge tone={statusTone(x.status)}>{x.status}</StatusBadge>
+          <ExperimentMeta x={x} />
+        </div>
+      ))}
+      {depth < 6 && children.map((c) => <OpportunityNode key={c.id} opp={c} depth={depth + 1} open={open} />)}
+    </div>
+  );
+}
+
+function OpportunitiesScreen() {
+  const { T } = useTheme();
+  const { items, status } = usePlanning();
+  const idx = usePlanIndex();
+  const [tab, setTab] = useState("tree");
+  const [open, editorNode] = useEditor();
+  if (status === "error") return <PlanningLoadError />;
+
+  const tabBtn = (key, label) => (
+    <button key={key} onClick={() => setTab(key)} style={{ ...btnStyle(T), background: tab === key ? "rgba(81,102,230,0.12)" : T.bg1, color: tab === key ? ACCENT : T.ink1, borderColor: tab === key ? "transparent" : T.border2 }}>{label}</button>
+  );
+  const byIce = (a, b) => (iceScore(b) ?? -1) - (iceScore(a) ?? -1);
+
+  return (
+    <ScreenShell>
+      <PageTitle title="Oportunidades" sub="Árvore de oportunidades por Key Result e experimentos de growth com métrica e prazo">
+        {tabBtn("tree", "Árvore")}
+        {tabBtn("board", "Experimentos")}
+        <NewButton
+          label="Experimento" disabled={!items.opportunities.length} title={items.opportunities.length ? "" : "Crie uma oportunidade antes"}
+          onClick={() => open("experiments", null, { status: "Ideia", outcome: "" })}
+        />
+      </PageTitle>
+
+      {tab === "tree" ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          {items.keyResults.length === 0 && <Muted>A árvore começa num Key Result. Cadastre um objetivo e seus KRs em OKRs.</Muted>}
+          {items.keyResults.map((kr) => {
+            const roots = idx.oppsOfKr(kr.id).filter((o) => !o.parentId || !idx.oppById[o.parentId]);
+            const obj = idx.objectiveById[kr.objectiveId];
+            return (
+              <div key={kr.id} style={cardStyle(T)}>
+                <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(200px, 320px) auto", gap: 12, alignItems: "center", marginBottom: 8 }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div className="flex items-center" style={{ gap: 8 }}>
+                      <Target size={15} color={ACCENT} />
+                      <span style={{ ...ellipsis, fontSize: 14, fontWeight: 600, color: T.ink0 }}>{kr.name}</span>
+                    </div>
+                    {obj && <div style={{ fontSize: 11.5, color: T.ink2, marginTop: 2 }}>{obj.name}</div>}
+                  </div>
+                  <KrProgress kr={kr} />
+                  <NewButton label="Oportunidade" onClick={() => open("opportunities", null, { keyResultId: kr.id, parentId: "", status: "Aberta" })} />
+                </div>
+                {roots.map((o) => <OpportunityNode key={o.id} opp={o} depth={0} open={open} />)}
+                {roots.length === 0 && <Muted>Nenhuma oportunidade mapeada para este KR.</Muted>}
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 10, alignItems: "start" }}>
+          {EXPERIMENT_STATUSES.map((s) => {
+            const col = items.experiments.filter((x) => x.status === s).sort(byIce);
+            return (
+              <div key={s} style={{ background: T.bg1, borderRadius: 10, padding: 10, minHeight: 120 }}>
+                <div className="flex items-center justify-between" style={{ marginBottom: 8 }}>
+                  <span style={{ fontSize: 12.5, fontWeight: 600, color: T.ink0 }}>{s}</span>
+                  <span style={{ fontSize: 11, color: T.ink2 }}>{col.length}</span>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {col.map((x) => {
+                    const epic = x.epicKey && idx.epicByKey[x.epicKey];
+                    return (
+                      <div key={x.id} onClick={() => open("experiments", x)} style={{ ...cardStyle(T), padding: 10, cursor: "pointer" }}>
+                        <div style={{ fontSize: 12.5, fontWeight: 500, color: T.ink0 }}>{x.name}</div>
+                        <div style={{ ...ellipsis, fontSize: 11, color: T.ink2, margin: "2px 0 6px" }}>{idx.oppById[x.opportunityId] ? idx.oppById[x.opportunityId].name : "—"}</div>
+                        <ExperimentMeta x={x} />
+                        {epic && <div style={{ marginTop: 6 }}><EpicLine epic={epic} /></div>}
+                      </div>
+                    );
+                  })}
+                  {col.length === 0 && <Muted>Vazio.</Muted>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {editorNode}
+    </ScreenShell>
+  );
+}
+
+/* ---- Épicos: o que vem do Jira, com a iniciativa, o KR e a feature ---- */
 
 function EpicsScreen() {
   const { T, PRODUCT_STYLE } = useTheme();
   const { epics, lastSync } = useData();
-  const products = useProducts();
-  const { items } = usePlanning();
+  const { initiatives } = useInitiatives();
+  const idx = usePlanIndex();
   const [q, setQ] = useState("");
   const [product, setProduct] = useState("all");
   const [status, setStatus] = useState("all");
+  const [initiative, setInitiative] = useState("all");
   const [openKey, setOpenKey] = useState(null);
 
-  const namesByEpic = useMemo(() => {
-    const out = { objectives: {}, features: {}, releases: {} };
-    Object.keys(out).forEach((kind) => items[kind].forEach((it) => (it.epicKeys || []).forEach((k) => { (out[kind][k] = out[kind][k] || []).push(it.name); })));
-    return out;
-  }, [items]);
   const statuses = useMemo(() => [...new Set(epics.map((e) => e.status).filter(Boolean))].sort(), [epics]);
-
   const rows = useMemo(() => {
     const needle = q.trim().toLowerCase();
     return epics
       .filter((e) => (product === "all" || e.project === product) && (status === "all" || e.status === status))
+      .filter((e) => {
+        const init = idx.initiativeByEpic[e.key];
+        return initiative === "all" || (initiative === "none" ? !init : init && init.id === initiative);
+      })
       .filter((e) => !needle || `${e.key} ${e.summary} ${e.assignee || ""}`.toLowerCase().includes(needle))
       .sort((a, b) => (parseBRDate(b.created) || 0) - (parseBRDate(a.created) || 0));
-  }, [epics, q, product, status]);
+  }, [epics, q, product, status, initiative, idx]);
 
   const openEpic = openKey ? epics.find((e) => e.key === openKey) : null;
-  const cols = "90px minmax(200px, 1fr) 105px 140px 130px 150px 130px 110px";
-  const cell = (list) => (list ? list.join(", ") : "—");
+  const cols = "90px minmax(200px, 1fr) 105px 140px 120px 150px 150px 120px";
 
   return (
-    <div className="pp-scroll" style={{ overflow: "auto", flex: 1, padding: "20px 24px" }}>
-      <PageTitle title="Iniciativas" sub={`${rows.length} de ${epics.length} épicos do Jira${lastSync ? ` · planilha de ${fmtSyncTime(lastSync)}` : ""}`}>
-        <div className="flex items-center" style={{ gap: 6 }}>
-          <input placeholder="Buscar chave, título ou responsável" value={q} onChange={(e) => setQ(e.target.value)} style={{ ...fieldStyle(T), width: 260 }} />
-          <select value={product} onChange={(e) => setProduct(e.target.value)} style={fieldStyle(T)}>
-            <option value="all">Todos os produtos</option>
-            {products.map((p) => <option key={p} value={p}>{p}</option>)}
-          </select>
-          <select value={status} onChange={(e) => setStatus(e.target.value)} style={fieldStyle(T)}>
-            <option value="all">Todos os status</option>
-            {statuses.map((s) => <option key={s} value={s}>{s}</option>)}
-          </select>
-        </div>
+    <ScreenShell>
+      <PageTitle title="Épicos" sub={`${rows.length} de ${epics.length} épicos do Jira${lastSync ? ` · planilha de ${fmtSyncTime(lastSync)}` : ""}`}>
+        <input placeholder="Buscar chave, título ou responsável" value={q} onChange={(e) => setQ(e.target.value)} style={{ ...fieldStyle(T), width: 240 }} />
+        <ProductFilter value={product} onChange={setProduct} />
+        <select value={status} onChange={(e) => setStatus(e.target.value)} style={fieldStyle(T)}>
+          <option value="all">Todos os status</option>
+          {statuses.map((s) => <option key={s} value={s}>{s}</option>)}
+        </select>
+        <select value={initiative} onChange={(e) => setInitiative(e.target.value)} style={fieldStyle(T)}>
+          <option value="all">Todas as iniciativas</option>
+          <option value="none">Sem iniciativa</option>
+          {initiatives.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
+        </select>
       </PageTitle>
 
-      <div style={{ minWidth: 1000, border: `1px solid ${T.border2}`, borderRadius: 10, overflow: "hidden" }}>
+      <div style={{ minWidth: 1040, border: `1px solid ${T.border2}`, borderRadius: 10, overflow: "hidden" }}>
         <div style={{ display: "grid", gridTemplateColumns: cols, gap: 12, padding: "8px 12px", background: T.bg1, fontSize: 11.5, fontWeight: 500, color: T.ink2 }}>
-          <span>Chave</span><span>Título</span><span>Produto</span><span>Status</span><span>Responsável</span><span>Objetivo</span><span>Feature</span><span>Release</span>
+          <span>Chave</span><span>Título</span><span>Produto</span><span>Status</span><span>Responsável</span><span>Iniciativa</span><span>Key Result</span><span>Feature</span>
         </div>
         {rows.map((e) => {
           const style = PRODUCT_STYLE[e.project];
+          const init = idx.initiativeByEpic[e.key];
+          const kr = init && idx.krById[init.keyResultId];
+          const feats = idx.featuresByEpic[e.key];
           return (
-            <div
-              key={e.key} className="pp-card" onClick={() => setOpenKey(e.key)}
-              style={{ display: "grid", gridTemplateColumns: cols, gap: 12, padding: "9px 12px", alignItems: "center", fontSize: 12.5, color: T.ink0, borderTop: `1px solid ${T.border2}`, cursor: "pointer" }}
-            >
-              <a href={`${JIRA_BROWSE}${e.key}`} target="_blank" rel="noreferrer" onClick={(ev) => ev.stopPropagation()} title="Abrir no Jira" style={{ color: "#5166e6", textDecoration: "none", fontWeight: 500 }}>{e.key}</a>
+            <div key={e.key} className="pp-card" onClick={() => setOpenKey(e.key)} style={{ display: "grid", gridTemplateColumns: cols, gap: 12, padding: "9px 12px", alignItems: "center", fontSize: 12.5, color: T.ink0, borderTop: `1px solid ${T.border2}`, cursor: "pointer" }}>
+              <a href={`${JIRA_BROWSE}${e.key}`} target="_blank" rel="noreferrer" onClick={(ev) => ev.stopPropagation()} title="Abrir no Jira" style={{ color: ACCENT, textDecoration: "none", fontWeight: 500 }}>{e.key}</a>
               <span style={ellipsis} title={e.summary}>{e.summary}</span>
               <span>{style ? <Badge bg={style.subtle} color={style.text}>{e.project}</Badge> : <span style={{ color: T.ink2 }}>{e.project || "—"}</span>}</span>
-              <span style={{ color: isEpicDone(e) ? "#00aa6c" : T.ink1 }}>{e.status || "—"}</span>
+              <span><EpicStatus epic={e} /></span>
               <span style={{ ...ellipsis, color: T.ink1 }}>{e.assignee || "—"}</span>
-              <span style={{ ...ellipsis, color: T.ink1 }}>{cell(namesByEpic.objectives[e.key])}</span>
-              <span style={{ ...ellipsis, color: T.ink1 }}>{cell(namesByEpic.features[e.key])}</span>
-              <span style={{ ...ellipsis, color: T.ink1 }}>{cell(namesByEpic.releases[e.key])}</span>
+              <span style={{ ...ellipsis, color: init ? T.ink0 : T.ink2 }}>{init ? init.name : "—"}</span>
+              <span style={{ ...ellipsis, color: T.ink1 }}>{kr ? kr.name : "—"}</span>
+              <span style={{ ...ellipsis, color: T.ink1 }}>{feats ? feats.map((f) => f.name).join(", ") : "—"}</span>
             </div>
           );
         })}
@@ -2911,225 +3849,87 @@ function EpicsScreen() {
       </div>
 
       {openEpic && <EpicDrawer epic={openEpic} onClose={() => setOpenKey(null)} canEdit={false} jiraConfigured={false} />}
-    </div>
+    </ScreenShell>
   );
 }
 
-/* ---- Cartão de Objetivo, Feature ou Release ---- */
+/* ---- Produtos (do Jira) e as features de cada um ---- */
 
-const PLANNING_KINDS = {
-  objectives: {
-    title: "Objetivos", placeholder: "Novo objetivo (ex.: reduzir cancelamento)", empty: "Nenhum objetivo ainda.",
-    sub: "Cada objetivo reúne as iniciativas (épicos do Jira) que o movem",
-    statuses: ["Em andamento", "Concluído", "Cancelado"], linkTitle: "Iniciativas (épicos)",
-  },
-  features: {
-    statuses: ["Ativa", "Em construção", "Descontinuada"], linkTitle: "Iniciativas (épicos) que entregam esta feature",
-  },
-  releases: {
-    title: "Releases", placeholder: "Nova release", empty: "Nenhuma release ainda.",
-    sub: "Agrupa as iniciativas (épicos) entregues juntas",
-    statuses: ["Planejada", "Lançada", "Cancelada"], linkTitle: "Iniciativas (épicos)",
-  },
-};
-
-function PlanningCard({ kind, item, epics }) {
-  const { T } = useTheme();
-  const { canCreateCard } = useAuth();
-  const { update, remove } = usePlanning();
-  const def = PLANNING_KINDS[kind];
-  const [name, setName] = useState(item.name);
-  const [description, setDescription] = useState(item.description || "");
-  const [error, setError] = useState(null);
-  useEffect(() => { setName(item.name); setDescription(item.description || ""); }, [item.name, item.description]);
-
-  const links = item.epicKeys || [];
-  const epicByKey = useMemo(() => Object.fromEntries(epics.map((e) => [e.key, e])), [epics]);
-  const linked = links.map((k) => epicByKey[k]).filter(Boolean);
-  const save = async (patch) => {
-    const r = await update(kind, item.id, patch);
-    setError(r.ok ? null : r.message || null);
-  };
-  const ro = !canCreateCard;
-
-  return (
-    <div style={{ border: `1px solid ${T.border2}`, borderRadius: 10, padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
-      <div className="flex items-center" style={{ gap: 8 }}>
-        <input
-          value={name} disabled={ro} onChange={(e) => setName(e.target.value)}
-          onBlur={() => { const n = name.trim(); if (!n) setName(item.name); else if (n !== item.name) save({ name: n }); }}
-          style={{ ...fieldStyle(T), flex: 1, minWidth: 0, fontSize: 14, fontWeight: 600, background: "transparent", border: "1px solid transparent" }}
-        />
-        {kind === "releases" && (
-          <input type="date" value={item.date || ""} disabled={ro} onChange={(e) => save({ date: e.target.value })} style={fieldStyle(T)} />
-        )}
-        <select value={item.status} disabled={ro} onChange={(e) => save({ status: e.target.value })} style={fieldStyle(T)}>
-          {def.statuses.map((s) => <option key={s} value={s}>{s}</option>)}
-        </select>
-        {!ro && (
-          <button onClick={() => remove(kind, item.id)} title="Excluir" style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 26, height: 26, borderRadius: 6, border: "none", background: "transparent", color: T.ink2, cursor: "pointer" }}>
-            <Trash2 size={14} />
-          </button>
-        )}
-      </div>
-
-      <textarea
-        rows={2} value={description} disabled={ro} placeholder={ro ? "" : "Descrição"} onChange={(e) => setDescription(e.target.value)}
-        onBlur={() => { if (description.trim() !== (item.description || "")) save({ description }); }}
-        style={{ ...fieldStyle(T), width: "100%", resize: "vertical", lineHeight: 1.45 }}
-      />
-
-      <ProgressBar done={linked.filter(isEpicDone).length} total={linked.length} />
-
-      <div>
-        <p style={{ fontSize: 11.5, fontWeight: 500, color: T.ink2, margin: "0 0 4px" }}>{def.linkTitle}</p>
-        <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-          {links.map((k) => {
-            const e = epicByKey[k];
-            return (
-              <div key={k} className="flex items-center" style={{ fontSize: 12, color: T.ink1, gap: 8 }}>
-                <a href={`${JIRA_BROWSE}${k}`} target="_blank" rel="noreferrer" title="Abrir no Jira" style={{ color: "#5166e6", textDecoration: "none", fontWeight: 500, flexShrink: 0 }}>{k}</a>
-                <span style={{ ...ellipsis, flex: 1 }} title={e ? e.summary : ""}>{e ? e.summary : "(não encontrado)"}</span>
-                {e && (isEpicDone(e)
-                  ? <Badge bg="rgba(0,170,108,0.14)" color="#00aa6c">{e.status}</Badge>
-                  : <Badge bg={T.bg2} color={T.ink1}>{e.status || "—"}</Badge>)}
-                {!ro &&<button onClick={() => save({ epicKeys: links.filter((l) => l !== k) })} style={{ border: "none", background: "transparent", color: T.ink2, cursor: "pointer", fontSize: 11, fontFamily: "'Inter Tight', sans-serif", flexShrink: 0 }}>remover</button>}
-              </div>
-            );
-          })}
-          {links.length === 0 && <span style={{ fontSize: 12, color: T.ink2 }}>Nada vinculado.</span>}
-        </div>
-        {!ro && (
-          <select value="" onChange={(e) => { if (e.target.value) save({ epicKeys: [...links, e.target.value] }); }} style={{ ...fieldStyle(T), width: "100%", marginTop: 6 }}>
-            <option value="">Vincular iniciativa…</option>
-            {epics.filter((e) => !links.includes(e.key)).map((e) => <option key={e.key} value={e.key}>{e.key} — {e.summary}</option>)}
-          </select>
-        )}
-      </div>
-      {error && <span style={{ fontSize: 11.5, color: "#e08585" }}>{error}</span>}
-    </div>
-  );
-}
-
-const cardGrid = { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(380px, 1fr))", gap: 12 };
-
-function PlanningLoadError({ what, error }) {
-  const { T } = useTheme();
-  return <div style={{ padding: 24, fontSize: 13, color: T.ink1 }}>Não foi possível carregar {what}{error ? `: ${error}` : ""}.</div>;
-}
-
-/* ---- Objetivos e Releases: lista simples de cartões ---- */
-
-function PlanningScreen({ kind }) {
-  const { T } = useTheme();
-  const { epics } = useData();
-  const { canCreateCard } = useAuth();
-  const { items, status, error, create } = usePlanning();
-  const [name, setName] = useState("");
-  const [createError, setCreateError] = useState(null);
-  const def = PLANNING_KINDS[kind];
-  const list = items[kind];
-
-  const add = async () => {
-    const n = name.trim();
-    if (!n) return;
-    const r = await create(kind, { name: n });
-    if (r.ok) { setName(""); setCreateError(null); } else setCreateError(r.message || null);
-  };
-
-  if (status === "error") return <PlanningLoadError what={def.title.toLowerCase()} error={error} />;
-
-  return (
-    <div className="pp-scroll" style={{ overflowY: "auto", flex: 1, padding: "20px 24px" }}>
-      <PageTitle title={def.title} sub={`${def.sub} · ${list.length} ${list.length === 1 ? "item" : "itens"}`}>
-        {canCreateCard && (
-          <div className="flex items-center" style={{ gap: 6 }}>
-            <input placeholder={def.placeholder} value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") add(); }} style={{ ...fieldStyle(T), width: 280 }} />
-            <button onClick={add} style={{ borderRadius: 8, padding: "6px 10px", fontSize: 12, fontWeight: 500, border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink0, cursor: "pointer", fontFamily: "'Inter Tight', sans-serif" }}>Criar</button>
-          </div>
-        )}
-      </PageTitle>
-      {createError && <p style={{ fontSize: 12, color: "#e08585", marginBottom: 8 }}>{createError}</p>}
-      <div style={cardGrid}>
-        {list.map((item) => <PlanningCard key={item.id} kind={kind} item={item} epics={epics} />)}
-      </div>
-      {status === "idle" && list.length === 0 && <p style={{ fontSize: 13, color: T.ink2 }}>{def.empty}</p>}
-    </div>
-  );
-}
-
-/* ---- Features: cadastradas por produto (o produto vem do Jira) ---- */
-
-function FeaturesScreen() {
+function ProductsScreen() {
   const { T, PRODUCT_STYLE } = useTheme();
   const { epics } = useData();
   const products = useProducts();
-  const { canCreateCard } = useAuth();
-  const { items, status, error, create } = usePlanning();
-  const [product, setProduct] = useState("");
-  const [name, setName] = useState("");
-  const [createError, setCreateError] = useState(null);
+  const { items, status } = usePlanning();
+  const idx = usePlanIndex();
+  const [open, editorNode] = useEditor();
+  if (status === "error") return <PlanningLoadError />;
 
   // Features de um produto que sumiu dos épicos continuam aparecendo, no fim.
-  const groups = useMemo(() => {
-    const extra = [...new Set(items.features.map((f) => f.product))].filter((p) => !products.includes(p)).sort();
-    return [...products, ...extra].map((p) => ({ product: p, features: items.features.filter((f) => f.product === p) }));
-  }, [products, items.features]);
-  const chosen = product || products[0] || "";
-
-  const add = async () => {
-    const n = name.trim();
-    if (!n || !chosen) return;
-    const r = await create("features", { name: n, product: chosen });
-    if (r.ok) { setName(""); setCreateError(null); } else setCreateError(r.message || null);
-  };
-
-  if (status === "error") return <PlanningLoadError what="as features" error={error} />;
+  const extra = [...new Set(items.features.map((f) => f.product))].filter((p) => !products.includes(p)).sort();
 
   return (
-    <div className="pp-scroll" style={{ overflowY: "auto", flex: 1, padding: "20px 24px" }}>
-      <PageTitle title="Features" sub={`Cadastradas por produto; os produtos vêm do Jira · ${items.features.length} ${items.features.length === 1 ? "feature" : "features"}`}>
-        {canCreateCard && (
-          <div className="flex items-center" style={{ gap: 6 }}>
-            <select value={chosen} onChange={(e) => setProduct(e.target.value)} style={fieldStyle(T)}>
-              {products.map((p) => <option key={p} value={p}>{p}</option>)}
-            </select>
-            <input placeholder="Nova feature (ex.: Calculadora)" value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") add(); }} style={{ ...fieldStyle(T), width: 240 }} />
-            <button onClick={add} style={{ borderRadius: 8, padding: "6px 10px", fontSize: 12, fontWeight: 500, border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink0, cursor: "pointer", fontFamily: "'Inter Tight', sans-serif" }}>Criar</button>
-          </div>
-        )}
+    <ScreenShell>
+      <PageTitle title="Produtos e features" sub="Produtos vêm do Jira; features são as partes de cada produto, com os épicos que as constroem">
+        <NewButton label="Feature" disabled={!products.length} onClick={() => open("features", null, { product: products[0], status: "Ativa", epicKeys: [] })} />
       </PageTitle>
-      {createError && <p style={{ fontSize: 12, color: "#e08585", marginBottom: 8 }}>{createError}</p>}
-
-      {groups.map(({ product: p, features }) => {
-        const style = PRODUCT_STYLE[p];
-        const productEpics = epics.filter((e) => e.project === p);
-        return (
-          <div key={p} style={{ marginBottom: 24 }}>
-            <div className="flex items-center" style={{ gap: 8, marginBottom: 8 }}>
-              <span style={{ fontSize: 13, fontWeight: 600, color: style ? style.text : T.ink0 }}>{p}</span>
-              <span style={{ fontSize: 11, color: T.ink2 }}>{features.length} {features.length === 1 ? "feature" : "features"} · {productEpics.length} épicos</span>
+      <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+        {[...products, ...extra].map((p) => {
+          const style = PRODUCT_STYLE[p];
+          const feats = items.features.filter((f) => f.product === p);
+          const productEpics = epics.filter((e) => e.project === p);
+          return (
+            <div key={p}>
+              <div className="flex items-center justify-between" style={{ marginBottom: 10, gap: 8 }}>
+                <div className="flex items-center" style={{ gap: 10, minWidth: 0 }}>
+                  <Package size={16} color={style ? style.primary : T.ink1} />
+                  <span style={{ fontSize: 14, fontWeight: 600, color: T.ink0 }}>{p}</span>
+                  <span style={{ fontSize: 11.5, color: T.ink2 }}>{feats.length} {feats.length === 1 ? "feature" : "features"}</span>
+                  <div style={{ width: 220 }}><EpicBuckets epics={productEpics} /></div>
+                </div>
+                <AddLink label="Feature" onClick={() => open("features", null, { product: p, status: "Ativa", epicKeys: [] })} />
+              </div>
+              {feats.length === 0 ? <Muted>Nenhuma feature cadastrada.</Muted> : (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(380px, 1fr))", gap: 12 }}>
+                  {feats.map((f) => {
+                    const fEpics = idx.epicsOf(f.epicKeys);
+                    return (
+                      <div key={f.id} style={cardStyle(T)}>
+                        <div className="flex items-center justify-between" style={{ gap: 8, marginBottom: 8 }}>
+                          <button onClick={() => open("features", f)} style={{ ...linkBtn, ...ellipsis, color: T.ink0, fontSize: 14, fontWeight: 600 }}>{f.name}</button>
+                          <StatusBadge tone={f.status === "Ativa" ? "done" : f.status === "Em construção" ? "active" : null}>{f.status}</StatusBadge>
+                        </div>
+                        {f.description && <Muted style={{ marginBottom: 8 }}>{f.description}</Muted>}
+                        <EpicBuckets epics={fEpics} />
+                        <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 4 }}>
+                          {fEpics.map((e) => <EpicLine key={e.key} epic={e} />)}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
-            {features.length === 0
-              ? <p style={{ fontSize: 12, color: T.ink2, margin: 0 }}>Nenhuma feature cadastrada.</p>
-              : <div style={cardGrid}>{features.map((f) => <PlanningCard key={f.id} kind="features" item={f} epics={productEpics} />)}</div>}
-          </div>
-        );
-      })}
-    </div>
+          );
+        })}
+      </div>
+      {editorNode}
+    </ScreenShell>
   );
 }
 
 const SIDEBAR_GROUPS = [
-  { title: "Produto", items: [["objetivos", "Objetivos", Target], ["iniciativas", "Iniciativas", Sparkles], ["features", "Features", Square], ["releases", "Releases", Flag]] },
-  { title: "Planejamento", items: [["roadmap", "Roadmap", Calendar], ["analises", "Análises", BarChart3], ["desenvolvedores", "Desenvolvedores", Users]] },
+  { title: null, items: [["visao", "Visão geral", LayoutDashboard]] },
+  { title: "Estratégia", items: [["okrs", "OKRs", Target], ["iniciativas", "Iniciativas", Sparkles], ["oportunidades", "Oportunidades", Lightbulb]] },
+  { title: "Execução", items: [["epicos", "Épicos", Layers], ["roadmap", "Roadmap", Calendar]] },
+  { title: "Produto", items: [["produtos", "Produtos e features", Package]] },
+  { title: "Análises", items: [["analises", "Análises", BarChart3], ["desenvolvedores", "Desenvolvedores", Users]] },
 ];
 
 function AppShell() {
   const { T, theme, toggleTheme } = useTheme();
   const { syncFromSheet, lastSync, syncStatus, syncError } = useData();
   const { user, role, logout, canWriteShared } = useAuth();
-  const [menu, setMenu] = useState("roadmap");
+  const [menu, setMenu] = useState("visao");
   const [showSheetConfig, setShowSheetConfig] = useState(false);
 
   return (
@@ -3146,8 +3946,8 @@ function AppShell() {
       <aside style={{ width: 224, position: "fixed", top: 0, bottom: 0, left: 0, zIndex: 40, overflowY: "auto", borderRight: `1px solid ${T.border2}`, background: T.bg1, padding: "16px 12px", boxSizing: "border-box" }}>
         <div style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", fontWeight: 700, fontSize: 15, color: T.ink0, padding: "2px 8px 16px" }}>Product Ops</div>
         {SIDEBAR_GROUPS.map((group) => (
-          <div key={group.title} style={{ marginBottom: 18 }}>
-            <p style={{ fontSize: 12, fontWeight: 500, color: T.ink2, margin: "0 0 6px", padding: "0 8px" }}>{group.title}</p>
+          <div key={group.title || "inicio"} style={{ marginBottom: 18 }}>
+            {group.title && <p style={{ fontSize: 12, fontWeight: 500, color: T.ink2, margin: "0 0 6px", padding: "0 8px" }}>{group.title}</p>}
             {group.items.map(([key, label, Icon]) => {
               const active = menu === key;
               return (
@@ -3229,10 +4029,12 @@ function AppShell() {
         </div>
       </div>
 
-      {menu === "iniciativas" ? <EpicsScreen />
-        : menu === "features" ? <FeaturesScreen />
-        : menu === "objetivos" ? <PlanningScreen kind="objectives" />
-        : menu === "releases" ? <PlanningScreen kind="releases" />
+      {menu === "visao" ? <OverviewScreen />
+        : menu === "okrs" ? <OkrScreen />
+        : menu === "iniciativas" ? <InitiativesScreen />
+        : menu === "oportunidades" ? <OpportunitiesScreen />
+        : menu === "epicos" ? <EpicsScreen />
+        : menu === "produtos" ? <ProductsScreen />
         : menu === "analises" ? <AnaliseScreen />
         : menu === "desenvolvedores" ? <DevelopersScreen />
         : <RoadmapScreen />}
