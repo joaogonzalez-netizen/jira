@@ -2987,9 +2987,13 @@ function PlanningCard({ kind, item, epics }) {
           {links.map((k) => {
             const e = epicByKey[k];
             return (
-              <div key={k} className="flex items-center justify-between" style={{ fontSize: 12, color: T.ink1, gap: 8 }}>
-                <span style={ellipsis}>{e ? `${k} — ${e.summary}` : `${k} (não encontrado)`}</span>
-                {!ro && <button onClick={() => save({ epicKeys: links.filter((l) => l !== k) })} style={{ border: "none", background: "transparent", color: T.ink2, cursor: "pointer", fontSize: 11, fontFamily: "'Inter Tight', sans-serif", flexShrink: 0 }}>remover</button>}
+              <div key={k} className="flex items-center" style={{ fontSize: 12, color: T.ink1, gap: 8 }}>
+                <a href={`${JIRA_BROWSE}${k}`} target="_blank" rel="noreferrer" title="Abrir no Jira" style={{ color: "#5166e6", textDecoration: "none", fontWeight: 500, flexShrink: 0 }}>{k}</a>
+                <span style={{ ...ellipsis, flex: 1 }} title={e ? e.summary : ""}>{e ? e.summary : "(não encontrado)"}</span>
+                {e && (isEpicDone(e)
+                  ? <Badge bg="rgba(0,170,108,0.14)" color="#00aa6c">{e.status}</Badge>
+                  : <Badge bg={T.bg2} color={T.ink1}>{e.status || "—"}</Badge>)}
+                {!ro &&<button onClick={() => save({ epicKeys: links.filter((l) => l !== k) })} style={{ border: "none", background: "transparent", color: T.ink2, cursor: "pointer", fontSize: 11, fontFamily: "'Inter Tight', sans-serif", flexShrink: 0 }}>remover</button>}
               </div>
             );
           })}
