@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { applyFields, handleCreate, handleDelete, handleList, handleUpdate } from "./planning-core.js";
+import { applyFields, mondayOf, handleCreate, handleDelete, handleList, handleUpdate } from "./planning-core.js";
 
 const ADMIN = { role: "admin", user: { id: "1", email: "ana@x.com" } };
 const LEITOR = { role: "user", user: { id: "2", email: "leitor@x.com" } };
@@ -123,4 +123,32 @@ test("objetivo antigo (com epicKeys) continua legível e editável", async () =>
   const u = await handleUpdate("objectives", "obj_old", { period: "2026-T4" }, ADMIN, config);
   assert.equal(u.status, 200);
   assert.equal(u.body.period, "2026-T4");
+});
+
+test("mondayOf leva qualquer dia para a segunda-feira da semana", () => {
+  assert.equal(mondayOf("2026-10-27"), "2026-10-26"); // terça
+  assert.equal(mondayOf("2026-10-26"), "2026-10-26"); // segunda
+  assert.equal(mondayOf("2026-11-01"), "2026-10-26"); // domingo
+  assert.equal(mondayOf("27/10/2026"), null);
+});
+
+test("check-ins semanais: um por semana, ordenados, e o último vira o valor atual", async () => {
+  const config = fakeConfig();
+  const { kr, opp } = await tree(config);
+  const u = await handleUpdate("keyResults", kr.id, { checkins: [
+    { week: "2026-10-28", value: "23", note: " subiu " },
+    { week: "2026-10-12", value: 21 },
+    { week: "2026-10-26", value: 24, note: "corrigido" }, // mesma semana do primeiro: vale este
+    { week: "x", value: 1 },
+    { week: "2026-10-19", value: "abc" },
+  ] }, ADMIN, config);
+  assert.deepEqual(u.body.checkins, [
+    { week: "2026-10-12", value: 21, note: "" },
+    { week: "2026-10-26", value: 24, note: "corrigido" },
+  ]);
+  assert.equal(u.body.current, 24);
+
+  const x = (await handleCreate("experiments", { name: "E", opportunityId: opp.id, checkins: [{ week: "2026-10-26", value: 38 }] }, ADMIN, config)).body;
+  assert.equal(x.result, 38);
+  assert.equal((await handleUpdate("experiments", x.id, { checkins: [] }, ADMIN, config)).body.result, 38);
 });

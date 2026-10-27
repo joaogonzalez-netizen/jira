@@ -19,6 +19,9 @@ import { loadConfig as loadInitiativesConfig, resolveSessionFromCookie } from ".
 export { resolveSessionFromCookie };
 
 const SCORE = { type: "score" }; // 1–10, ou null
+// Acompanhamento semanal: [{ week (segunda-feira, AAAA-MM-DD), value, note }].
+// O último check-in vira o valor corrente do campo `mirror`.
+const checkins = (mirror) => ({ type: "checkins", mirror });
 
 export const KINDS = {
   objectives: {
@@ -45,6 +48,7 @@ export const KINDS = {
       current: { type: "number" },
       dueDate: { type: "date" },
       status: { type: "enum", options: ["Em andamento", "Concluído", "Cancelado"], default: "Em andamento" },
+      checkins: checkins("current"),
     },
   },
   opportunities: {
@@ -80,6 +84,7 @@ export const KINDS = {
       confidence: SCORE,
       ease: SCORE,
       epicKey: { type: "ref" }, // épico do Jira em que o experimento virou
+      checkins: checkins("result"),
     },
   },
   features: {
@@ -159,6 +164,34 @@ function genId(kind) {
   return `${KINDS[kind].prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 }
 
+/** Segunda-feira da semana de uma data AAAA-MM-DD (null se inválida). */
+export function mondayOf(iso) {
+  if (typeof iso !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return null;
+  const d = new Date(`${iso}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return null;
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
+  return d.toISOString().slice(0, 10);
+}
+
+function toNumber(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const n = typeof value === "number" ? value : Number(String(value).replace(",", "."));
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Um check-in por semana (o último enviado vale), em ordem cronológica. */
+function coerceCheckins(value) {
+  if (!Array.isArray(value)) return undefined;
+  const byWeek = new Map();
+  for (const c of value) {
+    const week = c && mondayOf(c.week);
+    const v = c ? toNumber(c.value) : null;
+    if (!week || v === null) continue;
+    byWeek.set(week, { week, value: v, note: typeof c.note === "string" ? c.note.trim().slice(0, 280) : "" });
+  }
+  return [...byWeek.values()].sort((a, b) => a.week.localeCompare(b.week)).slice(-260);
+}
+
 /** Converte um valor do cliente para o tipo do campo. `undefined` = valor
     inválido, o campo fica como estava. */
 function coerce(spec, value) {
@@ -181,6 +214,8 @@ function coerce(spec, value) {
       const n = Number(value);
       return Number.isInteger(n) && n >= 1 && n <= 10 ? n : undefined;
     }
+    case "checkins":
+      return coerceCheckins(value);
     case "list":
       return Array.isArray(value) ? [...new Set(value.filter((v) => typeof v === "string" && v))] : undefined;
     default:
@@ -199,6 +234,7 @@ export function applyFields(kind, base, patch) {
     if (value === undefined) continue;
     if (spec.required && !value) continue;
     next[field] = value;
+    if (spec.mirror && value.length) next[spec.mirror] = value[value.length - 1].value;
   }
   return next;
 }
@@ -207,7 +243,7 @@ function defaults(kind) {
   const out = {};
   for (const [field, spec] of Object.entries(KINDS[kind].fields)) {
     if (spec.type === "enum") out[field] = spec.default;
-    else if (spec.type === "list") out[field] = [];
+    else if (spec.type === "list" || spec.type === "checkins") out[field] = [];
     else if (spec.type === "number" || spec.type === "score") out[field] = null;
     else out[field] = "";
   }
