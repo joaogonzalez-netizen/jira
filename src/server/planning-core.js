@@ -48,6 +48,7 @@ export const KINDS = {
     parent: { field: "objectiveId", kind: "objectives" },
     fields: {
       objectiveId: { type: "ref", required: true },
+      owner: { type: "text" }, // responsável (nome como aparece no Jira)
       description: { type: "text" },
       unit: { type: "text" }, // %, R$, usuários…
       baseline: { type: "number" },

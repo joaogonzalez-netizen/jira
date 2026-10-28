@@ -93,8 +93,8 @@ async function writeAll(config, list) {
 export const INITIATIVE_STATUSES = ["Planejada", "Em andamento", "Concluída", "Pausada", "Cancelada"];
 
 /** Campos opcionais da iniciativa: descrição, data de entrega, quarter (Q1/2026),
-    links e o KR que ela move (id de
-    `jira:key-results`, vazio = nenhum). */
+    links, o objetivo a que pertence e o KR que ela move (ids de
+    `jira:objectives` e `jira:key-results`, vazio = nenhum). */
 function applyOptional(next, input) {
   if (typeof input.description === "string") next.description = input.description.trim();
   if (typeof input.dueDate === "string" && (input.dueDate === "" || /^\d{4}-\d{2}-\d{2}$/.test(input.dueDate))) next.dueDate = input.dueDate;
@@ -102,6 +102,7 @@ function applyOptional(next, input) {
   const links = cleanLinks(input.links);
   if (links) next.links = links;
   if (typeof input.keyResultId === "string") next.keyResultId = input.keyResultId.trim();
+  if (typeof input.objectiveId === "string") next.objectiveId = input.objectiveId.trim();
   if (typeof input.status === "string" && INITIATIVE_STATUSES.includes(input.status)) next.status = input.status;
   return next;
 }
@@ -130,6 +131,7 @@ export async function handleCreate(input, session, config) {
     product,
     description: "",
     status: "Planejada",
+    objectiveId: "",
     keyResultId: "",
     dueDate: "",
     quarter: "",

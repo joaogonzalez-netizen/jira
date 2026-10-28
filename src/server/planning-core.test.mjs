@@ -195,3 +195,10 @@ test("objetivo guarda a meta em texto", async () => {
   assert.equal(o.goal, "+20% de DAU até dezembro");
   assert.equal((await handleUpdate("objectives", o.id, { goal: "" }, ADMIN, config)).body.goal, "");
 });
+
+test("KR guarda o responsável", async () => {
+  const config = fakeConfig();
+  const { obj } = await tree(config);
+  const kr = (await handleCreate("keyResults", { name: "Churn", objectiveId: obj.id, owner: " Caroline Araújo " }, ADMIN, config)).body;
+  assert.equal(kr.owner, "Caroline Araújo");
+});

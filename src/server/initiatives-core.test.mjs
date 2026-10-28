@@ -83,3 +83,13 @@ test("iniciativa: data de entrega, quarter Q1–Q4/ano e links", async () => {
   assert.equal(u.body.dueDate, "2026-12-15");
   assert.equal((await handleUpdate(r.body.id, { quarter: "", links: [] }, ADMIN, config)).body.quarter, "");
 });
+
+test("iniciativa ligada ao objetivo, com ou sem KR", async () => {
+  const config = fakeConfig();
+  const r = await handleCreate({ name: "Reduzir cancelamento", objectiveId: "obj_1", product: "STLFLIX" }, ADMIN, config);
+  assert.equal(r.body.objectiveId, "obj_1");
+  assert.equal(r.body.keyResultId, "");
+  // tem produto e não tem KR, mas tem objetivo: não é iniciativa antiga do Roadmap
+  assert.deepEqual((await handleList(config)).body.map((i) => i.id), [r.body.id]);
+  assert.equal((await handleUpdate(r.body.id, { objectiveId: "" }, ADMIN, config)).body.objectiveId, "");
+});

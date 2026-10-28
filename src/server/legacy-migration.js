@@ -8,8 +8,9 @@
  * mesmo com requests concorrentes. Antes de mexer, guarda a lista original em
  * `jira:backup:initiatives-before-features`.
  *
- * Migra quem tem produto e não move nenhum KR — o formato das iniciativas do
- * Roadmap. Iniciativas de OKR (com KR, ou sem produto) ficam onde estão.
+ * Migra quem tem produto e não está ligado a objetivo nem KR — o formato das
+ * iniciativas do Roadmap. Iniciativas de OKR (com objetivo, KR, ou sem produto)
+ * ficam onde estão.
  */
 const FLAG = "jira:migrations:initiatives-to-features";
 const INITIATIVES = "jira:initiatives";
@@ -26,7 +27,7 @@ function parse(raw) {
   }
 }
 
-export const isLegacyRoadmapInitiative = (i) => !!i && typeof i.product === "string" && i.product.trim() !== "" && !i.keyResultId;
+export const isLegacyRoadmapInitiative = (i) => !!i && typeof i.product === "string" && i.product.trim() !== "" && !i.keyResultId && !i.objectiveId;
 
 async function waitDone(client) {
   for (let i = 0; i < 30; i++) {
