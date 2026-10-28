@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { ChevronUp, ChevronDown, ChevronRight, ChevronLeft, X, BarChart3, Sun, Moon, Calendar, Plus, Minus, RefreshCw, LogOut, Lock, Layers, Trash2, Users, Settings, Sparkles, Target, LayoutDashboard, Lightbulb, Package, FlaskConical, Check } from "lucide-react";
+import { ChevronUp, ChevronDown, ChevronRight, ChevronLeft, X, BarChart3, Sun, Moon, Calendar, Plus, Minus, RefreshCw, LogOut, Lock, Layers, Trash2, Users, Settings, Sparkles, Target, LayoutDashboard, Lightbulb, Package, FlaskConical, Check, ExternalLink } from "lucide-react";
 import { BarChart, Bar, LineChart, Line, PieChart, Pie, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell, LabelList, ReferenceLine } from "recharts";
 import storage from "./lib/storage";
 import { roadmapStore, diffRoadmap, isEmptyDiff, summarizeRoadmap, emptyRoadmap, applyEpicOverrides, mergeCustomEpics } from "./lib/roadmap-store";
@@ -2778,6 +2778,15 @@ function epicBucket(e) {
   return "doing";
 }
 const BUCKETS = [["todo", "a fazer"], ["doing", "em andamento"], ["done", "concluídos"]];
+/** Issue = história, tarefa, bug… (o que não é épico). Mesmas três faixas do épico. */
+function issueBucket(t) {
+  if (t.stage === "Concluído" || t.status === "Done") return "done";
+  if (!t.stage || ["Backlog", "Em produto", "Em design"].includes(t.stage)) return "todo";
+  return "doing";
+}
+const ISSUE_BUCKETS = [["todo", "a fazer"], ["doing", "em andamento"], ["done", "concluídas"]];
+/** Período do objetivo: as datas; objetivo antigo mostra o texto que tinha. */
+const fmtPeriod = (o) => (o.startDate || o.endDate ? `${o.startDate ? fmtDay(o.startDate) : "…"} → ${o.endDate ? fmtDay(o.endDate) : "…"}` : o.period || "");
 
 const isNum = (v) => typeof v === "number" && Number.isFinite(v);
 function daysUntil(iso) {
@@ -2929,7 +2938,7 @@ function PlanningProvider({ children }) {
 
 /** Índices usados por todas as telas: quem pertence a quem. */
 function usePlanIndex() {
-  const { epics } = useData();
+  const { epics, tasks } = useData();
   const { items } = usePlanning();
   const { initiatives } = useInitiatives();
   return useMemo(() => {
@@ -2941,15 +2950,18 @@ function usePlanIndex() {
     const featuresByEpic = {};
     items.features.forEach((f) => (f.epicKeys || []).forEach((k) => { (featuresByEpic[k] = featuresByEpic[k] || []).push(f); }));
     const productsOfInitiative = (i) => [...new Set([i.product, ...epicsOf(i.epicKeys).map((e) => e.project)].filter(Boolean))];
+    const issuesByEpic = {};
+    (tasks || []).forEach((t) => { if (t.parent) (issuesByEpic[t.parent] = issuesByEpic[t.parent] || []).push(t); });
+    const issuesOf = (keys) => (keys || []).flatMap((k) => issuesByEpic[k] || []);
     return {
-      epicByKey, epicsOf, initiativeByEpic, featuresByEpic, productsOfInitiative,
+      epicByKey, epicsOf, initiativeByEpic, featuresByEpic, productsOfInitiative, issuesByEpic, issuesOf,
       objectiveById: byId(items.objectives), krById: byId(items.keyResults), oppById: byId(items.opportunities),
       krsOfObjective: (id) => items.keyResults.filter((k) => k.objectiveId === id),
       initiativesOfKr: (id) => initiatives.filter((i) => i.keyResultId === id),
       oppsOfKr: (id) => items.opportunities.filter((o) => o.keyResultId === id),
       experimentsOfOpp: (id) => items.experiments.filter((x) => x.opportunityId === id),
     };
-  }, [epics, items, initiatives]);
+  }, [epics, tasks, items, initiatives]);
 }
 
 /* ---- peças visuais ---- */
@@ -3027,6 +3039,73 @@ function EpicBuckets({ epics }) {
       </div>
       <span style={{ fontSize: 11, color: T.ink1, lineHeight: 1.35 }}>{BUCKETS.map(([k, l]) => `${counts[k]} ${l}`).join(" · ")}</span>
     </div>
+  );
+}
+
+function IssueBuckets({ issues }) {
+  const { T } = useTheme();
+  const counts = { todo: 0, doing: 0, done: 0 };
+  issues.forEach((t) => { counts[issueBucket(t)] += 1; });
+  if (!issues.length) return <span style={{ fontSize: 11.5, color: T.ink2 }}>sem issues</span>;
+  const colors = { todo: T.borderStrong, doing: ACCENT, done: DONE_COLOR };
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }} title={ISSUE_BUCKETS.map(([k, l]) => `${counts[k]} ${l}`).join(" · ")}>
+      <div style={{ display: "flex", height: 6, borderRadius: 999, overflow: "hidden", background: T.bg2 }}>
+        {ISSUE_BUCKETS.map(([k]) => (counts[k] ? <div key={k} style={{ width: `${(counts[k] / issues.length) * 100}%`, background: colors[k] }} /> : null))}
+      </div>
+      <span style={{ fontSize: 11, color: T.ink1, lineHeight: 1.35 }}>{counts.done}/{issues.length} issues concluídas · {counts.doing} em andamento</span>
+    </div>
+  );
+}
+
+/** Painel das issues de um conjunto de épicos: status, tipo, quem está com o
+    que está aberto e em que etapa. Fechado por padrão. */
+function IssueAnalysis({ issues }) {
+  const { T } = useTheme();
+  if (!issues.length) return null;
+  const count = (list, f) => {
+    const m = {};
+    list.forEach((t) => { const k = f(t) || "—"; m[k] = (m[k] || 0) + 1; });
+    return Object.entries(m).sort((a, b) => b[1] - a[1]);
+  };
+  const open = issues.filter((t) => issueBucket(t) !== "done");
+  const bugsOpen = open.filter((t) => /bug|incidente/i.test(t.type || "")).length;
+  const block = (title, rows) => (
+    <div style={{ minWidth: 150, flex: 1 }}>
+      <div style={{ fontSize: 11, fontWeight: 600, color: T.ink2, marginBottom: 4 }}>{title}</div>
+      {rows.length === 0 && <Muted>—</Muted>}
+      {rows.slice(0, 6).map(([k, v]) => (
+        <div key={k} className="flex items-center justify-between" style={{ fontSize: 12, color: T.ink1, gap: 8 }}>
+          <span style={ellipsis}>{k}</span><span style={{ color: T.ink0, fontWeight: 500 }}>{v}</span>
+        </div>
+      ))}
+    </div>
+  );
+  return (
+    <details style={{ marginTop: 10 }}>
+      <summary style={{ cursor: "pointer", fontSize: 12, fontWeight: 500, color: ACCENT }}>Análise das issues ({issues.length}){bugsOpen ? ` · ${bugsOpen} ${bugsOpen === 1 ? "bug aberto" : "bugs abertos"}` : ""}</summary>
+      <div className="flex flex-wrap" style={{ gap: 16, marginTop: 8, padding: 10, borderRadius: 8, background: T.bg1 }}>
+        {block("Por status", ISSUE_BUCKETS.map(([k, l]) => [l, issues.filter((t) => issueBucket(t) === k).length]))}
+        {block("Por tipo", count(issues, (t) => t.type))}
+        {block("Em aberto, por pessoa", count(open, (t) => (t.assignee ? shortName(t.assignee) : "sem responsável")))}
+        {block("Em aberto, por etapa", count(open, (t) => t.stage || t.status))}
+      </div>
+    </details>
+  );
+}
+
+function LinkChips({ links }) {
+  const { T } = useTheme();
+  if (!links || !links.length) return null;
+  return (
+    <span className="flex flex-wrap" style={{ gap: 6 }}>
+      {links.map((l) => (
+        <a key={l.url} href={l.url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} title={l.url}
+          style={{ display: "inline-flex", alignItems: "center", gap: 4, maxWidth: 220, fontSize: 11.5, color: ACCENT, textDecoration: "none", border: `1px solid ${T.border2}`, borderRadius: 999, padding: "2px 8px", background: T.bg0 }}>
+          <ExternalLink size={11} style={{ flexShrink: 0 }} /><span style={ellipsis}>{l.label}</span>
+        </a>
+      ))}
+    </span>
   );
 }
 
@@ -3194,8 +3273,10 @@ const FORMS = {
     title: "Objetivo",
     fields: [
       { key: "name", label: "Objetivo", placeholder: "Ex.: Engajamento na Flix" },
-      { key: "period", label: "Período", placeholder: "Ex.: 2026-T4", half: true },
+      { key: "product", label: "Produto", type: "select", required: true, half: true, options: (c) => c.products.map((p) => ({ value: p, label: p })) },
       { key: "status", label: "Status", type: "select", half: true, options: () => statusOptions(["Em andamento", "Concluído", "Cancelado"]) },
+      { key: "startDate", label: "Início do período", type: "date", half: true },
+      { key: "endDate", label: "Fim do período", type: "date", half: true },
       { key: "description", label: "Descrição", type: "textarea" },
     ],
   },
@@ -3221,7 +3302,10 @@ const FORMS = {
       { key: "keyResultId", label: "Key Result que ela move", type: "select", options: (c) => [{ value: "", label: "Nenhum" }, ...c.keyResults.map((k) => ({ value: k.id, label: `${k.name}${c.objectiveById[k.objectiveId] ? ` · ${c.objectiveById[k.objectiveId].name}` : ""}` }))] },
       { key: "status", label: "Status", type: "select", half: true, options: () => statusOptions(INITIATIVE_STATUSES) },
       { key: "product", label: "Produto principal", type: "select", half: true, options: (c) => [{ value: "", label: "Vários / nenhum" }, ...c.products.map((p) => ({ value: p, label: p }))] },
+      { key: "dueDate", label: "Data de entrega", type: "date", half: true },
+      { key: "quarter", label: "Quarter", type: "quarter", half: true },
       { key: "description", label: "Descrição", type: "textarea" },
+      { key: "links", label: "Links (estudos, dashboards)", type: "links" },
       { key: "epicKeys", label: "Épicos do Jira", type: "epics", pool: (c) => c.epics },
     ],
   },
@@ -3233,6 +3317,7 @@ const FORMS = {
       { key: "parentId", label: "Dentro de", type: "select", options: (c, d) => [{ value: "", label: "— (direto no KR)" }, ...c.opportunities.filter((o) => o.id !== d.id && o.keyResultId === d.keyResultId).map((o) => ({ value: o.id, label: o.name }))] },
       { key: "status", label: "Status", type: "select", options: () => statusOptions(["Aberta", "Explorando", "Validada", "Descartada"]) },
       { key: "description", label: "Evidência", type: "textarea", placeholder: "Dados, entrevistas, tickets que mostram a dor" },
+      { key: "links", label: "Links (estudos, dashboards)", type: "links" },
     ],
   },
   experiments: {
@@ -3319,6 +3404,26 @@ function FormInput({ field: f, value, onChange, ctx, draft, disabled }) {
       </select>
     );
   }
+  if (f.type === "quarter") {
+    const [q, y] = (value || "").split("/");
+    const year = new Date().getFullYear();
+    const years = [...new Set([year - 1, year, year + 1, year + 2, ...(y ? [Number(y)] : [])])].sort();
+    const set = (nq, ny) => onChange(nq ? `${nq}/${ny || year}` : "");
+    return (
+      <div className="flex" style={{ gap: 6 }}>
+        <select value={q || ""} disabled={disabled} onChange={(e) => set(e.target.value, y)} style={{ ...st, flex: 1 }}>
+          <option value="">—</option>
+          {["Q1", "Q2", "Q3", "Q4"].map((x) => <option key={x} value={x}>{x}</option>)}
+        </select>
+        <select value={y || String(year)} disabled={disabled || !q} onChange={(e) => set(q, e.target.value)} style={{ ...st, flex: 1 }}>
+          {years.map((x) => <option key={x} value={x}>{x}</option>)}
+        </select>
+      </div>
+    );
+  }
+  if (f.type === "links") {
+    return <LinksInput value={value} onChange={onChange} disabled={disabled} />;
+  }
   if (f.type === "checkins") {
     return <CheckinsInput value={value} onChange={onChange} disabled={disabled} unit={draft.unit} target={toNum(draft.target)} baseline={toNum(draft.baseline)} />;
   }
@@ -3349,6 +3454,43 @@ function FormInput({ field: f, value, onChange, ctx, draft, disabled }) {
       type={f.type === "number" ? "number" : f.type === "date" ? "date" : "text"} step={f.type === "number" ? "any" : undefined}
       value={value ?? ""} placeholder={f.placeholder} disabled={disabled} onChange={(e) => onChange(e.target.value)} style={st}
     />
+  );
+}
+
+function LinksInput({ value, onChange, disabled }) {
+  const { T } = useTheme();
+  const list = value || [];
+  const [label, setLabel] = useState("");
+  const [url, setUrl] = useState("");
+  const st = { ...fieldStyle(T), boxSizing: "border-box" };
+  const add = () => {
+    const u = url.trim();
+    if (!u) return;
+    const href = /^https?:\/\//i.test(u) ? u : `https://${u}`;
+    let host = "";
+    try { host = new URL(href).hostname; } catch (e) { return; }
+    onChange([...list.filter((l) => l.url !== href), { label: label.trim() || host, url: href }]);
+    setLabel("");
+    setUrl("");
+  };
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      {list.map((l) => (
+        <div key={l.url} className="flex items-center" style={{ gap: 8, fontSize: 12 }}>
+          <ExternalLink size={12} color={T.ink2} style={{ flexShrink: 0 }} />
+          <a href={l.url} target="_blank" rel="noopener noreferrer" style={{ ...ellipsis, flex: 1, color: ACCENT, textDecoration: "none" }} title={l.url}>{l.label}</a>
+          {!disabled && <button onClick={() => onChange(list.filter((x) => x.url !== l.url))} style={{ ...linkBtn, color: T.ink2, fontSize: 11 }}>remover</button>}
+        </div>
+      ))}
+      {list.length === 0 && <Muted>Nenhum link.</Muted>}
+      {!disabled && (
+        <div className="flex items-center" style={{ gap: 6 }}>
+          <input value={label} placeholder="Nome (ex.: Estudo de churn)" onChange={(e) => setLabel(e.target.value)} style={{ ...st, width: 150 }} />
+          <input value={url} placeholder="https://…" onChange={(e) => setUrl(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") add(); }} style={{ ...st, flex: 1, minWidth: 0 }} />
+          <button onClick={add} style={btnStyle(T)}>Adicionar</button>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -3482,8 +3624,8 @@ function OverviewScreen() {
   const krProducts = (kr) => [...new Set(idx.initiativesOfKr(kr.id).flatMap(idx.productsOfInitiative))];
   const objectives = items.objectives
     .filter((o) => o.status !== "Cancelado")
-    .map((o) => ({ o, krs: idx.krsOfObjective(o.id).filter((kr) => inProduct(krProducts(kr))) }))
-    .filter((x) => product === "all" || x.krs.length);
+    .map((o) => ({ o, krs: product === "all" || o.product === product ? idx.krsOfObjective(o.id) : idx.krsOfObjective(o.id).filter((kr) => inProduct(krProducts(kr))) }))
+    .filter((x) => product === "all" || x.o.product === product || x.krs.length);
   const activeInitiatives = initiatives
     .filter((i) => i.status !== "Cancelada" && inProduct(idx.productsOfInitiative(i)))
     .sort((a, b) => INITIATIVE_STATUSES.indexOf(a.status || "Planejada") - INITIATIVE_STATUSES.indexOf(b.status || "Planejada"));
@@ -3519,7 +3661,8 @@ function OverviewScreen() {
             <div key={o.id} style={cardStyle(T)}>
               <div className="flex items-center" style={{ gap: 8, marginBottom: 10 }}>
                 <button onClick={() => open("objectives", o)} style={{ ...linkBtn, color: T.ink0, fontSize: 14, fontWeight: 600 }}>{o.name}</button>
-                {o.period && <Badge bg={T.bg2} color={T.ink1}>{o.period}</Badge>}
+                {o.product && <ProductBadges products={[o.product]} />}
+                {fmtPeriod(o) && <Badge bg={T.bg2} color={T.ink1}>{fmtPeriod(o)}</Badge>}
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 {krs.map((kr) => (
@@ -3548,7 +3691,7 @@ function OverviewScreen() {
                   <div style={{ ...ellipsis, fontSize: 12.5, fontWeight: 500, color: T.ink0 }}>{i.name}</div>
                   <div style={{ ...ellipsis, fontSize: 11, color: T.ink2 }}>{idx.krById[i.keyResultId] ? idx.krById[i.keyResultId].name : "sem KR"}</div>
                 </div>
-                <EpicBuckets epics={idx.epicsOf(i.epicKeys)} />
+                <IssueBuckets issues={idx.issuesOf(i.epicKeys)} />
                 <span style={{ justifySelf: "end" }}><StatusBadge tone={statusTone(i.status)}>{i.status || "Planejada"}</StatusBadge></span>
               </div>
             ))}
@@ -3604,7 +3747,8 @@ function OkrScreen() {
                 <div className="flex items-center" style={{ gap: 8, minWidth: 0 }}>
                   <Target size={16} color={ACCENT} />
                   <button onClick={() => open("objectives", o)} style={{ ...linkBtn, ...ellipsis, color: T.ink0, fontSize: 15, fontWeight: 600, fontFamily: "'Plus Jakarta Sans', sans-serif" }}>{o.name}</button>
-                  {o.period && <Badge bg={T.bg2} color={T.ink1}>{o.period}</Badge>}
+                  {o.product && <ProductBadges products={[o.product]} />}
+                  {fmtPeriod(o) && <Badge bg={T.bg2} color={T.ink1}>{fmtPeriod(o)}</Badge>}
                   <StatusBadge tone={statusTone(o.status)}>{o.status}</StatusBadge>
                 </div>
                 <NewButton label="Key Result" onClick={() => open("keyResults", null, { objectiveId: o.id, status: "Em andamento" })} />
@@ -3626,7 +3770,7 @@ function OkrScreen() {
                         {krInits.map((i) => (
                           <div key={i.id} onClick={() => open("initiatives", i)} className="pp-card" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(180px, 260px) 110px", gap: 12, alignItems: "center", padding: "6px 8px", borderRadius: 6, cursor: "pointer", border: "1px solid transparent" }}>
                             <span className="flex items-center" style={{ gap: 6, minWidth: 0, fontSize: 12.5, color: T.ink0 }}><Sparkles size={13} color={T.ink2} /><span style={ellipsis}>{i.name}</span></span>
-                            <EpicBuckets epics={idx.epicsOf(i.epicKeys)} />
+                            <IssueBuckets issues={idx.issuesOf(i.epicKeys)} />
                             <span style={{ justifySelf: "end" }}><StatusBadge tone={statusTone(i.status)}>{i.status || "Planejada"}</StatusBadge></span>
                           </div>
                         ))}
@@ -3696,14 +3840,21 @@ function InitiativesScreen() {
                   <div className="flex items-center" style={{ gap: 8, marginTop: 4, flexWrap: "wrap" }}>
                     <span style={{ fontSize: 11.5, color: T.ink2 }}>{kr ? `Move: ${kr.name}${obj ? ` · ${obj.name}` : ""}` : "Não move nenhum KR"}</span>
                     <ProductBadges products={idx.productsOfInitiative(i)} />
+                    {i.quarter && <Badge bg="rgba(81,102,230,0.12)" color={ACCENT}>{i.quarter}</Badge>}
+                    <DueBadge item={i} doneStatus="Concluída" />
                   </div>
+                  {(i.links || []).length > 0 && <div style={{ marginTop: 6 }}><LinkChips links={i.links} /></div>}
                 </div>
-                <EpicBuckets epics={iEpics} />
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  <IssueBuckets issues={idx.issuesOf(i.epicKeys)} />
+                  <EpicBuckets epics={iEpics} />
+                </div>
                 <button onClick={() => open("initiatives", i)} style={btnStyle(T)}>Editar</button>
               </div>
               <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 4, borderTop: `1px solid ${T.border2}`, paddingTop: 10 }}>
                 {iEpics.map((e) => <EpicLine key={e.key} epic={e} showAssignee />)}
                 {iEpics.length === 0 && <Muted>Nenhum épico. Vincule em Editar.</Muted>}
+                <IssueAnalysis issues={idx.issuesOf(i.epicKeys)} />
               </div>
             </div>
           );
@@ -3744,6 +3895,7 @@ function OpportunityNode({ opp, depth, open }) {
         <Lightbulb size={14} color={SOON_COLOR} />
         <button onClick={() => open("opportunities", opp)} style={{ ...linkBtn, color: T.ink0, fontSize: 13 }}>{opp.name}</button>
         <StatusBadge tone={statusTone(opp.status)}>{opp.status}</StatusBadge>
+        <LinkChips links={opp.links} />
         <AddLink label="sub-oportunidade" onClick={() => open("opportunities", null, { keyResultId: opp.keyResultId, parentId: opp.id, status: "Aberta" })} />
         <AddLink label="experimento" onClick={() => open("experiments", null, { opportunityId: opp.id, status: "Ideia", outcome: "" })} />
       </div>
@@ -3846,12 +3998,19 @@ function OpportunitiesScreen() {
 /* ---- Épicos: o que vem do Jira, com a iniciativa, o KR e a feature ---- */
 
 // Ordem do fluxo no Jira; status novos entram no fim, em ordem alfabética.
-const EPIC_STATUS_ORDER = ["Backlog", "Produto", "Em design", "Em refinamento Técnico", "Pronto P/ DEV", "Em DEV", "Em rollout", "Done"];
+const EPIC_STATUS_ORDER = ["Rascunho", "Backlog", "Produto", "Em design", "Em refinamento Técnico", "Pronto P/ DEV", "Em DEV", "Em rollout", "Done"];
 
 function EpicsScreen() {
   const { T, PRODUCT_STYLE } = useTheme();
-  const { epics, lastSync } = useData();
+  const {
+    epics: sheetEpics, lastSync, customEpics, positions, roadmapWeeks, jiraConfigured,
+    addEpic, saveDrawer: saveDrawerShared, deleteEpic: deleteEpicShared,
+  } = useData();
+  const { canCreateCard, ownsCard } = useAuth();
   const { initiatives } = useInitiatives();
+  const features = useRoadmapFeatures();
+  // Rascunhos criados aqui ou no Roadmap aparecem junto (coluna "Rascunho").
+  const epics = useMemo(() => mergeCustomEpics(sheetEpics, customEpics), [sheetEpics, customEpics]);
   const idx = usePlanIndex();
   const [q, setQ] = useState("");
   const [product, setProduct] = useState("all");
@@ -3873,7 +4032,30 @@ function EpicsScreen() {
       .sort((a, b) => (parseBRDate(b.created) || 0) - (parseBRDate(a.created) || 0));
   }, [epics, q, product, status, initiative, idx]);
 
-  const openEpic = openKey ? epics.find((e) => e.key === openKey) : null;
+  const openBase = openKey ? epics.find((e) => e.key === openKey) : null;
+  const openEpic = openBase ? { ...openBase, ...(positions[openBase.key] || { roadmapLane: null, startWeek: null, durationWeeks: 2 }) } : null;
+  const newEpic = () => { const key = addEpic(); if (key) setOpenKey(key); };
+  // Mesmo comportamento do Roadmap: a feature do épico acompanha a chave nova
+  // (rascunho que vira épico no Jira) e solta o épico cancelado.
+  const saveEpic = async (key, patch) => {
+    const feat = features.initiativeByEpicKey[key];
+    const r = await saveDrawerShared(key, patch);
+    if (!r.ok) return r;
+    if (r.newKey && feat) await features.updateInitiative(feat.id, { epicKeys: feat.epicKeys.map((k) => (k === key ? r.newKey : k)) });
+    setOpenKey(null);
+    return r;
+  };
+  const removeEpic = async (key) => {
+    if (!key.startsWith("NOVO-") && !window.confirm(`Cancelar ${key} no Jira?\n\nO épico vai para o status Cancelado. As histórias dele não são alteradas, e dá para reabri-lo no Jira depois.`)) {
+      return { ok: false, aborted: true };
+    }
+    const feat = features.initiativeByEpicKey[key];
+    const r = await deleteEpicShared(key);
+    if (!r.ok) return r;
+    if (feat) await features.updateInitiative(feat.id, { epicKeys: feat.epicKeys.filter((k) => k !== key) });
+    setOpenKey(null);
+    return r;
+  };
   const cols = "90px minmax(200px, 1fr) 105px 140px 120px 150px 150px 120px";
   const columns = useMemo(() => {
     const present = [...new Set(rows.map((e) => e.status || "Sem status"))];
@@ -3886,6 +4068,7 @@ function EpicsScreen() {
   return (
     <ScreenShell>
       <PageTitle title="Épicos" sub={`${rows.length} de ${epics.length} épicos do Jira${lastSync ? ` · planilha de ${fmtSyncTime(lastSync)}` : ""}`}>
+        {canCreateCard && <button onClick={newEpic} style={btnStyle(T, true)}><Plus size={13} /> Novo épico</button>}
         {viewBtn("board", "Quadro")}
         {viewBtn("table", "Tabela")}
         <input placeholder="Buscar chave, título ou responsável" value={q} onChange={(e) => setQ(e.target.value)} style={{ ...fieldStyle(T), width: 240 }} />
@@ -3927,6 +4110,9 @@ function EpicsScreen() {
                           {style ? <Badge bg={style.subtle} color={style.text}>{e.project}</Badge> : <span style={{ fontSize: 11, color: T.ink2 }}>{e.project || ""}</span>}
                         </div>
                         <div style={{ fontSize: 12.5, fontWeight: 500, color: T.ink0, lineHeight: 1.35, display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }} title={e.summary}>{e.summary}</div>
+                        {(idx.issuesByEpic[e.key] || []).length > 0 && (
+                          <div style={{ marginTop: 8 }}><IssueBuckets issues={idx.issuesByEpic[e.key]} /></div>
+                        )}
                         {(init || feats) && (
                           <div style={{ ...ellipsis, fontSize: 11, color: T.ink2, marginTop: 6 }}>
                             {[init && init.name, feats && feats.map((f) => f.name).join(", ")].filter(Boolean).join(" · ")}
@@ -3972,7 +4158,7 @@ function EpicsScreen() {
       </div>
       )}
 
-      {openEpic && <EpicDrawer epic={openEpic} onClose={() => setOpenKey(null)} canEdit={false} jiraConfigured={false} />}
+      {openEpic && <EpicDrawer epic={openEpic} weeks={roadmapWeeks} onClose={() => setOpenKey(null)} onSave={saveEpic} onDelete={removeEpic} canEdit={ownsCard(openEpic)} jiraConfigured={jiraConfigured === true} />}
     </ScreenShell>
   );
 }
@@ -3981,7 +4167,7 @@ function EpicsScreen() {
 
 function ProductsScreen() {
   const { T, PRODUCT_STYLE } = useTheme();
-  const { epics } = useData();
+  const { epics, tasks } = useData();
   const products = useProducts();
   const { items, status } = usePlanning();
   const idx = usePlanIndex();
@@ -4008,7 +4194,7 @@ function ProductsScreen() {
                   <Package size={16} color={style ? style.primary : T.ink1} />
                   <span style={{ fontSize: 14, fontWeight: 600, color: T.ink0 }}>{p}</span>
                   <span style={{ fontSize: 11.5, color: T.ink2 }}>{feats.length} {feats.length === 1 ? "feature" : "features"}</span>
-                  <div style={{ width: 220 }}><EpicBuckets epics={productEpics} /></div>
+                  <div style={{ width: 240 }}><IssueBuckets issues={(tasks || []).filter((t) => t.project === p)} /></div>
                 </div>
                 <AddLink label="Feature" onClick={() => open("features", null, { product: p, status: "Ativa", epicKeys: [] })} />
               </div>
@@ -4023,10 +4209,11 @@ function ProductsScreen() {
                           <StatusBadge tone={f.status === "Ativa" ? "done" : f.status === "Em construção" ? "active" : null}>{f.status}</StatusBadge>
                         </div>
                         {f.description && <Muted style={{ marginBottom: 8 }}>{f.description}</Muted>}
-                        <EpicBuckets epics={fEpics} />
+                        <IssueBuckets issues={idx.issuesOf(f.epicKeys)} />
                         <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 4 }}>
                           {fEpics.map((e) => <EpicLine key={e.key} epic={e} />)}
                         </div>
+                        <IssueAnalysis issues={idx.issuesOf(f.epicKeys)} />
                       </div>
                     );
                   })}
