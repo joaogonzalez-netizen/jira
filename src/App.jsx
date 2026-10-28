@@ -3315,7 +3315,7 @@ const FORMS = {
     fields: [
       { key: "name", label: "Oportunidade", placeholder: "Dor ou desejo do usuário" },
       { key: "keyResultId", label: "Outcome (Key Result)", type: "select", required: true, options: (c) => optionsOf(c.keyResults) },
-      { key: "track", label: "Ramo", type: "select", options: () => [{ value: "", label: "— (sem ramo)" }, ...OPP_TRACKS.map((t) => ({ value: t, label: t }))] },
+      { key: "track", label: "Área", type: "select", options: () => [{ value: "", label: "— (sem área)" }, ...OPP_TRACKS.map((t) => ({ value: t, label: t }))] },
       { key: "parentId", label: "Dentro de", type: "select", options: (c, d) => [{ value: "", label: "— (direto no KR)" }, ...c.opportunities.filter((o) => o.id !== d.id && o.keyResultId === d.keyResultId).map((o) => ({ value: o.id, label: o.name }))] },
       { key: "status", label: "Status", type: "select", options: () => statusOptions(["Aberta", "Explorando", "Validada", "Descartada"]) },
       { key: "description", label: "Evidência", type: "textarea", placeholder: "Dados, entrevistas, tickets que mostram a dor" },
@@ -4042,10 +4042,10 @@ function OstDiagram({ open }) {
 
 const OUTCOME_COLORS = ["#5166e6", "#d6409f", "#0f9fa8", "#c28a00", "#7c8a14", "#a35bd1"];
 const NO_PRODUCT = "Sem produto";
-// Ramos fixos da árvore; cada hipótese também aponta para um outcome (KR).
+// Áreas fixas da árvore; cada hipótese também aponta para um outcome (KR).
 const OPP_TRACKS = ["UX", "Conteúdos", "Negócios"];
 const TRACK_COLORS = { "UX": "#7c3aed", "Conteúdos": "#00955a", "Negócios": "#f54300" };
-const NO_TRACK = "Sem ramo";
+const NO_TRACK = "Sem área";
 
 /** Produto em que o KR aparece na árvore: o do KR, senão o do objetivo, senão o dos épicos. */
 function krTreeProduct(kr, idx) {
@@ -4112,7 +4112,7 @@ function ProductOppTree({ open }) {
   const products = Object.keys(groups).sort((a, b) => (oppCount(groups[b]) > 0) - (oppCount(groups[a]) > 0) || (a === NO_PRODUCT) - (b === NO_PRODUCT) || a.localeCompare(b));
   const [picked, setPicked] = useState(null);
   const product = picked && groups[picked] ? picked : products[0];
-  const [view, setView] = useState("track"); // track (ramos fixos) | outcome
+  const [view, setView] = useState("track"); // track (áreas fixas) | outcome
   const [outcomeId, setOutcomeId] = useState("");
   const scrollRef = useRef(null);
   useEffect(() => {
@@ -4132,7 +4132,7 @@ function ProductOppTree({ open }) {
   const rootColor = product === NO_PRODUCT ? T.ink2 : style.primary;
   const total = oppCount(all);
 
-  // Colunas: ramos fixos (com o outcome em cada cartão) ou um outcome por coluna.
+  // Colunas: áreas fixas (com o outcome em cada cartão) ou um outcome por coluna.
   const columns = view === "track"
     ? [
         ...OPP_TRACKS.map((t) => ({ key: t, label: t, color: TRACK_COLORS[t], opps: roots.filter((o) => o.track === t), seed: { track: t } })),
@@ -4165,7 +4165,7 @@ function ProductOppTree({ open }) {
       </div>
       <div className="flex items-center" style={{ gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
         <span style={{ fontSize: 12, color: T.ink1, marginRight: 2 }}>Ver por:</span>
-        <button onClick={() => setView("track")} style={pill(view === "track", ACCENT)}>Ramo</button>
+        <button onClick={() => setView("track")} style={pill(view === "track", ACCENT)}>Área</button>
         <button onClick={() => setView("outcome")} style={pill(view === "outcome", ACCENT)}>Outcome</button>
         <span style={{ width: 1, height: 18, background: T.border2, margin: "0 6px" }} />
         <span style={{ fontSize: 12, color: T.ink1, marginRight: 2 }}>Outcome:</span>
@@ -4218,7 +4218,7 @@ function ProductOppTree({ open }) {
           </li>
         </ul>
       </div>
-      <Muted style={{ marginTop: 8 }}>Por ramo: UX, Conteúdos e Negócios fixos, com o outcome de cada hipótese no cartão. Por outcome: uma coluna por Key Result; escolha um para ver a árvore só dele.</Muted>
+      <Muted style={{ marginTop: 8 }}>Por área: UX, Conteúdos e Negócios fixas, com o outcome de cada hipótese no cartão. Por outcome: uma coluna por Key Result; escolha um para ver a árvore só dele.</Muted>
     </div>
   );
 }
