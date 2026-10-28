@@ -3839,7 +3839,7 @@ function KeyResultsScreen() {
 
   return (
     <ScreenShell>
-      <PageTitle title="Key Results" sub={`O número que prova cada objetivo e os épicos que o movem · ${loose} ${loose === 1 ? "épico" : "épicos"} sem Key Result`}>
+      <PageTitle title="Key Results (Iniciativas)" sub={`O número que prova cada objetivo e os épicos que o movem · ${loose} ${loose === 1 ? "épico" : "épicos"} sem Key Result`}>
         <ProductFilter value={product} onChange={setProduct} />
         <NewButton
           label="Key Result" disabled={!items.objectives.length} title={items.objectives.length ? "" : "Crie um objetivo antes"}
