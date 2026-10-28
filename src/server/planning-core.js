@@ -78,6 +78,19 @@ export const KINDS = {
       status: { type: "enum", options: ["Aberta", "Explorando", "Validada", "Descartada"], default: "Aberta" },
     },
   },
+  // Árvore de oportunidades: Oportunidade → Solução (como satisfazer a
+  // necessidade) → Experimento (como validar a solução).
+  solutions: {
+    key: "jira:solutions",
+    prefix: "sol",
+    label: "Solução",
+    parent: { field: "opportunityId", kind: "opportunities" },
+    fields: {
+      opportunityId: { type: "ref", required: true },
+      description: { type: "text" },
+      status: { type: "enum", options: ["Ideia", "Priorizada", "Em teste", "Validada", "Descartada"], default: "Ideia" },
+    },
+  },
   experiments: {
     key: "jira:experiments",
     prefix: "exp",
@@ -85,6 +98,7 @@ export const KINDS = {
     parent: { field: "opportunityId", kind: "opportunities" },
     fields: {
       opportunityId: { type: "ref", required: true },
+      solutionId: { type: "ref" }, // opcional: a solução que o experimento valida
       hypothesis: { type: "text" },
       metric: { type: "text" },
       unit: { type: "text" },
@@ -122,6 +136,7 @@ for (const [kind, def] of Object.entries(KINDS)) {
   if (def.parent) (CHILDREN[def.parent.kind] = CHILDREN[def.parent.kind] || []).push({ kind, field: def.parent.field });
 }
 CHILDREN.opportunities = [...(CHILDREN.opportunities || []), { kind: "opportunities", field: "parentId" }];
+CHILDREN.solutions = [...(CHILDREN.solutions || []), { kind: "experiments", field: "solutionId" }];
 
 // hasOwn: `KINDS["constructor"]` existiria via protótipo e passaria na validação.
 function isKind(kind) {

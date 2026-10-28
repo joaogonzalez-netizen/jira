@@ -216,3 +216,17 @@ test("KR tem produto, quarter, links e épicos (um épico num KR só)", async ()
   const list = (await handleList("keyResults", config)).body;
   assert.deepEqual(list.find((k) => k.id === a.id).epicKeys, ["FLIX-1"]);
 });
+
+test("solução fica entre oportunidade e experimento; não apaga com experimento dentro", async () => {
+  const config = fakeConfig();
+  const { opp } = await tree(config);
+  assert.equal((await handleCreate("solutions", { name: "S" }, ADMIN, config)).status, 400);
+  const sol = (await handleCreate("solutions", { name: "Onboarding guiado", opportunityId: opp.id }, ADMIN, config)).body;
+  assert.equal(sol.status, "Ideia");
+  const x = (await handleCreate("experiments", { name: "Teste A/B", opportunityId: opp.id, solutionId: sol.id }, ADMIN, config)).body;
+  assert.equal(x.solutionId, sol.id);
+  assert.equal((await handleDelete("opportunities", opp.id, ADMIN, config)).status, 409);
+  assert.equal((await handleDelete("solutions", sol.id, ADMIN, config)).status, 409);
+  await handleDelete("experiments", x.id, ADMIN, config);
+  assert.equal((await handleDelete("solutions", sol.id, ADMIN, config)).status, 200);
+});
