@@ -188,3 +188,10 @@ test("oportunidade guarda links: só http(s), sem repetir, rótulo padrão = dom
     { label: "amplitude.com", url: "https://amplitude.com/chart/123" },
   ]);
 });
+
+test("objetivo guarda a meta em texto", async () => {
+  const config = fakeConfig();
+  const o = (await handleCreate("objectives", { name: "Engajamento", product: "STLFLIX", goal: " +20% de DAU até dezembro " }, ADMIN, config)).body;
+  assert.equal(o.goal, "+20% de DAU até dezembro");
+  assert.equal((await handleUpdate("objectives", o.id, { goal: "" }, ADMIN, config)).body.goal, "");
+});

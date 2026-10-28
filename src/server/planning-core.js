@@ -33,6 +33,7 @@ export const KINDS = {
     label: "Objetivo",
     fields: {
       product: { type: "text", required: true }, // produto do Jira que o OKR mira
+      goal: { type: "text" }, // meta do objetivo, em uma frase (os números ficam nos KRs)
       description: { type: "text" },
       period: { type: "text" }, // legado (ex.: 2026-T4); hoje o período são as datas
       startDate: { type: "date" },

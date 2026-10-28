@@ -3273,6 +3273,7 @@ const FORMS = {
     title: "Objetivo",
     fields: [
       { key: "name", label: "Objetivo", placeholder: "Ex.: Engajamento na Flix" },
+      { key: "goal", label: "Meta", placeholder: "Ex.: Aumentar o engajamento em 20% até dezembro" },
       { key: "product", label: "Produto", type: "select", required: true, half: true, options: (c) => c.products.map((p) => ({ value: p, label: p })) },
       { key: "status", label: "Status", type: "select", half: true, options: () => statusOptions(["Em andamento", "Concluído", "Cancelado"]) },
       { key: "startDate", label: "Início do período", type: "date", half: true },
@@ -3664,6 +3665,7 @@ function OverviewScreen() {
                 {o.product && <ProductBadges products={[o.product]} />}
                 {fmtPeriod(o) && <Badge bg={T.bg2} color={T.ink1}>{fmtPeriod(o)}</Badge>}
               </div>
+              {o.goal && <div style={{ margin: "-4px 0 10px" }}><ObjectiveGoal goal={o.goal} /></div>}
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 {krs.map((kr) => (
                   <div key={kr.id} onClick={() => open("keyResults", kr)} style={{ cursor: "pointer" }}>
@@ -3753,6 +3755,7 @@ function OkrScreen() {
                 </div>
                 <NewButton label="Key Result" onClick={() => open("keyResults", null, { objectiveId: o.id, status: "Em andamento" })} />
               </div>
+              {o.goal && <ObjectiveGoal goal={o.goal} />}
               {o.description && <Muted style={{ marginTop: 6 }}>{o.description}</Muted>}
 
               <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 10 }}>
@@ -3792,6 +3795,16 @@ function OkrScreen() {
       {loose > 0 && <Muted style={{ marginTop: 14 }}>{loose} {loose === 1 ? "iniciativa ainda não move" : "iniciativas ainda não movem"} nenhum KR. Veja em Iniciativas.</Muted>}
       {editorNode}
     </ScreenShell>
+  );
+}
+
+function ObjectiveGoal({ goal }) {
+  const { T } = useTheme();
+  return (
+    <div className="flex items-center" style={{ gap: 6, marginTop: 6, fontSize: 12.5, color: T.ink0 }}>
+      <span style={{ fontSize: 11, fontWeight: 600, color: ACCENT, textTransform: "uppercase", letterSpacing: 0.3 }}>Meta</span>
+      <span>{goal}</span>
+    </div>
   );
 }
 
