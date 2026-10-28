@@ -2957,6 +2957,9 @@ function usePlanIndex() {
       epicByKey, epicsOf, initiativeByEpic, featuresByEpic, productsOfInitiative, issuesByEpic, issuesOf,
       objectiveById: byId(items.objectives), krById: byId(items.keyResults), oppById: byId(items.opportunities),
       krsOfObjective: (id) => items.keyResults.filter((k) => k.objectiveId === id),
+      // Iniciativa pertence ao objetivo dela — ou, nas antigas, ao objetivo do KR que move.
+      objectiveOfInitiative: (i) => byId(items.objectives)[i.objectiveId || (byId(items.keyResults)[i.keyResultId] || {}).objectiveId] || null,
+      initiativesOfObjective: (id) => initiatives.filter((i) => (i.objectiveId || (byId(items.keyResults)[i.keyResultId] || {}).objectiveId) === id),
       initiativesOfKr: (id) => initiatives.filter((i) => i.keyResultId === id),
       oppsOfKr: (id) => items.opportunities.filter((o) => o.keyResultId === id),
       experimentsOfOpp: (id) => items.experiments.filter((x) => x.opportunityId === id),
@@ -3286,6 +3289,7 @@ const FORMS = {
     fields: [
       { key: "name", label: "Key Result", placeholder: "Ex.: DAU/MAU" },
       { key: "objectiveId", label: "Objetivo", type: "select", required: true, options: (c) => optionsOf(c.objectives) },
+      { key: "owner", label: "Responsável", type: "select", half: true, options: (c, d) => [{ value: "", label: "—" }, ...[...new Set([...(d.owner ? [d.owner] : []), ...c.people])].sort().map((n) => ({ value: n, label: n }))] },
       { key: "baseline", label: "Início", type: "number", third: true },
       { key: "current", label: "Atual", type: "number", third: true },
       { key: "target", label: "Meta", type: "number", third: true },
@@ -3300,7 +3304,16 @@ const FORMS = {
     title: "Iniciativa",
     fields: [
       { key: "name", label: "Iniciativa", placeholder: "Ex.: Reduzir cancelamento" },
-      { key: "keyResultId", label: "Key Result que ela move", type: "select", options: (c) => [{ value: "", label: "Nenhum" }, ...c.keyResults.map((k) => ({ value: k.id, label: `${k.name}${c.objectiveById[k.objectiveId] ? ` · ${c.objectiveById[k.objectiveId].name}` : ""}` }))] },
+      { key: "objectiveId", label: "Objetivo", type: "select", reset: ["keyResultId"], options: (c) => [{ value: "", label: "Nenhum" }, ...optionsOf(c.objectives)] },
+      {
+        key: "keyResultId", label: "Key Result que ela move (opcional)", type: "select",
+        options: (c, d) => {
+          const krs = c.keyResults.filter((k) => !d.objectiveId || k.objectiveId === d.objectiveId);
+          return [{ value: "", label: krs.length ? "Nenhum" : "Nenhum (o objetivo ainda não tem KR)" }, ...krs.map((k) => ({ value: k.id, label: k.name }))];
+        },
+        // escolher o KR já diz o objetivo
+        derive: (c, v) => { const k = c.keyResults.find((x) => x.id === v); return k ? { objectiveId: k.objectiveId } : {}; },
+      },
       { key: "status", label: "Status", type: "select", half: true, options: () => statusOptions(INITIATIVE_STATUSES) },
       { key: "product", label: "Produto principal", type: "select", half: true, options: (c) => [{ value: "", label: "Vários / nenhum" }, ...c.products.map((p) => ({ value: p, label: p }))] },
       { key: "dueDate", label: "Data de entrega", type: "date", half: true },
@@ -3509,7 +3522,9 @@ function EditorDrawer({ editor, onClose }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const ro = !canCreateCard;
-  const ctx = { ...planning.items, initiatives: inits.initiatives, epics, products, objectiveById: idx.objectiveById };
+  const { tasks } = useData();
+  const people = useMemo(() => [...new Set([...epics, ...(tasks || [])].flatMap((x) => [x.assignee, x.reporter]).filter(Boolean))].sort(), [epics, tasks]);
+  const ctx = { ...planning.items, initiatives: inits.initiatives, epics, products, people, objectiveById: idx.objectiveById };
 
   const save = async () => {
     if (!String(draft.name || "").trim()) { setError("Dê um nome."); return; }
@@ -3548,7 +3563,12 @@ function EditorDrawer({ editor, onClose }) {
         {form.fields.map((f) => (
           <div key={f.key} style={{ width: f.third ? "calc(33.33% - 8px)" : f.half ? "calc(50% - 6px)" : "100%", display: "flex", flexDirection: "column", gap: 4 }}>
             <span style={{ fontSize: 11.5, fontWeight: 500, color: T.ink1 }}>{f.label}</span>
-            <FormInput field={f} value={draft[f.key]} onChange={(v) => setDraft((d) => ({ ...d, [f.key]: v, ...(f.mirror && v.length ? { [f.mirror]: v[v.length - 1].value } : {}) }))} ctx={ctx} draft={draft} disabled={ro} />
+            <FormInput field={f} value={draft[f.key]} onChange={(v) => setDraft((d) => ({
+              ...d, [f.key]: v,
+              ...(f.reset ? Object.fromEntries(f.reset.map((k) => [k, ""])) : {}),
+              ...(f.derive ? f.derive(ctx, v) : {}),
+              ...(f.mirror && v.length ? { [f.mirror]: v[v.length - 1].value } : {}),
+            }))} ctx={ctx} draft={draft} disabled={ro} />
           </div>
         ))}
       </div>
@@ -3622,11 +3642,10 @@ function OverviewScreen() {
   if (status === "error") return <PlanningLoadError />;
 
   const inProduct = (prods) => product === "all" || prods.includes(product);
-  const krProducts = (kr) => [...new Set(idx.initiativesOfKr(kr.id).flatMap(idx.productsOfInitiative))];
+  const objectiveProducts = (o) => [o.product, ...idx.initiativesOfObjective(o.id).flatMap(idx.productsOfInitiative)].filter(Boolean);
   const objectives = items.objectives
-    .filter((o) => o.status !== "Cancelado")
-    .map((o) => ({ o, krs: product === "all" || o.product === product ? idx.krsOfObjective(o.id) : idx.krsOfObjective(o.id).filter((kr) => inProduct(krProducts(kr))) }))
-    .filter((x) => product === "all" || x.o.product === product || x.krs.length);
+    .filter((o) => o.status !== "Cancelado" && inProduct(objectiveProducts(o)))
+    .map((o) => ({ o, krs: idx.krsOfObjective(o.id) }));
   const activeInitiatives = initiatives
     .filter((i) => i.status !== "Cancelada" && inProduct(idx.productsOfInitiative(i)))
     .sort((a, b) => INITIATIVE_STATUSES.indexOf(a.status || "Planejada") - INITIATIVE_STATUSES.indexOf(b.status || "Planejada"));
@@ -3641,7 +3660,7 @@ function OverviewScreen() {
 
   return (
     <ScreenShell>
-      <PageTitle title="Visão geral" sub="OKRs, iniciativas e experimentos de growth">
+      <PageTitle title="Visão geral" sub="Objetivos, iniciativas e experimentos de growth">
         <ProductFilter value={product} onChange={setProduct} />
       </PageTitle>
 
@@ -3655,8 +3674,8 @@ function OverviewScreen() {
       </div>
 
       <div style={{ marginBottom: 24 }}>
-        <SectionTitleRow title="Progresso dos OKRs" />
-        {objectives.length === 0 && <Muted>Nenhum objetivo{product !== "all" ? " com iniciativas neste produto" : ""}. Cadastre em OKRs.</Muted>}
+        <SectionTitleRow title="Progresso dos objetivos" />
+        {objectives.length === 0 && <Muted>Nenhum objetivo{product !== "all" ? " com iniciativas neste produto" : ""}. Cadastre em Objetivos.</Muted>}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(360px, 1fr))", gap: 12 }}>
           {objectives.map(({ o, krs }) => (
             <div key={o.id} style={cardStyle(T)}>
@@ -3670,7 +3689,10 @@ function OverviewScreen() {
                 {krs.map((kr) => (
                   <div key={kr.id} onClick={() => open("keyResults", kr)} style={{ cursor: "pointer" }}>
                     <div className="flex items-center justify-between" style={{ gap: 8, marginBottom: 4 }}>
-                      <span style={{ ...ellipsis, fontSize: 12.5, color: T.ink0 }}>{kr.name}</span>
+                      <span className="flex items-center" style={{ gap: 8, minWidth: 0 }}>
+                        <span style={{ ...ellipsis, fontSize: 12.5, color: T.ink0 }}>{kr.name}</span>
+                        {kr.owner && <OwnerTag name={kr.owner} />}
+                      </span>
                       <span className="flex items-center" style={{ gap: 6 }}><CheckinBadge item={kr} activeStatuses={["Em andamento"]} /><DueBadge item={kr} doneStatus="Concluído" /></span>
                     </div>
                     <div className="flex items-center" style={{ gap: 8 }}><div style={{ flex: 1, minWidth: 0 }}><KrProgress kr={kr} /></div><WeeklySpark checkins={kr.checkins} target={kr.target} /></div>
@@ -3691,7 +3713,7 @@ function OverviewScreen() {
               <div key={i.id} onClick={() => open("initiatives", i)} className="pp-card" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.2fr) minmax(0, 1fr) 110px", gap: 12, alignItems: "center", padding: "10px 14px", borderTop: n ? `1px solid ${T.border2}` : "none", cursor: "pointer" }}>
                 <div style={{ minWidth: 0 }}>
                   <div style={{ ...ellipsis, fontSize: 12.5, fontWeight: 500, color: T.ink0 }}>{i.name}</div>
-                  <div style={{ ...ellipsis, fontSize: 11, color: T.ink2 }}>{idx.krById[i.keyResultId] ? idx.krById[i.keyResultId].name : "sem KR"}</div>
+                  <div style={{ ...ellipsis, fontSize: 11, color: T.ink2 }}>{idx.objectiveOfInitiative(i) ? idx.objectiveOfInitiative(i).name : "sem objetivo"}</div>
                 </div>
                 <IssueBuckets issues={idx.issuesOf(i.epicKeys)} />
                 <span style={{ justifySelf: "end" }}><StatusBadge tone={statusTone(i.status)}>{i.status || "Planejada"}</StatusBadge></span>
@@ -3722,7 +3744,17 @@ function OverviewScreen() {
   );
 }
 
-/* ---- OKRs: Objetivo → Key Results → Iniciativas ---- */
+/* ---- Objetivos: Key Results (os números que provam) e Iniciativas (o trabalho que move) ---- */
+
+function OwnerTag({ name }) {
+  const { T } = useTheme();
+  return (
+    <span className="flex items-center" style={{ gap: 4, flexShrink: 0 }} title={`Responsável: ${name}`}>
+      <span style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 16, height: 16, borderRadius: 999, background: T.bg2, color: T.ink1, fontSize: 8, fontWeight: 700, textTransform: "uppercase" }}>{initials(name)}</span>
+      <span style={{ fontSize: 11, color: T.ink1, whiteSpace: "nowrap" }}>{shortName(name)}</span>
+    </span>
+  );
+}
 
 function OkrScreen() {
   const { T } = useTheme();
@@ -3731,11 +3763,17 @@ function OkrScreen() {
   const idx = usePlanIndex();
   const [open, editorNode] = useEditor();
   if (status === "error") return <PlanningLoadError />;
-  const loose = initiatives.filter((i) => !idx.krById[i.keyResultId]).length;
+  const loose = initiatives.filter((i) => !idx.objectiveOfInitiative(i)).length;
+  const sectionHead = (label, action) => (
+    <div className="flex items-center justify-between" style={{ margin: "16px 0 8px" }}>
+      <span style={{ fontSize: 11, fontWeight: 600, color: T.ink2, textTransform: "uppercase", letterSpacing: 0.3 }}>{label}</span>
+      {action}
+    </div>
+  );
 
   return (
     <ScreenShell>
-      <PageTitle title="OKRs" sub="Objetivo → Key Results (métrica, meta e prazo) → Iniciativas que movem cada KR">
+      <PageTitle title="Objetivos" sub="Cada objetivo tem Key Results (os números que provam o resultado) e iniciativas (o trabalho que o move)">
         <NewButton label="Objetivo" onClick={() => open("objectives", null, { status: "Em andamento" })} />
       </PageTitle>
       {status === "idle" && items.objectives.length === 0 && <Muted>Nenhum objetivo ainda. Comece por um, ex.: “Engajamento na Flix”.</Muted>}
@@ -3743,56 +3781,65 @@ function OkrScreen() {
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         {items.objectives.map((o) => {
           const krs = idx.krsOfObjective(o.id);
+          const inits = idx.initiativesOfObjective(o.id);
           return (
             <div key={o.id} style={cardStyle(T)}>
-              <div className="flex items-center justify-between" style={{ gap: 10 }}>
-                <div className="flex items-center" style={{ gap: 8, minWidth: 0 }}>
-                  <Target size={16} color={ACCENT} />
-                  <button onClick={() => open("objectives", o)} style={{ ...linkBtn, ...ellipsis, color: T.ink0, fontSize: 15, fontWeight: 600, fontFamily: "'Plus Jakarta Sans', sans-serif" }}>{o.name}</button>
-                  {o.product && <ProductBadges products={[o.product]} />}
-                  {fmtPeriod(o) && <Badge bg={T.bg2} color={T.ink1}>{fmtPeriod(o)}</Badge>}
-                  <StatusBadge tone={statusTone(o.status)}>{o.status}</StatusBadge>
-                </div>
-                <NewButton label="Key Result" onClick={() => open("keyResults", null, { objectiveId: o.id, status: "Em andamento" })} />
+              <div className="flex items-center" style={{ gap: 8, minWidth: 0, flexWrap: "wrap" }}>
+                <Target size={16} color={ACCENT} />
+                <button onClick={() => open("objectives", o)} style={{ ...linkBtn, ...ellipsis, color: T.ink0, fontSize: 15, fontWeight: 600, fontFamily: "'Plus Jakarta Sans', sans-serif" }}>{o.name}</button>
+                {o.product && <ProductBadges products={[o.product]} />}
+                {fmtPeriod(o) && <Badge bg={T.bg2} color={T.ink1}>{fmtPeriod(o)}</Badge>}
+                <StatusBadge tone={statusTone(o.status)}>{o.status}</StatusBadge>
               </div>
               {o.goal && <ObjectiveGoal goal={o.goal} />}
               {o.description && <Muted style={{ marginTop: 6 }}>{o.description}</Muted>}
 
-              <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+              {sectionHead(`Key Results · ${krs.length}`, <AddLink label="Key Result" onClick={() => open("keyResults", null, { objectiveId: o.id, status: "Em andamento" })} />)}
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {krs.map((kr) => {
-                  const krInits = idx.initiativesOfKr(kr.id);
-                  const opps = idx.oppsOfKr(kr.id);
+                  const opps = idx.oppsOfKr(kr.id).length;
                   return (
-                    <div key={kr.id} style={{ border: `1px solid ${T.border2}`, borderRadius: 8, padding: 12, background: T.bg1 }}>
-                      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(200px, 1fr) auto", gap: 12, alignItems: "center" }}>
-                        <button onClick={() => open("keyResults", kr)} style={{ ...linkBtn, ...ellipsis, color: T.ink0, fontSize: 13, textAlign: "left" }}>{kr.name}</button>
-                        <div className="flex items-center" style={{ gap: 8, minWidth: 0 }}><KrProgress kr={kr} /><WeeklySpark checkins={kr.checkins} target={kr.target} /></div>
-                        <span className="flex items-center" style={{ gap: 6 }}><CheckinBadge item={kr} activeStatuses={["Em andamento"]} /><DueBadge item={kr} doneStatus="Concluído" /></span>
-                      </div>
-                      <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
-                        {krInits.map((i) => (
-                          <div key={i.id} onClick={() => open("initiatives", i)} className="pp-card" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(180px, 260px) 110px", gap: 12, alignItems: "center", padding: "6px 8px", borderRadius: 6, cursor: "pointer", border: "1px solid transparent" }}>
-                            <span className="flex items-center" style={{ gap: 6, minWidth: 0, fontSize: 12.5, color: T.ink0 }}><Sparkles size={13} color={T.ink2} /><span style={ellipsis}>{i.name}</span></span>
-                            <IssueBuckets issues={idx.issuesOf(i.epicKeys)} />
-                            <span style={{ justifySelf: "end" }}><StatusBadge tone={statusTone(i.status)}>{i.status || "Planejada"}</StatusBadge></span>
-                          </div>
-                        ))}
-                        <div className="flex items-center" style={{ gap: 14, paddingLeft: 8 }}>
-                          {krInits.length === 0 && <Muted>Nenhuma iniciativa movendo este KR.</Muted>}
-                          <AddLink label="Iniciativa" onClick={() => open("initiatives", null, { keyResultId: kr.id, status: "Planejada", product: "", epicKeys: [] })} />
-                          <span style={{ fontSize: 11.5, color: T.ink2 }}>{opps.length} {opps.length === 1 ? "oportunidade" : "oportunidades"}</span>
+                    <div key={kr.id} onClick={() => open("keyResults", kr)} className="pp-card" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(200px, 1fr) auto", gap: 12, alignItems: "center", padding: "8px 10px", borderRadius: 8, border: `1px solid ${T.border2}`, background: T.bg1, cursor: "pointer" }}>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ ...ellipsis, fontSize: 13, fontWeight: 500, color: T.ink0 }}>{kr.name}</div>
+                        <div className="flex items-center" style={{ gap: 10, marginTop: 3 }}>
+                          {kr.owner ? <OwnerTag name={kr.owner} /> : <span style={{ fontSize: 11, color: T.ink2 }}>sem responsável</span>}
+                          {opps > 0 && <span style={{ fontSize: 11, color: T.ink2 }}>{opps} {opps === 1 ? "oportunidade" : "oportunidades"}</span>}
                         </div>
                       </div>
+                      <div className="flex items-center" style={{ gap: 8, minWidth: 0 }}><KrProgress kr={kr} /><WeeklySpark checkins={kr.checkins} target={kr.target} /></div>
+                      <span className="flex items-center" style={{ gap: 6 }}><CheckinBadge item={kr} activeStatuses={["Em andamento"]} /><DueBadge item={kr} doneStatus="Concluído" /></span>
                     </div>
                   );
                 })}
-                {krs.length === 0 && <Muted>Sem Key Results. Um objetivo precisa de pelo menos um número para medir.</Muted>}
+                {krs.length === 0 && <Muted>Sem Key Results. Cadastre pelo menos um número para medir este objetivo.</Muted>}
+              </div>
+
+              {sectionHead(`Iniciativas · ${inits.length}`, <AddLink label="Iniciativa" onClick={() => open("initiatives", null, { objectiveId: o.id, keyResultId: "", status: "Planejada", product: o.product || "", epicKeys: [] })} />)}
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {inits.map((i) => {
+                  const kr = idx.krById[i.keyResultId];
+                  return (
+                    <div key={i.id} onClick={() => open("initiatives", i)} className="pp-card" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(180px, 260px) 110px", gap: 12, alignItems: "center", padding: "6px 8px", borderRadius: 6, cursor: "pointer", border: "1px solid transparent" }}>
+                      <div style={{ minWidth: 0 }}>
+                        <span className="flex items-center" style={{ gap: 6, minWidth: 0, fontSize: 12.5, color: T.ink0 }}>
+                          <Sparkles size={13} color={T.ink2} style={{ flexShrink: 0 }} /><span style={ellipsis}>{i.name}</span>
+                          {i.quarter && <Badge bg="rgba(81,102,230,0.12)" color={ACCENT}>{i.quarter}</Badge>}
+                        </span>
+                        {kr && <div style={{ ...ellipsis, fontSize: 11, color: T.ink2, marginLeft: 19 }}>move {kr.name}</div>}
+                      </div>
+                      <IssueBuckets issues={idx.issuesOf(i.epicKeys)} />
+                      <span style={{ justifySelf: "end" }}><StatusBadge tone={statusTone(i.status)}>{i.status || "Planejada"}</StatusBadge></span>
+                    </div>
+                  );
+                })}
+                {inits.length === 0 && <Muted>Nenhuma iniciativa neste objetivo.</Muted>}
               </div>
             </div>
           );
         })}
       </div>
-      {loose > 0 && <Muted style={{ marginTop: 14 }}>{loose} {loose === 1 ? "iniciativa ainda não move" : "iniciativas ainda não movem"} nenhum KR. Veja em Iniciativas.</Muted>}
+      {loose > 0 && <Muted style={{ marginTop: 14 }}>{loose} {loose === 1 ? "iniciativa ainda não está" : "iniciativas ainda não estão"} ligada{loose === 1 ? "" : "s"} a um objetivo. Veja em Iniciativas.</Muted>}
       {editorNode}
     </ScreenShell>
   );
@@ -3834,13 +3881,13 @@ function InitiativesScreen() {
     <ScreenShell>
       <PageTitle title="Iniciativas" sub={`A aposta grande (ex.: reduzir cancelamento) que reúne vários épicos · ${loose} ${loose === 1 ? "épico" : "épicos"} sem iniciativa`}>
         <ProductFilter value={product} onChange={setProduct} />
-        <NewButton label="Iniciativa" onClick={() => open("initiatives", null, { status: "Planejada", product: "", keyResultId: "", epicKeys: [] })} />
+        <NewButton label="Iniciativa" onClick={() => open("initiatives", null, { status: "Planejada", product: "", objectiveId: "", keyResultId: "", epicKeys: [] })} />
       </PageTitle>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         {list.map((i) => {
           const kr = idx.krById[i.keyResultId];
-          const obj = kr && idx.objectiveById[kr.objectiveId];
+          const obj = idx.objectiveOfInitiative(i);
           const iEpics = idx.epicsOf(i.epicKeys).sort((a, b) => order[epicBucket(a)] - order[epicBucket(b)]);
           return (
             <div key={i.id} style={cardStyle(T)}>
@@ -3851,7 +3898,7 @@ function InitiativesScreen() {
                     <StatusBadge tone={statusTone(i.status)}>{i.status || "Planejada"}</StatusBadge>
                   </div>
                   <div className="flex items-center" style={{ gap: 8, marginTop: 4, flexWrap: "wrap" }}>
-                    <span style={{ fontSize: 11.5, color: T.ink2 }}>{kr ? `Move: ${kr.name}${obj ? ` · ${obj.name}` : ""}` : "Não move nenhum KR"}</span>
+                    <span style={{ fontSize: 11.5, color: T.ink2 }}>{obj ? `Objetivo: ${obj.name}${kr ? ` · move ${kr.name}` : ""}` : "Sem objetivo"}</span>
                     <ProductBadges products={idx.productsOfInitiative(i)} />
                     {i.quarter && <Badge bg="rgba(81,102,230,0.12)" color={ACCENT}>{i.quarter}</Badge>}
                     <DueBadge item={i} doneStatus="Concluída" />
@@ -3951,7 +3998,7 @@ function OpportunitiesScreen() {
 
       {tab === "tree" ? (
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          {items.keyResults.length === 0 && <Muted>A árvore começa num Key Result. Cadastre um objetivo e seus KRs em OKRs.</Muted>}
+          {items.keyResults.length === 0 && <Muted>A árvore começa num Key Result. Cadastre um objetivo e seus KRs em Objetivos.</Muted>}
           {items.keyResults.map((kr) => {
             const roots = idx.oppsOfKr(kr.id).filter((o) => !o.parentId || !idx.oppById[o.parentId]);
             const obj = idx.objectiveById[kr.objectiveId];
@@ -4425,7 +4472,7 @@ function WorkspaceEditor({ editor, onClose }) {
             ))}
           </div>
         </div>
-        {!editing && <Muted>O projeto começa vazio. Depois de criar, configure a planilha dele em Configurações e cadastre OKRs, features e Roadmap.</Muted>}
+        {!editing && <Muted>O projeto começa vazio. Depois de criar, configure a planilha dele em Configurações e cadastre objetivos, features e Roadmap.</Muted>}
       </div>
       {error && <p style={{ marginTop: 12, fontSize: 12, color: LATE_COLOR }}>{error}</p>}
       <div className="flex items-center justify-end" style={{ gap: 8, marginTop: 20 }}>
@@ -4439,7 +4486,7 @@ function WorkspaceEditor({ editor, onClose }) {
 const SIDEBAR_KEY = "pp-sidebar-collapsed";
 const SIDEBAR_GROUPS = [
   { title: null, items: [["visao", "Visão geral", LayoutDashboard]] },
-  { title: "Estratégia", items: [["okrs", "OKRs", Target], ["iniciativas", "Iniciativas", Sparkles], ["oportunidades", "Oportunidades", Lightbulb]] },
+  { title: "Estratégia", items: [["okrs", "Objetivos", Target], ["iniciativas", "Iniciativas", Sparkles], ["oportunidades", "Oportunidades", Lightbulb]] },
   { title: "Execução", items: [["epicos", "Épicos", Layers], ["roadmap", "Roadmap", Calendar]] },
   { title: "Produto", items: [["produtos", "Produtos e features", Package]] },
   { title: "Análises", items: [["analises", "Análises", BarChart3], ["desenvolvedores", "Desenvolvedores", Users]] },
