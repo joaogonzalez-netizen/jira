@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { migrateInitiativesToFeatures } from "./legacy-migration.js";
+import { migrateInitiativesToFeatures, migrateInitiativesToKeyResults, runMigrations } from "./legacy-migration.js";
 
 function fakeKv(seed = {}) {
   const data = new Map(Object.entries(seed).map(([k, v]) => [k, JSON.stringify(v)]));
@@ -79,4 +79,45 @@ test("sem nada para migrar, só marca como feita", async () => {
   await migrateInitiativesToFeatures(kv);
   assert.equal(kv.data.has("jira:features"), false);
   assert.equal(kv.data.get("jira:migrations:initiatives-to-features"), "done");
+});
+
+test("iniciativas de OKR viram Key Results; a que movia um KR soma nele", async () => {
+  const kv = fakeKv({
+    "jira:initiatives": [
+      { id: "ini_1", name: "Reduzir cancelamento", product: "STLFLIX", objectiveId: "obj_1", status: "Em andamento", quarter: "Q4/2026", dueDate: "2026-12-01", links: [{ label: "Dash", url: "https://a.com/" }], epicKeys: ["FLIX-1", "FLIX-2"] },
+      { id: "ini_2", name: "Onboarding", product: "", keyResultId: "kr_1", status: "Concluída", quarter: "Q3/2026", links: [{ label: "Estudo", url: "https://b.com/" }], epicKeys: ["FLIX-3", "FLIX-9"] },
+      { id: "ini_3", name: "Sem objetivo", product: "", epicKeys: [] },
+    ],
+    "jira:key-results": [{ id: "kr_1", name: "DAU/MAU", objectiveId: "obj_1", status: "Em andamento", epicKeys: ["FLIX-9"], links: [] }],
+  });
+  await migrateInitiativesToKeyResults(kv);
+  const krs = read(kv, "jira:key-results");
+  const kr1 = krs.find((k) => k.id === "kr_1");
+  assert.deepEqual(kr1.epicKeys, ["FLIX-9", "FLIX-3"]);
+  assert.equal(kr1.quarter, "Q3/2026");
+  assert.deepEqual(kr1.links.map((l) => l.url), ["https://b.com/"]);
+  const ini1 = krs.find((k) => k.id === "ini_1");
+  assert.deepEqual([ini1.name, ini1.objectiveId, ini1.product, ini1.status, ini1.quarter, ini1.dueDate], ["Reduzir cancelamento", "obj_1", "STLFLIX", "Em andamento", "Q4/2026", "2026-12-01"]);
+  assert.deepEqual(ini1.epicKeys, ["FLIX-1", "FLIX-2"]);
+  assert.equal(krs.find((k) => k.id === "ini_3").objectiveId, "");
+  assert.deepEqual(read(kv, "jira:initiatives"), []);
+  assert.equal(read(kv, "jira:backup:initiatives-before-krs").length, 3);
+});
+
+test("migração para KR é idempotente e não duplica com chamadas simultâneas", async () => {
+  const kv = fakeKv({ "jira:initiatives": [{ id: "ini_1", name: "X", objectiveId: "obj_1", epicKeys: ["A-1"] }] });
+  await Promise.all([runMigrations(kv), runMigrations(kv), runMigrations(kv)]);
+  await runMigrations(kv);
+  assert.equal(read(kv, "jira:key-results").length, 1);
+});
+
+test("roda as duas na ordem: do Roadmap para features, o resto para KR", async () => {
+  const kv = fakeKv({ "jira:initiatives": [
+    { id: "r1", name: "Calculadora", product: "STL Seller", epicKeys: ["SELLER-1"] },
+    { id: "o1", name: "Retenção", product: "STLFLIX", objectiveId: "obj_1", epicKeys: [] },
+  ] });
+  await runMigrations(kv);
+  assert.deepEqual(read(kv, "jira:features").map((f) => f.id), ["r1"]);
+  assert.deepEqual(read(kv, "jira:key-results").map((k) => k.id), ["o1"]);
+  assert.deepEqual(read(kv, "jira:initiatives"), []);
 });

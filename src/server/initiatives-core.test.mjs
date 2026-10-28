@@ -49,29 +49,6 @@ test("update troca status válido, ignora inválido e aceita KR e produto vazios
   assert.equal((await handleUpdate(ini.id, { status: "Sei lá" }, ADMIN, config)).body.status, "Em andamento");
 });
 
-test("iniciativa de OKR antiga (sem produto) continua sendo lida e editada", async () => {
-  const config = fakeConfig();
-  await config.kv.set("jira:initiatives", JSON.stringify([{ id: "init_old", name: "Antiga", product: "", epicKeys: ["IA-1"] }]));
-  const list = (await handleList(config)).body;
-  assert.equal(list[0].name, "Antiga");
-  const u = await handleUpdate("init_old", { status: "Concluída" }, ADMIN, config);
-  assert.equal(u.body.status, "Concluída");
-  assert.deepEqual(u.body.epicKeys, ["IA-1"]);
-});
-
-test("ao listar, as iniciativas do Roadmap (com produto, sem KR) viram features", async () => {
-  const config = fakeConfig();
-  await config.kv.set("jira:initiatives", JSON.stringify([
-    { id: "init_a", name: "Calculadora", product: "STL Seller", epicKeys: ["SELLER-42"] },
-    { id: "init_b", name: "Reduzir cancelamento", product: "STLFLIX", keyResultId: "kr_1", epicKeys: [] },
-  ]));
-  const list = (await handleList(config)).body;
-  assert.deepEqual(list.map((i) => i.id), ["init_b"]);
-  const features = JSON.parse(await config.kv.get("jira:features"));
-  assert.equal(features[0].name, "Calculadora");
-  assert.deepEqual(features[0].epicKeys, ["SELLER-42"]);
-});
-
 test("iniciativa: data de entrega, quarter Q1–Q4/ano e links", async () => {
   const config = fakeConfig();
   const r = await handleCreate({ name: "Reduzir cancelamento", dueDate: "2026-12-15", quarter: "Q4/2026", links: [{ label: "Dash", url: "https://app.amplitude.com/x" }, { url: "javascript:void(0)" }] }, ADMIN, config);
@@ -84,12 +61,16 @@ test("iniciativa: data de entrega, quarter Q1–Q4/ano e links", async () => {
   assert.equal((await handleUpdate(r.body.id, { quarter: "", links: [] }, ADMIN, config)).body.quarter, "");
 });
 
-test("iniciativa ligada ao objetivo, com ou sem KR", async () => {
+
+test("ao listar: as do Roadmap viram features e as de OKR viram Key Results", async () => {
   const config = fakeConfig();
-  const r = await handleCreate({ name: "Reduzir cancelamento", objectiveId: "obj_1", product: "STLFLIX" }, ADMIN, config);
-  assert.equal(r.body.objectiveId, "obj_1");
-  assert.equal(r.body.keyResultId, "");
-  // tem produto e não tem KR, mas tem objetivo: não é iniciativa antiga do Roadmap
-  assert.deepEqual((await handleList(config)).body.map((i) => i.id), [r.body.id]);
-  assert.equal((await handleUpdate(r.body.id, { objectiveId: "" }, ADMIN, config)).body.objectiveId, "");
+  await config.kv.set("jira:initiatives", JSON.stringify([
+    { id: "init_a", name: "Calculadora", product: "STL Seller", epicKeys: ["SELLER-42"] },
+    { id: "init_b", name: "Reduzir cancelamento", product: "STLFLIX", objectiveId: "obj_1", status: "Pausada", quarter: "Q4/2026", epicKeys: ["FLIX-1"] },
+  ]));
+  assert.deepEqual((await handleList(config)).body, []);
+  const features = JSON.parse(await config.kv.get("jira:features"));
+  assert.deepEqual(features.map((f) => f.id), ["init_a"]);
+  const krs = JSON.parse(await config.kv.get("jira:key-results"));
+  assert.deepEqual(krs.map((k) => [k.id, k.objectiveId, k.status, k.quarter, k.epicKeys.join()]), [["init_b", "obj_1", "Pausado", "Q4/2026", "FLIX-1"]]);
 });

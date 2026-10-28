@@ -72,3 +72,75 @@ export async function migrateInitiativesToFeatures(client) {
     throw e;
   }
 }
+
+/* ---------------------------------------------------------------------
+   Segunda migração: Iniciativa e Key Result viraram um item só (Key Result).
+   Cada iniciativa que sobrou (as de OKR) vira um KR do objetivo dela, com o
+   mesmo id; a que já movia um KR soma os épicos, links, quarter e produto a
+   esse KR. Backup em `jira:backup:initiatives-before-krs`.
+   --------------------------------------------------------------------- */
+const KR_FLAG = "jira:migrations:initiatives-to-krs";
+const KEY_RESULTS = "jira:key-results";
+const KR_BACKUP = "jira:backup:initiatives-before-krs";
+const KR_STATUS = { Planejada: "Planejado", "Em andamento": "Em andamento", Pausada: "Pausado", "Concluída": "Concluído", Cancelada: "Cancelado" };
+
+async function waitFlag(client, flag) {
+  for (let i = 0; i < 30; i++) {
+    if ((await client.get(flag)) === "done") return;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
+
+export async function migrateInitiativesToKeyResults(client) {
+  const flag = await client.get(KR_FLAG);
+  if (flag === "done") return;
+  if (flag !== null || (await client.set(KR_FLAG, "running", { NX: true })) !== "OK") {
+    await waitFlag(client, KR_FLAG);
+    return;
+  }
+  try {
+    const initiatives = parse(await client.get(INITIATIVES));
+    const pending = initiatives.filter((i) => !isLegacyRoadmapInitiative(i));
+    if (pending.length) {
+      await client.set(KR_BACKUP, JSON.stringify(initiatives));
+      const krs = parse(await client.get(KEY_RESULTS));
+      const byId = Object.fromEntries(krs.map((k) => [k.id, k]));
+      // Um épico fica num KR só: o primeiro que o tiver fica com ele.
+      const taken = new Set(krs.flatMap((k) => k.epicKeys || []));
+      const created = [];
+      for (const i of pending) {
+        const epicKeys = (i.epicKeys || []).filter((k) => typeof k === "string" && !taken.has(k));
+        epicKeys.forEach((k) => taken.add(k));
+        const links = Array.isArray(i.links) ? i.links : [];
+        const target = i.keyResultId && byId[i.keyResultId];
+        if (target) {
+          target.epicKeys = [...(target.epicKeys || []), ...epicKeys];
+          target.links = [...(target.links || []), ...links.filter((l) => !(target.links || []).some((x) => x.url === l.url))];
+          if (!target.quarter && i.quarter) target.quarter = i.quarter;
+          if (!target.product && i.product) target.product = i.product;
+          if (!target.dueDate && i.dueDate) target.dueDate = i.dueDate;
+          continue;
+        }
+        if (byId[i.id]) continue; // retomada depois de uma falha no meio
+        created.push({
+          id: i.id, name: i.name, objectiveId: i.objectiveId || "", owner: "", product: i.product || "", quarter: i.quarter || "",
+          description: i.description || "", unit: "", baseline: null, target: null, current: null, dueDate: i.dueDate || "",
+          status: KR_STATUS[i.status] || "Em andamento", links, epicKeys, checkins: [],
+          createdBy: i.createdBy || null, createdAt: i.createdAt || new Date().toISOString(), migratedFrom: "initiative",
+        });
+      }
+      await client.set(KEY_RESULTS, JSON.stringify([...krs, ...created]));
+      await client.set(INITIATIVES, JSON.stringify(initiatives.filter(isLegacyRoadmapInitiative)));
+    }
+    await client.set(KR_FLAG, "done");
+  } catch (e) {
+    await client.del(KR_FLAG);
+    throw e;
+  }
+}
+
+/** As duas migrações, na ordem: as do Roadmap viram features, o resto vira KR. */
+export async function runMigrations(client) {
+  await migrateInitiativesToFeatures(client);
+  await migrateInitiativesToKeyResults(client);
+}

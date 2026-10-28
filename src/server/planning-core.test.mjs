@@ -103,10 +103,10 @@ test("experimento: ICE de 1 a 10, status e resultado validados, épico vinculado
 
 test("update não troca nome nem pai obrigatório por vazio", () => {
   const base = { id: "a", name: "Nome", objectiveId: "obj_1" };
-  const next = applyFields("keyResults", base, { name: " ", objectiveId: "", epicKeys: ["X-1"] });
+  const next = applyFields("keyResults", base, { name: " ", objectiveId: "", hypothesis: "não é campo de KR" });
   assert.equal(next.name, "Nome");
   assert.equal(next.objectiveId, "obj_1");
-  assert.equal("epicKeys" in next, false);
+  assert.equal("hypothesis" in next, false);
 });
 
 test("pai com filhos não é apagado; sem filhos, sai", async () => {
@@ -201,4 +201,18 @@ test("KR guarda o responsável", async () => {
   const { obj } = await tree(config);
   const kr = (await handleCreate("keyResults", { name: "Churn", objectiveId: obj.id, owner: " Caroline Araújo " }, ADMIN, config)).body;
   assert.equal(kr.owner, "Caroline Araújo");
+});
+
+test("KR tem produto, quarter, links e épicos (um épico num KR só)", async () => {
+  const config = fakeConfig();
+  const { obj } = await tree(config);
+  const a = (await handleCreate("keyResults", { name: "Churn < 5%", objectiveId: obj.id, product: "STLFLIX", quarter: "Q4/2026", links: [{ url: "https://x.com/dash" }], epicKeys: ["FLIX-1", "FLIX-2"], status: "Planejado" }, ADMIN, config)).body;
+  assert.equal(a.product, "STLFLIX");
+  assert.equal(a.quarter, "Q4/2026");
+  assert.equal(a.status, "Planejado");
+  assert.equal(a.links[0].url, "https://x.com/dash");
+  assert.equal((await handleUpdate("keyResults", a.id, { quarter: "Q9/2026" }, ADMIN, config)).body.quarter, "Q4/2026");
+  await handleCreate("keyResults", { name: "Outro", objectiveId: obj.id, epicKeys: ["FLIX-2"] }, ADMIN, config);
+  const list = (await handleList("keyResults", config)).body;
+  assert.deepEqual(list.find((k) => k.id === a.id).epicKeys, ["FLIX-1"]);
 });

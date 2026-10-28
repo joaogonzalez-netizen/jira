@@ -22,7 +22,7 @@
  */
 import { createClient } from "redis";
 import { loadConfig as loadAuthConfig, readCookie, resolveSession, AUTH_COOKIE } from "./auth-core.js";
-import { migrateInitiativesToFeatures } from "./legacy-migration.js";
+import { runMigrations } from "./legacy-migration.js";
 import { baseReady } from "./workspace.js";
 import { QUARTER_RE, cleanLinks } from "./links.js";
 
@@ -112,7 +112,7 @@ function genId() {
 }
 
 export async function handleList(config) {
-  await migrateInitiativesToFeatures(await ensureConnected(config));
+  await runMigrations(await ensureConnected(config));
   return { status: 200, body: await readAll(config) };
 }
 

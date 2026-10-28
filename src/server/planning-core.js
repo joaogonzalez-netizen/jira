@@ -15,9 +15,9 @@
  * da Vercel (`api/planning.js`), por isso não conhece `req` nem `res`.
  */
 import { loadConfig as loadInitiativesConfig, resolveSessionFromCookie } from "./initiatives-core.js";
-import { migrateInitiativesToFeatures } from "./legacy-migration.js";
+import { runMigrations } from "./legacy-migration.js";
 import { baseReady } from "./workspace.js";
-import { cleanLinks } from "./links.js";
+import { QUARTER_RE, cleanLinks } from "./links.js";
 
 export { resolveSessionFromCookie };
 
@@ -41,6 +41,8 @@ export const KINDS = {
       status: { type: "enum", options: ["Em andamento", "Concluído", "Cancelado"], default: "Em andamento" },
     },
   },
+  // Key Result = o número que prova o objetivo E o trabalho que o move
+  // (épicos do Jira) — Iniciativa virou parte dele.
   keyResults: {
     key: "jira:key-results",
     prefix: "kr",
@@ -49,13 +51,17 @@ export const KINDS = {
     fields: {
       objectiveId: { type: "ref", required: true },
       owner: { type: "text" }, // responsável (nome como aparece no Jira)
+      product: { type: "text" },
+      quarter: { type: "quarter" }, // Q1/2026
+      links: { type: "links" },
+      epicKeys: { type: "list" }, // um épico fica num KR só
       description: { type: "text" },
       unit: { type: "text" }, // %, R$, usuários…
       baseline: { type: "number" },
       target: { type: "number" },
       current: { type: "number" },
       dueDate: { type: "date" },
-      status: { type: "enum", options: ["Em andamento", "Concluído", "Cancelado"], default: "Em andamento" },
+      status: { type: "enum", options: ["Planejado", "Em andamento", "Pausado", "Concluído", "Cancelado"], default: "Em andamento" },
       checkins: checkins("current"),
     },
   },
@@ -227,6 +233,8 @@ function coerce(spec, value) {
       return coerceCheckins(value);
     case "links":
       return cleanLinks(value);
+    case "quarter":
+      return typeof value === "string" && (value === "" || QUARTER_RE.test(value)) ? value : undefined;
     case "list":
       return Array.isArray(value) ? [...new Set(value.filter((v) => typeof v === "string" && v))] : undefined;
     default:
@@ -261,10 +269,11 @@ function defaults(kind) {
   return out;
 }
 
-/** Põe `item` na lista (no índice `at`, ou no fim). Em Features, um épico fica
-    numa só: os épicos de `item` saem das outras — é o que o Roadmap agrupa. */
+/** Põe `item` na lista (no índice `at`, ou no fim). Em Features e Key Results
+    um épico fica num só: os épicos de `item` saem dos outros. */
+const EXCLUSIVE_EPICS = new Set(["features", "keyResults"]);
 function releaseEpics(kind, others, item, at = others.length) {
-  const mine = kind === "features" ? new Set(item.epicKeys || []) : null;
+  const mine = EXCLUSIVE_EPICS.has(kind) ? new Set(item.epicKeys || []) : null;
   const rest = mine && mine.size
     ? others.map((o) => ((o.epicKeys || []).some((k) => mine.has(k)) ? { ...o, epicKeys: o.epicKeys.filter((k) => !mine.has(k)) } : o))
     : others;
@@ -273,7 +282,7 @@ function releaseEpics(kind, others, item, at = others.length) {
 
 export async function handleList(kind, config) {
   if (!isKind(kind)) return unknownKind();
-  await migrateInitiativesToFeatures(await ensureConnected(config));
+  await runMigrations(await ensureConnected(config));
   return { status: 200, body: await readAll(config, kind) };
 }
 
