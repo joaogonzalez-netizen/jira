@@ -4130,9 +4130,9 @@ function ProductOppTree({ open }) {
           );
         })}
       </div>
+      <div style={{ fontSize: 12, color: T.ink2, marginBottom: 6 }}>Árvore {product}</div>
       <div ref={scrollRef} className="pp-scroll ost" style={{ ...cardStyle(T), overflowX: "auto", padding: "18px 12px 22px", "--ost-line": T.borderStrong }}>
         <style>{OST_CSS}</style>
-        <div style={{ fontSize: 12, color: T.ink2, marginBottom: 10 }}>Árvore {product}</div>
         <ul>
           <li>
             <div style={{ background: root, color: "#fff", borderRadius: 10, padding: "10px 22px", textAlign: "center", boxShadow: T.cardShadow }}>
