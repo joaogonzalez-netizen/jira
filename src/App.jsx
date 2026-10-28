@@ -3933,53 +3933,6 @@ function ExperimentMeta({ x }) {
   );
 }
 
-function ExperimentRow({ x, open, indent = 18 }) {
-  const { T } = useTheme();
-  return (
-    <div onClick={() => open("experiments", x)} className="pp-card" style={{ marginLeft: indent, display: "flex", alignItems: "center", gap: 8, padding: "5px 8px", borderRadius: 6, cursor: "pointer", flexWrap: "wrap", border: "1px solid transparent" }}>
-      <FlaskConical size={13} color={ACCENT} />
-      <span style={{ fontSize: 12.5, color: T.ink0 }}>{x.name}</span>
-      <StatusBadge tone={statusTone(x.status)}>{x.status}</StatusBadge>
-      <ExperimentMeta x={x} />
-    </div>
-  );
-}
-
-function OpportunityNode({ opp, depth, open }) {
-  const { T } = useTheme();
-  const { items } = usePlanning();
-  const idx = usePlanIndex();
-  const children = items.opportunities.filter((o) => o.parentId === opp.id);
-  const solutions = idx.solutionsOfOpp(opp.id);
-  const loose = idx.looseExperimentsOfOpp(opp.id);
-  return (
-    <div style={{ marginLeft: depth ? 18 : 0, paddingLeft: 12, borderLeft: `2px solid ${T.border2}` }}>
-      <div className="flex items-center" style={{ gap: 8, padding: "6px 0", flexWrap: "wrap" }}>
-        <Lightbulb size={14} color={SOON_COLOR} />
-        <button onClick={() => open("opportunities", opp)} style={{ ...linkBtn, color: T.ink0, fontSize: 13 }}>{opp.name}</button>
-        <StatusBadge tone={statusTone(opp.status)}>{opp.status}</StatusBadge>
-        <LinkChips links={opp.links} />
-        <AddLink label="sub-oportunidade" onClick={() => open("opportunities", null, { keyResultId: opp.keyResultId, parentId: opp.id, status: "Aberta" })} />
-        <AddLink label="solução" onClick={() => open("solutions", null, { opportunityId: opp.id, status: "Ideia" })} />
-        <AddLink label="experimento" onClick={() => open("experiments", null, { opportunityId: opp.id, solutionId: "", status: "Ideia", outcome: "" })} />
-      </div>
-      {solutions.map((sol) => (
-        <div key={sol.id} style={{ marginLeft: 18 }}>
-          <div className="flex items-center" style={{ gap: 8, padding: "4px 8px", flexWrap: "wrap" }}>
-            <Puzzle size={13} color={DONE_COLOR} />
-            <button onClick={() => open("solutions", sol)} style={{ ...linkBtn, color: T.ink0, fontSize: 12.5 }}>{sol.name}</button>
-            <StatusBadge tone={statusTone(sol.status)}>{sol.status}</StatusBadge>
-            <AddLink label="experimento" onClick={() => open("experiments", null, { opportunityId: opp.id, solutionId: sol.id, status: "Ideia", outcome: "" })} />
-          </div>
-          {idx.experimentsOfSolution(sol.id).map((x) => <ExperimentRow key={x.id} x={x} open={open} />)}
-        </div>
-      ))}
-      {loose.map((x) => <ExperimentRow key={x.id} x={x} open={open} />)}
-      {depth < 6 && children.map((c) => <OpportunityNode key={c.id} opp={c} depth={depth + 1} open={open} />)}
-    </div>
-  );
-}
-
 /* ---- Diagrama: a Opportunity Solution Tree desenhada de cima para baixo ---- */
 
 const OST_COLOR = "#7c3aed";
@@ -4084,6 +4037,138 @@ function OstDiagram({ open }) {
   );
 }
 
+/* ---- Árvore por produto: Produto → Outcome (Key Result) → hipóteses ---- */
+
+const OUTCOME_COLORS = ["#7c3aed", "#00955a", "#f54300", "#5166e6", "#d6409f", "#0f9fa8", "#c28a00"];
+const NO_PRODUCT = "Sem produto";
+
+/** Produto em que o KR aparece na árvore: o do KR, senão o do objetivo, senão o dos épicos. */
+function krTreeProduct(kr, idx) {
+  const obj = idx.objectiveById[kr.objectiveId];
+  return kr.product || (obj && obj.product) || idx.productsOfKr(kr)[0] || NO_PRODUCT;
+}
+
+function HypothesisCard({ opp, color, open }) {
+  const { T } = useTheme();
+  const { items } = usePlanning();
+  const idx = usePlanIndex();
+  const subs = items.opportunities.filter((o) => o.parentId === opp.id);
+  const solutions = idx.solutionsOfOpp(opp.id);
+  const loose = idx.looseExperimentsOfOpp(opp.id);
+  const line = (key, icon, label, onClick) => (
+    <button key={key} onClick={onClick} style={{ ...linkBtn, display: "flex", alignItems: "center", gap: 5, color: T.ink1, fontSize: 11.5, fontWeight: 400, whiteSpace: "normal", textAlign: "left" }}>
+      {icon}<span>{label}</span>
+    </button>
+  );
+  return (
+    <div className="pp-card" onClick={() => open("opportunities", opp)} style={{ background: T.bg0, border: `1px solid ${T.border2}`, borderRadius: 8, boxShadow: T.cardShadow, padding: "10px 12px", cursor: "pointer" }}>
+      <span style={{ display: "block", width: 22, height: 3, borderRadius: 2, background: color, marginBottom: 8 }} />
+      <div style={{ fontSize: 13, fontWeight: 600, color: T.ink0, lineHeight: 1.3 }}>{opp.name}</div>
+      {opp.description && <div style={{ fontSize: 11.5, color: T.ink1, lineHeight: 1.45, marginTop: 6, whiteSpace: "pre-line" }}>{opp.description}</div>}
+      {opp.links && opp.links.length > 0 && (
+        <div style={{ fontSize: 11, lineHeight: 1.5, marginTop: 6 }}>
+          {opp.links.map((l, i) => (
+            <span key={l.url}>
+              {i > 0 && <span style={{ color: T.ink2 }}> · </span>}
+              <a href={l.url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} title={l.url} style={{ color, textDecoration: "none" }}>{l.label}</a>
+            </span>
+          ))}
+        </div>
+      )}
+      {(subs.length > 0 || solutions.length > 0 || loose.length > 0) && (
+        <div onClick={(e) => e.stopPropagation()} style={{ display: "flex", flexDirection: "column", gap: 3, marginTop: 8, paddingTop: 8, borderTop: `1px dashed ${T.border2}` }}>
+          {subs.map((o) => line(o.id, <Lightbulb size={11} color={SOON_COLOR} />, o.name, () => open("opportunities", o)))}
+          {solutions.map((sol) => line(sol.id, <Puzzle size={11} color={DONE_COLOR} />, `${sol.name}${idx.experimentsOfSolution(sol.id).length ? ` · ${idx.experimentsOfSolution(sol.id).length} exp.` : ""}`, () => open("solutions", sol)))}
+          {loose.map((x) => line(x.id, <FlaskConical size={11} color={ACCENT} />, x.name, () => open("experiments", x)))}
+        </div>
+      )}
+      <div className="flex items-center justify-between" onClick={(e) => e.stopPropagation()} style={{ gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+        <StatusBadge tone={statusTone(opp.status)}>{opp.status}</StatusBadge>
+        <span className="flex items-center" style={{ gap: 8 }}>
+          <AddLink label="solução" onClick={() => open("solutions", null, { opportunityId: opp.id, status: "Ideia" })} />
+          <AddLink label="experimento" onClick={() => open("experiments", null, { opportunityId: opp.id, solutionId: "", status: "Ideia", outcome: "" })} />
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function ProductOppTree({ open }) {
+  const { T, PRODUCT_STYLE } = useTheme();
+  const { items } = usePlanning();
+  const idx = usePlanIndex();
+  const krs = items.keyResults.filter((k) => k.status !== "Cancelado");
+  const groups = {};
+  krs.forEach((k) => { (groups[krTreeProduct(k, idx)] ||= []).push(k); });
+  const oppCount = (list) => list.reduce((n, k) => n + idx.oppsOfKr(k.id).length, 0);
+  const products = Object.keys(groups).sort((a, b) => (oppCount(groups[b]) > 0) - (oppCount(groups[a]) > 0) || (a === NO_PRODUCT) - (b === NO_PRODUCT) || a.localeCompare(b));
+  const [picked, setPicked] = useState(null);
+  const product = picked && groups[picked] ? picked : products[0];
+  const scrollRef = useRef(null);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollLeft = Math.max(0, (el.scrollWidth - el.clientWidth) / 2);
+  }, [product]);
+  if (!product) return <Muted>A árvore começa num Key Result com produto. Cadastre um objetivo e seus KRs em Objetivos.</Muted>;
+
+  const outcomes = groups[product];
+  const style = PRODUCT_STYLE[product];
+  const root = product === NO_PRODUCT ? T.ink2 : style.primary;
+  const total = oppCount(outcomes);
+
+  return (
+    <div>
+      <div className="flex items-center" style={{ gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
+        {products.map((p) => {
+          const on = p === product;
+          const c = p === NO_PRODUCT ? T.ink2 : PRODUCT_STYLE[p].primary;
+          return (
+            <button key={p} onClick={() => setPicked(p)} style={{ ...btnStyle(T), gap: 6, background: on ? `${c}1f` : T.bg1, color: on ? T.ink0 : T.ink1, borderColor: on ? c : T.border2 }}>
+              <span style={{ width: 8, height: 8, borderRadius: 999, background: c }} />{p}
+              <span style={{ fontSize: 11, color: T.ink2 }}>{oppCount(groups[p])}</span>
+            </button>
+          );
+        })}
+      </div>
+      <div ref={scrollRef} className="pp-scroll ost" style={{ ...cardStyle(T), overflowX: "auto", padding: "18px 12px 22px", "--ost-line": T.borderStrong }}>
+        <style>{OST_CSS}</style>
+        <div style={{ fontSize: 12, color: T.ink2, marginBottom: 10 }}>Árvore {product}</div>
+        <ul>
+          <li>
+            <div style={{ background: root, color: "#fff", borderRadius: 10, padding: "10px 22px", textAlign: "center", boxShadow: T.cardShadow }}>
+              <div style={{ fontSize: 15, fontWeight: 700, letterSpacing: 0.3 }}>{product}</div>
+              <div style={{ fontSize: 11, opacity: 0.85 }}>{outcomes.length} outcome{outcomes.length === 1 ? "" : "s"} · {total} hipótese{total === 1 ? "" : "s"}</div>
+            </div>
+            <ul>
+              {outcomes.map((kr, i) => {
+                const color = OUTCOME_COLORS[i % OUTCOME_COLORS.length];
+                const roots = idx.oppsOfKr(kr.id).filter((o) => !o.parentId || !idx.oppById[o.parentId]);
+                const pct = krProgress(kr);
+                return (
+                  <li key={kr.id}>
+                    <button onClick={() => open("keyResults", kr)} title="Editar Key Result" style={{ maxWidth: 260, border: "none", borderRadius: 999, padding: "5px 14px", background: `${color}1f`, color, fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: "'Inter Tight', sans-serif" }}>
+                      {kr.name}{pct !== null ? ` · ${pct}%` : ""}
+                    </button>
+                    <span style={{ width: 2, height: 14, background: T.borderStrong }} />
+                    <div style={{ width: 280, display: "flex", flexDirection: "column", gap: 10, padding: 10, border: `1px dashed ${color}80`, borderRadius: 10, background: T.bg1 }}>
+                      {roots.map((o) => <HypothesisCard key={o.id} opp={o} color={color} open={open} />)}
+                      {roots.length === 0 && <Muted style={{ textAlign: "center" }}>Nenhuma hipótese ainda.</Muted>}
+                      <div style={{ textAlign: "center" }}>
+                        <AddLink label="oportunidade" onClick={() => open("opportunities", null, { keyResultId: kr.id, parentId: "", status: "Aberta" })} />
+                      </div>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </li>
+        </ul>
+      </div>
+      <Muted style={{ marginTop: 8 }}>Cada coluna é um outcome (Key Result) do produto. O produto vem do KR; sem ele, do objetivo.</Muted>
+    </div>
+  );
+}
+
 function OpportunitiesScreen() {
   const { T } = useTheme();
   const { items, status } = usePlanning();
@@ -4099,7 +4184,7 @@ function OpportunitiesScreen() {
 
   return (
     <ScreenShell>
-      <PageTitle title="Oportunidades" sub="Árvore de oportunidades por Key Result: oportunidade → solução → experimento de growth, com métrica e prazo">
+      <PageTitle title="Oportunidades" sub="Árvore por produto: produto → outcome (Key Result) → hipóteses, soluções e experimentos de growth">
         {tabBtn("tree", "Árvore")}
         {tabBtn("diagram", "Diagrama")}
         {tabBtn("board", "Experimentos")}
@@ -4110,30 +4195,7 @@ function OpportunitiesScreen() {
       </PageTitle>
 
       {tab === "tree" ? (
-        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          {items.keyResults.length === 0 && <Muted>A árvore começa num Key Result. Cadastre um objetivo e seus KRs em Objetivos.</Muted>}
-          {items.keyResults.map((kr) => {
-            const roots = idx.oppsOfKr(kr.id).filter((o) => !o.parentId || !idx.oppById[o.parentId]);
-            const obj = idx.objectiveById[kr.objectiveId];
-            return (
-              <div key={kr.id} style={cardStyle(T)}>
-                <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(200px, 320px) auto", gap: 12, alignItems: "center", marginBottom: 8 }}>
-                  <div style={{ minWidth: 0 }}>
-                    <div className="flex items-center" style={{ gap: 8 }}>
-                      <Target size={15} color={ACCENT} />
-                      <span style={{ ...ellipsis, fontSize: 14, fontWeight: 600, color: T.ink0 }}>{kr.name}</span>
-                    </div>
-                    {obj && <div style={{ fontSize: 11.5, color: T.ink2, marginTop: 2 }}>{obj.name}</div>}
-                  </div>
-                  <KrProgress kr={kr} />
-                  <NewButton label="Oportunidade" onClick={() => open("opportunities", null, { keyResultId: kr.id, parentId: "", status: "Aberta" })} />
-                </div>
-                {roots.map((o) => <OpportunityNode key={o.id} opp={o} depth={0} open={open} />)}
-                {roots.length === 0 && <Muted>Nenhuma oportunidade mapeada para este KR.</Muted>}
-              </div>
-            );
-          })}
-        </div>
+        <ProductOppTree open={open} />
       ) : tab === "diagram" ? (
         <OstDiagram open={open} />
       ) : (
