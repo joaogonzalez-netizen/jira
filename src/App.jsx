@@ -2754,12 +2754,12 @@ function AuthGate({ children }) {
 }
 
 /* =====================================================================
-   PLANEJAMENTO — OKRs, Iniciativas, Oportunidades/Experimentos, Épicos e
-   Produtos/Features.
-     Objetivo → Key Result → Iniciativas (→ épicos do Jira)
+   PLANEJAMENTO — Objetivos, Key Results, Oportunidades/Experimentos,
+   Épicos e Produtos/Features.
+     Objetivo → Key Result (métrica + épicos do Jira que o movem)
                           → Oportunidades → Experimentos (→ épico)
      Produto (Jira) → Features (→ épicos)
-   Iniciativas vêm de /api/initiatives (a mesma lista do Roadmap); o resto de
+   Tudo vem de
    /api/planning (Redis). Produtos e épicos vêm da planilha/Jira.
    ===================================================================== */
 
@@ -2768,8 +2768,8 @@ const ACCENT = "#5166e6";
 const DONE_COLOR = "#00aa6c";
 const LATE_COLOR = "#e5484d";
 const SOON_COLOR = "#d98a00";
-const INITIATIVE_STATUSES = ["Em andamento", "Planejada", "Pausada", "Concluída", "Cancelada"];
 const EXPERIMENT_STATUSES = ["Ideia", "Rodando", "Analisando", "Concluído"];
+const KR_STATUSES = ["Em andamento", "Planejado", "Pausado", "Concluído", "Cancelado"];
 
 const isEpicDone = (e) => e.status === "Done" || e.stage === "Concluído";
 function epicBucket(e) {
@@ -2817,9 +2817,9 @@ function dueState(item, doneStatus) {
 
 const PLANNING_LOAD = ["objectives", "keyResults", "opportunities", "experiments", "features"];
 
-/** Espelha a regra do servidor: em Features um épico fica numa só. */
+/** Espelha a regra do servidor: em Features e Key Results um épico fica num só. */
 function releaseLocalEpics(kind, list, item) {
-  if (kind !== "features" || !(item.epicKeys || []).length) return list;
+  if ((kind !== "features" && kind !== "keyResults") || !(item.epicKeys || []).length) return list;
   const mine = new Set(item.epicKeys);
   return list.map((o) => (o.id !== item.id && (o.epicKeys || []).some((k) => mine.has(k)) ? { ...o, epicKeys: o.epicKeys.filter((k) => !mine.has(k)) } : o));
 }
@@ -2940,31 +2940,26 @@ function PlanningProvider({ children }) {
 function usePlanIndex() {
   const { epics, tasks } = useData();
   const { items } = usePlanning();
-  const { initiatives } = useInitiatives();
   return useMemo(() => {
     const byId = (list) => Object.fromEntries(list.map((x) => [x.id, x]));
     const epicByKey = Object.fromEntries(epics.map((e) => [e.key, e]));
     const epicsOf = (keys) => (keys || []).map((k) => epicByKey[k]).filter(Boolean);
-    const initiativeByEpic = {};
-    initiatives.forEach((i) => (i.epicKeys || []).forEach((k) => { initiativeByEpic[k] = i; }));
+    const krByEpic = {};
+    items.keyResults.forEach((kr) => (kr.epicKeys || []).forEach((k) => { krByEpic[k] = kr; }));
     const featuresByEpic = {};
     items.features.forEach((f) => (f.epicKeys || []).forEach((k) => { (featuresByEpic[k] = featuresByEpic[k] || []).push(f); }));
-    const productsOfInitiative = (i) => [...new Set([i.product, ...epicsOf(i.epicKeys).map((e) => e.project)].filter(Boolean))];
+    const productsOfKr = (kr) => [...new Set([kr.product, ...epicsOf(kr.epicKeys).map((e) => e.project)].filter(Boolean))];
     const issuesByEpic = {};
     (tasks || []).forEach((t) => { if (t.parent) (issuesByEpic[t.parent] = issuesByEpic[t.parent] || []).push(t); });
     const issuesOf = (keys) => (keys || []).flatMap((k) => issuesByEpic[k] || []);
     return {
-      epicByKey, epicsOf, initiativeByEpic, featuresByEpic, productsOfInitiative, issuesByEpic, issuesOf,
+      epicByKey, epicsOf, krByEpic, featuresByEpic, productsOfKr, issuesByEpic, issuesOf,
       objectiveById: byId(items.objectives), krById: byId(items.keyResults), oppById: byId(items.opportunities),
       krsOfObjective: (id) => items.keyResults.filter((k) => k.objectiveId === id),
-      // Iniciativa pertence ao objetivo dela — ou, nas antigas, ao objetivo do KR que move.
-      objectiveOfInitiative: (i) => byId(items.objectives)[i.objectiveId || (byId(items.keyResults)[i.keyResultId] || {}).objectiveId] || null,
-      initiativesOfObjective: (id) => initiatives.filter((i) => (i.objectiveId || (byId(items.keyResults)[i.keyResultId] || {}).objectiveId) === id),
-      initiativesOfKr: (id) => initiatives.filter((i) => i.keyResultId === id),
       oppsOfKr: (id) => items.opportunities.filter((o) => o.keyResultId === id),
       experimentsOfOpp: (id) => items.experiments.filter((x) => x.opportunityId === id),
     };
-  }, [epics, tasks, items, initiatives]);
+  }, [epics, tasks, items]);
 }
 
 /* ---- peças visuais ---- */
@@ -3287,40 +3282,25 @@ const FORMS = {
   keyResults: {
     title: "Key Result",
     fields: [
-      { key: "name", label: "Key Result", placeholder: "Ex.: DAU/MAU" },
-      { key: "objectiveId", label: "Objetivo", type: "select", required: true, options: (c) => optionsOf(c.objectives) },
+      { key: "name", label: "Key Result", placeholder: "Ex.: Reduzir o cancelamento mensal" },
+      {
+        key: "objectiveId", label: "Objetivo", type: "select", required: true, options: (c) => optionsOf(c.objectives),
+        // o produto do objetivo vira o padrão do KR
+        derive: (c, v, d) => { const o = c.objectives.find((x) => x.id === v); return o && !d.product ? { product: o.product || "" } : {}; },
+      },
       { key: "owner", label: "Responsável", type: "select", half: true, options: (c, d) => [{ value: "", label: "—" }, ...[...new Set([...(d.owner ? [d.owner] : []), ...c.people])].sort().map((n) => ({ value: n, label: n }))] },
+      { key: "product", label: "Produto", type: "select", half: true, options: (c, d) => [{ value: "", label: "—" }, ...[...new Set([...(d.product ? [d.product] : []), ...c.products])].map((x) => ({ value: x, label: x }))] },
+      { key: "status", label: "Status", type: "select", half: true, options: () => statusOptions(KR_STATUSES) },
+      { key: "quarter", label: "Quarter", type: "quarter", half: true },
       { key: "baseline", label: "Início", type: "number", third: true },
       { key: "current", label: "Atual", type: "number", third: true },
       { key: "target", label: "Meta", type: "number", third: true },
       { key: "unit", label: "Unidade", placeholder: "%, R$, usuários…", half: true },
       { key: "dueDate", label: "Prazo", type: "date", half: true },
-      { key: "status", label: "Status", type: "select", options: () => statusOptions(["Em andamento", "Concluído", "Cancelado"]) },
-      { key: "description", label: "Como medir", type: "textarea" },
-      { key: "checkins", label: "Acompanhamento semanal", type: "checkins", mirror: "current" },
-    ],
-  },
-  initiatives: {
-    title: "Iniciativa",
-    fields: [
-      { key: "name", label: "Iniciativa", placeholder: "Ex.: Reduzir cancelamento" },
-      { key: "objectiveId", label: "Objetivo", type: "select", reset: ["keyResultId"], options: (c) => [{ value: "", label: "Nenhum" }, ...optionsOf(c.objectives)] },
-      {
-        key: "keyResultId", label: "Key Result que ela move (opcional)", type: "select",
-        options: (c, d) => {
-          const krs = c.keyResults.filter((k) => !d.objectiveId || k.objectiveId === d.objectiveId);
-          return [{ value: "", label: krs.length ? "Nenhum" : "Nenhum (o objetivo ainda não tem KR)" }, ...krs.map((k) => ({ value: k.id, label: k.name }))];
-        },
-        // escolher o KR já diz o objetivo
-        derive: (c, v) => { const k = c.keyResults.find((x) => x.id === v); return k ? { objectiveId: k.objectiveId } : {}; },
-      },
-      { key: "status", label: "Status", type: "select", half: true, options: () => statusOptions(INITIATIVE_STATUSES) },
-      { key: "product", label: "Produto principal", type: "select", half: true, options: (c) => [{ value: "", label: "Vários / nenhum" }, ...c.products.map((p) => ({ value: p, label: p }))] },
-      { key: "dueDate", label: "Data de entrega", type: "date", half: true },
-      { key: "quarter", label: "Quarter", type: "quarter", half: true },
-      { key: "description", label: "Descrição", type: "textarea" },
+      { key: "description", label: "Descrição / como medir", type: "textarea" },
       { key: "links", label: "Links (estudos, dashboards)", type: "links" },
-      { key: "epicKeys", label: "Épicos do Jira", type: "epics", pool: (c) => c.epics },
+      { key: "epicKeys", label: "Épicos do Jira que movem este KR", type: "epics", pool: (c) => c.epics },
+      { key: "checkins", label: "Acompanhamento semanal", type: "checkins", mirror: "current" },
     ],
   },
   opportunities: {
@@ -3512,7 +3492,6 @@ function EditorDrawer({ editor, onClose }) {
   const { T } = useTheme();
   const { canCreateCard } = useAuth();
   const planning = usePlanning();
-  const inits = useInitiatives();
   const { epics } = useData();
   const products = useProducts();
   const idx = usePlanIndex();
@@ -3524,7 +3503,7 @@ function EditorDrawer({ editor, onClose }) {
   const ro = !canCreateCard;
   const { tasks } = useData();
   const people = useMemo(() => [...new Set([...epics, ...(tasks || [])].flatMap((x) => [x.assignee, x.reporter]).filter(Boolean))].sort(), [epics, tasks]);
-  const ctx = { ...planning.items, initiatives: inits.initiatives, epics, products, people, objectiveById: idx.objectiveById };
+  const ctx = { ...planning.items, epics, products, people, objectiveById: idx.objectiveById };
 
   const save = async () => {
     if (!String(draft.name || "").trim()) { setError("Dê um nome."); return; }
@@ -3533,18 +3512,7 @@ function EditorDrawer({ editor, onClose }) {
     const payload = {};
     form.fields.forEach((f) => { if (f.key in draft) payload[f.key] = draft[f.key]; });
     setBusy(true);
-    let r;
-    if (kind === "initiatives") {
-      if (item) r = await inits.updateInitiative(item.id, payload);
-      else {
-        r = await inits.createInitiative(payload.name, payload.product || "", payload);
-        if (r.ok && (payload.epicKeys || []).length) r = await inits.updateInitiative(r.initiative.id, { epicKeys: payload.epicKeys });
-      }
-      // Um épico só cabe numa iniciativa: o servidor tira dos outros; relê a lista.
-      if (r.ok && payload.epicKeys) inits.reload();
-    } else {
-      r = item ? await planning.update(kind, item.id, payload) : await planning.create(kind, payload);
-    }
+    const r = item ? await planning.update(kind, item.id, payload) : await planning.create(kind, payload);
     setBusy(false);
     if (r.ok) onClose(); else setError(r.message || "Não foi possível salvar.");
   };
@@ -3552,7 +3520,7 @@ function EditorDrawer({ editor, onClose }) {
   const del = async () => {
     if (!window.confirm(`Excluir "${item.name}"?`)) return;
     setBusy(true);
-    const r = kind === "initiatives" ? await inits.deleteInitiative(item.id) : await planning.remove(kind, item.id);
+    const r = await planning.remove(kind, item.id);
     setBusy(false);
     if (r.ok) onClose(); else setError(r.message || "Não foi possível excluir.");
   };
@@ -3566,7 +3534,7 @@ function EditorDrawer({ editor, onClose }) {
             <FormInput field={f} value={draft[f.key]} onChange={(v) => setDraft((d) => ({
               ...d, [f.key]: v,
               ...(f.reset ? Object.fromEntries(f.reset.map((k) => [k, ""])) : {}),
-              ...(f.derive ? f.derive(ctx, v) : {}),
+              ...(f.derive ? f.derive(ctx, v, d) : {}),
               ...(f.mirror && v.length ? { [f.mirror]: v[v.length - 1].value } : {}),
             }))} ctx={ctx} draft={draft} disabled={ro} />
           </div>
@@ -3635,20 +3603,19 @@ function Kpi({ label, value, tone }) {
 function OverviewScreen() {
   const { T } = useTheme();
   const { items, status } = usePlanning();
-  const { initiatives } = useInitiatives();
   const idx = usePlanIndex();
   const [product, setProduct] = useState("all");
   const [open, editorNode] = useEditor();
   if (status === "error") return <PlanningLoadError />;
 
   const inProduct = (prods) => product === "all" || prods.includes(product);
-  const objectiveProducts = (o) => [o.product, ...idx.initiativesOfObjective(o.id).flatMap(idx.productsOfInitiative)].filter(Boolean);
+  const objectiveProducts = (o) => [o.product, ...idx.krsOfObjective(o.id).flatMap(idx.productsOfKr)].filter(Boolean);
   const objectives = items.objectives
     .filter((o) => o.status !== "Cancelado" && inProduct(objectiveProducts(o)))
     .map((o) => ({ o, krs: idx.krsOfObjective(o.id) }));
-  const activeInitiatives = initiatives
-    .filter((i) => i.status !== "Cancelada" && inProduct(idx.productsOfInitiative(i)))
-    .sort((a, b) => INITIATIVE_STATUSES.indexOf(a.status || "Planejada") - INITIATIVE_STATUSES.indexOf(b.status || "Planejada"));
+  const activeKrs = items.keyResults
+    .filter((k) => k.status !== "Cancelado" && inProduct(idx.productsOfKr(k)))
+    .sort((a, b) => KR_STATUSES.indexOf(a.status) - KR_STATUSES.indexOf(b.status));
   const expProducts = (x) => (x.epicKey && idx.epicByKey[x.epicKey] ? [idx.epicByKey[x.epicKey].project] : []);
   const experiments = items.experiments.filter((x) => product === "all" || expProducts(x).includes(product));
   const watch = experiments.filter((x) => dueState(x, "Concluído")).sort((a, b) => a.dueDate.localeCompare(b.dueDate));
@@ -3667,7 +3634,7 @@ function OverviewScreen() {
       <div className="flex" style={{ gap: 10, flexWrap: "wrap", marginBottom: 20 }}>
         <Kpi label="Objetivos ativos" value={objectives.length} />
         <Kpi label="Key Results atingidos" value={`${krsDone}/${allKrs.length}`} tone={allKrs.length && krsDone === allKrs.length ? "done" : null} />
-        <Kpi label="Iniciativas em andamento" value={activeInitiatives.filter((i) => i.status === "Em andamento").length} />
+        <Kpi label="Key Results em andamento" value={activeKrs.filter((k) => k.status === "Em andamento").length} />
         <Kpi label="Experimentos rodando" value={experiments.filter((x) => x.status === "Rodando").length} />
         <Kpi label="Experimentos atrasados" value={late} tone={late ? "late" : null} />
         <Kpi label="Check-ins da semana pendentes" value={pendingCheckins} tone={pendingCheckins ? "late" : "done"} />
@@ -3707,19 +3674,19 @@ function OverviewScreen() {
 
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.5fr) minmax(0, 1fr)", gap: 16, alignItems: "start" }}>
         <div>
-          <SectionTitleRow title="Iniciativas e épicos" />
+          <SectionTitleRow title="Key Results e épicos" />
           <div style={{ ...cardStyle(T), padding: 0 }}>
-            {activeInitiatives.map((i, n) => (
-              <div key={i.id} onClick={() => open("initiatives", i)} className="pp-card" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.2fr) minmax(0, 1fr) 110px", gap: 12, alignItems: "center", padding: "10px 14px", borderTop: n ? `1px solid ${T.border2}` : "none", cursor: "pointer" }}>
+            {activeKrs.map((k, n) => (
+              <div key={k.id} onClick={() => open("keyResults", k)} className="pp-card" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.2fr) minmax(0, 1fr) 110px", gap: 12, alignItems: "center", padding: "10px 14px", borderTop: n ? `1px solid ${T.border2}` : "none", cursor: "pointer" }}>
                 <div style={{ minWidth: 0 }}>
-                  <div style={{ ...ellipsis, fontSize: 12.5, fontWeight: 500, color: T.ink0 }}>{i.name}</div>
-                  <div style={{ ...ellipsis, fontSize: 11, color: T.ink2 }}>{idx.objectiveOfInitiative(i) ? idx.objectiveOfInitiative(i).name : "sem objetivo"}</div>
+                  <div style={{ ...ellipsis, fontSize: 12.5, fontWeight: 500, color: T.ink0 }}>{k.name}</div>
+                  <div style={{ ...ellipsis, fontSize: 11, color: T.ink2 }}>{idx.objectiveById[k.objectiveId] ? idx.objectiveById[k.objectiveId].name : "sem objetivo"}</div>
                 </div>
-                <IssueBuckets issues={idx.issuesOf(i.epicKeys)} />
-                <span style={{ justifySelf: "end" }}><StatusBadge tone={statusTone(i.status)}>{i.status || "Planejada"}</StatusBadge></span>
+                <IssueBuckets issues={idx.issuesOf(k.epicKeys)} />
+                <span style={{ justifySelf: "end" }}><StatusBadge tone={statusTone(k.status)}>{k.status}</StatusBadge></span>
               </div>
             ))}
-            {activeInitiatives.length === 0 && <div style={{ padding: 14 }}><Muted>Nenhuma iniciativa{product !== "all" ? " neste produto" : ""}.</Muted></div>}
+            {activeKrs.length === 0 && <div style={{ padding: 14 }}><Muted>Nenhum Key Result{product !== "all" ? " neste produto" : ""}.</Muted></div>}
           </div>
         </div>
 
@@ -3744,7 +3711,7 @@ function OverviewScreen() {
   );
 }
 
-/* ---- Objetivos: Key Results (os números que provam) e Iniciativas (o trabalho que move) ---- */
+/* ---- Objetivos: cada um com os Key Results que o provam e o movem ---- */
 
 function OwnerTag({ name }) {
   const { T } = useTheme();
@@ -3756,24 +3723,50 @@ function OwnerTag({ name }) {
   );
 }
 
+/** Uma linha de KR: nome, responsável, quarter; o número (se tiver meta) e o
+    andamento das issues dos épicos dele. */
+function KrRow({ kr, onOpen }) {
+  const { T } = useTheme();
+  const idx = usePlanIndex();
+  const hasMetric = isNum(kr.target);
+  const issues = idx.issuesOf(kr.epicKeys);
+  return (
+    <div onClick={onOpen} className="pp-card" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(200px, 1fr) auto", gap: 12, alignItems: "center", padding: "8px 10px", borderRadius: 8, border: `1px solid ${T.border2}`, background: T.bg1, cursor: "pointer" }}>
+      <div style={{ minWidth: 0 }}>
+        <div className="flex items-center" style={{ gap: 6, minWidth: 0 }}>
+          <span style={{ ...ellipsis, fontSize: 13, fontWeight: 500, color: T.ink0 }}>{kr.name}</span>
+          {kr.quarter && <Badge bg="rgba(81,102,230,0.12)" color={ACCENT}>{kr.quarter}</Badge>}
+        </div>
+        <div className="flex items-center" style={{ gap: 10, marginTop: 3, flexWrap: "wrap" }}>
+          {kr.owner ? <OwnerTag name={kr.owner} /> : <span style={{ fontSize: 11, color: T.ink2 }}>sem responsável</span>}
+          {kr.product && <ProductBadges products={[kr.product]} />}
+          <span style={{ fontSize: 11, color: T.ink2 }}>{(kr.epicKeys || []).length} {(kr.epicKeys || []).length === 1 ? "épico" : "épicos"}</span>
+        </div>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}>
+        {hasMetric && <div className="flex items-center" style={{ gap: 8, minWidth: 0 }}><KrProgress kr={kr} /><WeeklySpark checkins={kr.checkins} target={kr.target} /></div>}
+        {(issues.length > 0 || !hasMetric) && <IssueBuckets issues={issues} />}
+      </div>
+      <span className="flex items-center" style={{ gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+        <StatusBadge tone={statusTone(kr.status)}>{kr.status}</StatusBadge>
+        {hasMetric && <CheckinBadge item={kr} activeStatuses={["Em andamento"]} />}
+        <DueBadge item={kr} doneStatus="Concluído" />
+      </span>
+    </div>
+  );
+}
+
 function OkrScreen() {
   const { T } = useTheme();
   const { items, status } = usePlanning();
-  const { initiatives } = useInitiatives();
   const idx = usePlanIndex();
   const [open, editorNode] = useEditor();
   if (status === "error") return <PlanningLoadError />;
-  const loose = initiatives.filter((i) => !idx.objectiveOfInitiative(i)).length;
-  const sectionHead = (label, action) => (
-    <div className="flex items-center justify-between" style={{ margin: "16px 0 8px" }}>
-      <span style={{ fontSize: 11, fontWeight: 600, color: T.ink2, textTransform: "uppercase", letterSpacing: 0.3 }}>{label}</span>
-      {action}
-    </div>
-  );
+  const loose = items.keyResults.filter((k) => !idx.objectiveById[k.objectiveId]).length;
 
   return (
     <ScreenShell>
-      <PageTitle title="Objetivos" sub="Cada objetivo tem Key Results (os números que provam o resultado) e iniciativas (o trabalho que o move)">
+      <PageTitle title="Objetivos" sub="Cada objetivo tem Key Results: o número que prova o resultado e os épicos que o movem">
         <NewButton label="Objetivo" onClick={() => open("objectives", null, { status: "Em andamento" })} />
       </PageTitle>
       {status === "idle" && items.objectives.length === 0 && <Muted>Nenhum objetivo ainda. Comece por um, ex.: “Engajamento na Flix”.</Muted>}
@@ -3781,65 +3774,29 @@ function OkrScreen() {
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         {items.objectives.map((o) => {
           const krs = idx.krsOfObjective(o.id);
-          const inits = idx.initiativesOfObjective(o.id);
           return (
             <div key={o.id} style={cardStyle(T)}>
-              <div className="flex items-center" style={{ gap: 8, minWidth: 0, flexWrap: "wrap" }}>
-                <Target size={16} color={ACCENT} />
-                <button onClick={() => open("objectives", o)} style={{ ...linkBtn, ...ellipsis, color: T.ink0, fontSize: 15, fontWeight: 600, fontFamily: "'Plus Jakarta Sans', sans-serif" }}>{o.name}</button>
-                {o.product && <ProductBadges products={[o.product]} />}
-                {fmtPeriod(o) && <Badge bg={T.bg2} color={T.ink1}>{fmtPeriod(o)}</Badge>}
-                <StatusBadge tone={statusTone(o.status)}>{o.status}</StatusBadge>
+              <div className="flex items-center justify-between" style={{ gap: 10 }}>
+                <div className="flex items-center" style={{ gap: 8, minWidth: 0, flexWrap: "wrap" }}>
+                  <Target size={16} color={ACCENT} />
+                  <button onClick={() => open("objectives", o)} style={{ ...linkBtn, ...ellipsis, color: T.ink0, fontSize: 15, fontWeight: 600, fontFamily: "'Plus Jakarta Sans', sans-serif" }}>{o.name}</button>
+                  {o.product && <ProductBadges products={[o.product]} />}
+                  {fmtPeriod(o) && <Badge bg={T.bg2} color={T.ink1}>{fmtPeriod(o)}</Badge>}
+                  <StatusBadge tone={statusTone(o.status)}>{o.status}</StatusBadge>
+                </div>
+                <NewButton label="Key Result" onClick={() => open("keyResults", null, { objectiveId: o.id, product: o.product || "", status: "Em andamento", epicKeys: [], links: [] })} />
               </div>
               {o.goal && <ObjectiveGoal goal={o.goal} />}
               {o.description && <Muted style={{ marginTop: 6 }}>{o.description}</Muted>}
-
-              {sectionHead(`Key Results · ${krs.length}`, <AddLink label="Key Result" onClick={() => open("keyResults", null, { objectiveId: o.id, status: "Em andamento" })} />)}
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {krs.map((kr) => {
-                  const opps = idx.oppsOfKr(kr.id).length;
-                  return (
-                    <div key={kr.id} onClick={() => open("keyResults", kr)} className="pp-card" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(200px, 1fr) auto", gap: 12, alignItems: "center", padding: "8px 10px", borderRadius: 8, border: `1px solid ${T.border2}`, background: T.bg1, cursor: "pointer" }}>
-                      <div style={{ minWidth: 0 }}>
-                        <div style={{ ...ellipsis, fontSize: 13, fontWeight: 500, color: T.ink0 }}>{kr.name}</div>
-                        <div className="flex items-center" style={{ gap: 10, marginTop: 3 }}>
-                          {kr.owner ? <OwnerTag name={kr.owner} /> : <span style={{ fontSize: 11, color: T.ink2 }}>sem responsável</span>}
-                          {opps > 0 && <span style={{ fontSize: 11, color: T.ink2 }}>{opps} {opps === 1 ? "oportunidade" : "oportunidades"}</span>}
-                        </div>
-                      </div>
-                      <div className="flex items-center" style={{ gap: 8, minWidth: 0 }}><KrProgress kr={kr} /><WeeklySpark checkins={kr.checkins} target={kr.target} /></div>
-                      <span className="flex items-center" style={{ gap: 6 }}><CheckinBadge item={kr} activeStatuses={["Em andamento"]} /><DueBadge item={kr} doneStatus="Concluído" /></span>
-                    </div>
-                  );
-                })}
-                {krs.length === 0 && <Muted>Sem Key Results. Cadastre pelo menos um número para medir este objetivo.</Muted>}
-              </div>
-
-              {sectionHead(`Iniciativas · ${inits.length}`, <AddLink label="Iniciativa" onClick={() => open("initiatives", null, { objectiveId: o.id, keyResultId: "", status: "Planejada", product: o.product || "", epicKeys: [] })} />)}
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                {inits.map((i) => {
-                  const kr = idx.krById[i.keyResultId];
-                  return (
-                    <div key={i.id} onClick={() => open("initiatives", i)} className="pp-card" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(180px, 260px) 110px", gap: 12, alignItems: "center", padding: "6px 8px", borderRadius: 6, cursor: "pointer", border: "1px solid transparent" }}>
-                      <div style={{ minWidth: 0 }}>
-                        <span className="flex items-center" style={{ gap: 6, minWidth: 0, fontSize: 12.5, color: T.ink0 }}>
-                          <Sparkles size={13} color={T.ink2} style={{ flexShrink: 0 }} /><span style={ellipsis}>{i.name}</span>
-                          {i.quarter && <Badge bg="rgba(81,102,230,0.12)" color={ACCENT}>{i.quarter}</Badge>}
-                        </span>
-                        {kr && <div style={{ ...ellipsis, fontSize: 11, color: T.ink2, marginLeft: 19 }}>move {kr.name}</div>}
-                      </div>
-                      <IssueBuckets issues={idx.issuesOf(i.epicKeys)} />
-                      <span style={{ justifySelf: "end" }}><StatusBadge tone={statusTone(i.status)}>{i.status || "Planejada"}</StatusBadge></span>
-                    </div>
-                  );
-                })}
-                {inits.length === 0 && <Muted>Nenhuma iniciativa neste objetivo.</Muted>}
+              <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+                {krs.map((kr) => <KrRow key={kr.id} kr={kr} onOpen={() => open("keyResults", kr)} />)}
+                {krs.length === 0 && <Muted>Sem Key Results. Cadastre o primeiro: o número que prova este objetivo e os épicos que o movem.</Muted>}
               </div>
             </div>
           );
         })}
       </div>
-      {loose > 0 && <Muted style={{ marginTop: 14 }}>{loose} {loose === 1 ? "iniciativa ainda não está" : "iniciativas ainda não estão"} ligada{loose === 1 ? "" : "s"} a um objetivo. Veja em Iniciativas.</Muted>}
+      {loose > 0 && <Muted style={{ marginTop: 14 }}>{loose} Key Result{loose === 1 ? " está" : "s estão"} sem objetivo. Veja em Key Results.</Muted>}
       {editorNode}
     </ScreenShell>
   );
@@ -3861,66 +3818,81 @@ function AddLink({ label, onClick }) {
   return <button onClick={onClick} style={{ ...linkBtn, fontSize: 11.5, display: "inline-flex", alignItems: "center", gap: 3 }}><Plus size={12} /> {label}</button>;
 }
 
-/* ---- Iniciativas: a aposta grande, com os épicos que a executam ---- */
+/* ---- Key Results: por objetivo, com os épicos e a análise das issues ---- */
 
-function InitiativesScreen() {
+function KeyResultsScreen() {
   const { T } = useTheme();
   const { epics } = useData();
-  const { initiatives } = useInitiatives();
+  const { items, status } = usePlanning();
   const idx = usePlanIndex();
   const [product, setProduct] = useState("all");
   const [open, editorNode] = useEditor();
+  if (status === "error") return <PlanningLoadError />;
 
-  const list = initiatives
-    .filter((i) => product === "all" || idx.productsOfInitiative(i).includes(product))
-    .sort((a, b) => INITIATIVE_STATUSES.indexOf(a.status || "Planejada") - INITIATIVE_STATUSES.indexOf(b.status || "Planejada"));
-  const loose = epics.filter((e) => !idx.initiativeByEpic[e.key] && (product === "all" || e.project === product)).length;
+  const visible = items.keyResults.filter((k) => product === "all" || idx.productsOfKr(k).includes(product));
+  const groups = [
+    ...items.objectives.map((o) => ({ id: o.id, title: o.name, krs: visible.filter((k) => k.objectiveId === o.id) })),
+    { id: "", title: "Sem objetivo", krs: visible.filter((k) => !idx.objectiveById[k.objectiveId]) },
+  ].filter((g) => g.krs.length);
+  const loose = epics.filter((e) => !idx.krByEpic[e.key] && (product === "all" || e.project === product)).length;
   const order = { doing: 0, todo: 1, done: 2 };
 
   return (
     <ScreenShell>
-      <PageTitle title="Iniciativas" sub={`A aposta grande (ex.: reduzir cancelamento) que reúne vários épicos · ${loose} ${loose === 1 ? "épico" : "épicos"} sem iniciativa`}>
+      <PageTitle title="Key Results" sub={`O número que prova cada objetivo e os épicos que o movem · ${loose} ${loose === 1 ? "épico" : "épicos"} sem Key Result`}>
         <ProductFilter value={product} onChange={setProduct} />
-        <NewButton label="Iniciativa" onClick={() => open("initiatives", null, { status: "Planejada", product: "", objectiveId: "", keyResultId: "", epicKeys: [] })} />
+        <NewButton
+          label="Key Result" disabled={!items.objectives.length} title={items.objectives.length ? "" : "Crie um objetivo antes"}
+          onClick={() => open("keyResults", null, { status: "Em andamento", epicKeys: [], links: [] })}
+        />
       </PageTitle>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        {list.map((i) => {
-          const kr = idx.krById[i.keyResultId];
-          const obj = idx.objectiveOfInitiative(i);
-          const iEpics = idx.epicsOf(i.epicKeys).sort((a, b) => order[epicBucket(a)] - order[epicBucket(b)]);
-          return (
-            <div key={i.id} style={cardStyle(T)}>
-              <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(200px, 280px) auto", gap: 14, alignItems: "center" }}>
-                <div style={{ minWidth: 0 }}>
-                  <div className="flex items-center" style={{ gap: 8 }}>
-                    <button onClick={() => open("initiatives", i)} style={{ ...linkBtn, ...ellipsis, color: T.ink0, fontSize: 14, fontWeight: 600 }}>{i.name}</button>
-                    <StatusBadge tone={statusTone(i.status)}>{i.status || "Planejada"}</StatusBadge>
+      {groups.map((g) => (
+        <div key={g.id || "none"} style={{ marginBottom: 22 }}>
+          <div className="flex items-center" style={{ gap: 8, marginBottom: 10 }}>
+            <Target size={15} color={g.id ? ACCENT : T.ink2} />
+            <span style={{ fontSize: 13.5, fontWeight: 600, color: T.ink0 }}>{g.title}</span>
+            <span style={{ fontSize: 11.5, color: T.ink2 }}>{g.krs.length} {g.krs.length === 1 ? "Key Result" : "Key Results"}</span>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {g.krs.map((kr) => {
+              const krEpics = idx.epicsOf(kr.epicKeys).sort((a, b) => order[epicBucket(a)] - order[epicBucket(b)]);
+              const issues = idx.issuesOf(kr.epicKeys);
+              return (
+                <div key={kr.id} style={cardStyle(T)}>
+                  <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(200px, 300px) auto", gap: 14, alignItems: "center" }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div className="flex items-center" style={{ gap: 8, flexWrap: "wrap" }}>
+                        <button onClick={() => open("keyResults", kr)} style={{ ...linkBtn, ...ellipsis, color: T.ink0, fontSize: 14, fontWeight: 600 }}>{kr.name}</button>
+                        <StatusBadge tone={statusTone(kr.status)}>{kr.status}</StatusBadge>
+                        {kr.quarter && <Badge bg="rgba(81,102,230,0.12)" color={ACCENT}>{kr.quarter}</Badge>}
+                        <DueBadge item={kr} doneStatus="Concluído" />
+                      </div>
+                      <div className="flex items-center" style={{ gap: 10, marginTop: 4, flexWrap: "wrap" }}>
+                        {kr.owner ? <OwnerTag name={kr.owner} /> : <span style={{ fontSize: 11, color: T.ink2 }}>sem responsável</span>}
+                        <ProductBadges products={idx.productsOfKr(kr)} />
+                      </div>
+                      {(kr.links || []).length > 0 && <div style={{ marginTop: 6 }}><LinkChips links={kr.links} /></div>}
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      {isNum(kr.target) && <div className="flex items-center" style={{ gap: 8 }}><KrProgress kr={kr} /><WeeklySpark checkins={kr.checkins} target={kr.target} /></div>}
+                      <IssueBuckets issues={issues} />
+                      <EpicBuckets epics={krEpics} />
+                    </div>
+                    <button onClick={() => open("keyResults", kr)} style={btnStyle(T)}>Editar</button>
                   </div>
-                  <div className="flex items-center" style={{ gap: 8, marginTop: 4, flexWrap: "wrap" }}>
-                    <span style={{ fontSize: 11.5, color: T.ink2 }}>{obj ? `Objetivo: ${obj.name}${kr ? ` · move ${kr.name}` : ""}` : "Sem objetivo"}</span>
-                    <ProductBadges products={idx.productsOfInitiative(i)} />
-                    {i.quarter && <Badge bg="rgba(81,102,230,0.12)" color={ACCENT}>{i.quarter}</Badge>}
-                    <DueBadge item={i} doneStatus="Concluída" />
+                  <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 4, borderTop: `1px solid ${T.border2}`, paddingTop: 10 }}>
+                    {krEpics.map((e) => <EpicLine key={e.key} epic={e} showAssignee />)}
+                    {krEpics.length === 0 && <Muted>Nenhum épico. Vincule em Editar.</Muted>}
+                    <IssueAnalysis issues={issues} />
                   </div>
-                  {(i.links || []).length > 0 && <div style={{ marginTop: 6 }}><LinkChips links={i.links} /></div>}
                 </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                  <IssueBuckets issues={idx.issuesOf(i.epicKeys)} />
-                  <EpicBuckets epics={iEpics} />
-                </div>
-                <button onClick={() => open("initiatives", i)} style={btnStyle(T)}>Editar</button>
-              </div>
-              <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 4, borderTop: `1px solid ${T.border2}`, paddingTop: 10 }}>
-                {iEpics.map((e) => <EpicLine key={e.key} epic={e} showAssignee />)}
-                {iEpics.length === 0 && <Muted>Nenhum épico. Vincule em Editar.</Muted>}
-                <IssueAnalysis issues={idx.issuesOf(i.epicKeys)} />
-              </div>
-            </div>
-          );
-        })}
-        {list.length === 0 && <Muted>Nenhuma iniciativa{product !== "all" ? " neste produto" : ""}.</Muted>}
-      </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+      {status === "idle" && groups.length === 0 && <Muted>Nenhum Key Result{product !== "all" ? " neste produto" : ""}. Crie um a partir de um objetivo.</Muted>}
       {editorNode}
     </ScreenShell>
   );
@@ -4067,7 +4039,7 @@ function EpicsScreen() {
     addEpic, saveDrawer: saveDrawerShared, deleteEpic: deleteEpicShared,
   } = useData();
   const { canCreateCard, ownsCard } = useAuth();
-  const { initiatives } = useInitiatives();
+  const { items: planItems } = usePlanning();
   const features = useRoadmapFeatures();
   // Rascunhos criados aqui ou no Roadmap aparecem junto (coluna "Rascunho").
   const epics = useMemo(() => mergeCustomEpics(sheetEpics, customEpics), [sheetEpics, customEpics]);
@@ -4085,8 +4057,8 @@ function EpicsScreen() {
     return epics
       .filter((e) => (product === "all" || e.project === product) && (status === "all" || e.status === status))
       .filter((e) => {
-        const init = idx.initiativeByEpic[e.key];
-        return initiative === "all" || (initiative === "none" ? !init : init && init.id === initiative);
+        const kr = idx.krByEpic[e.key];
+        return initiative === "all" || (initiative === "none" ? !kr : kr && kr.id === initiative);
       })
       .filter((e) => !needle || `${e.key} ${e.summary} ${e.assignee || ""}`.toLowerCase().includes(needle))
       .sort((a, b) => (parseBRDate(b.created) || 0) - (parseBRDate(a.created) || 0));
@@ -4116,7 +4088,7 @@ function EpicsScreen() {
     setOpenKey(null);
     return r;
   };
-  const cols = "90px minmax(200px, 1fr) 105px 140px 120px 150px 150px 120px";
+  const cols = "90px minmax(200px, 1fr) 105px 140px 120px 180px 130px";
   const columns = useMemo(() => {
     const present = [...new Set(rows.map((e) => e.status || "Sem status"))];
     return [...EPIC_STATUS_ORDER.filter((s) => present.includes(s)), ...present.filter((s) => !EPIC_STATUS_ORDER.includes(s)).sort()];
@@ -4138,9 +4110,9 @@ function EpicsScreen() {
           {statuses.map((s) => <option key={s} value={s}>{s}</option>)}
         </select>
         <select value={initiative} onChange={(e) => setInitiative(e.target.value)} style={fieldStyle(T)}>
-          <option value="all">Todas as iniciativas</option>
-          <option value="none">Sem iniciativa</option>
-          {initiatives.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
+          <option value="all">Todos os Key Results</option>
+          <option value="none">Sem Key Result</option>
+          {planItems.keyResults.map((k) => <option key={k.id} value={k.id}>{k.name}</option>)}
         </select>
       </PageTitle>
 
@@ -4161,7 +4133,7 @@ function EpicsScreen() {
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   {col.map((e) => {
                     const style = PRODUCT_STYLE[e.project];
-                    const init = idx.initiativeByEpic[e.key];
+                    const init = idx.krByEpic[e.key];
                     const feats = idx.featuresByEpic[e.key];
                     return (
                       <div key={e.key} onClick={() => setOpenKey(e.key)} className="pp-card" style={{ ...cardStyle(T), padding: 10, cursor: "pointer" }}>
@@ -4194,12 +4166,11 @@ function EpicsScreen() {
       ) : (
       <div style={{ minWidth: 1040, border: `1px solid ${T.border2}`, borderRadius: 10, overflow: "hidden" }}>
         <div style={{ display: "grid", gridTemplateColumns: cols, gap: 12, padding: "8px 12px", background: T.bg1, fontSize: 11.5, fontWeight: 500, color: T.ink2 }}>
-          <span>Chave</span><span>Título</span><span>Produto</span><span>Status</span><span>Responsável</span><span>Iniciativa</span><span>Key Result</span><span>Feature</span>
+          <span>Chave</span><span>Título</span><span>Produto</span><span>Status</span><span>Responsável</span><span>Key Result</span><span>Feature</span>
         </div>
         {rows.map((e) => {
           const style = PRODUCT_STYLE[e.project];
-          const init = idx.initiativeByEpic[e.key];
-          const kr = init && idx.krById[init.keyResultId];
+          const kr = idx.krByEpic[e.key];
           const feats = idx.featuresByEpic[e.key];
           return (
             <div key={e.key} className="pp-card" onClick={() => setOpenKey(e.key)} style={{ display: "grid", gridTemplateColumns: cols, gap: 12, padding: "9px 12px", alignItems: "center", fontSize: 12.5, color: T.ink0, borderTop: `1px solid ${T.border2}`, cursor: "pointer" }}>
@@ -4208,8 +4179,7 @@ function EpicsScreen() {
               <span>{style ? <Badge bg={style.subtle} color={style.text}>{e.project}</Badge> : <span style={{ color: T.ink2 }}>{e.project || "—"}</span>}</span>
               <span><EpicStatus epic={e} /></span>
               <span style={{ ...ellipsis, color: T.ink1 }}>{e.assignee || "—"}</span>
-              <span style={{ ...ellipsis, color: init ? T.ink0 : T.ink2 }}>{init ? init.name : "—"}</span>
-              <span style={{ ...ellipsis, color: T.ink1 }}>{kr ? kr.name : "—"}</span>
+              <span style={{ ...ellipsis, color: kr ? T.ink0 : T.ink2 }}>{kr ? kr.name : "—"}</span>
               <span style={{ ...ellipsis, color: T.ink1 }}>{feats ? feats.map((f) => f.name).join(", ") : "—"}</span>
             </div>
           );
@@ -4486,7 +4456,7 @@ function WorkspaceEditor({ editor, onClose }) {
 const SIDEBAR_KEY = "pp-sidebar-collapsed";
 const SIDEBAR_GROUPS = [
   { title: null, items: [["visao", "Visão geral", LayoutDashboard]] },
-  { title: "Estratégia", items: [["okrs", "Objetivos", Target], ["iniciativas", "Iniciativas", Sparkles], ["oportunidades", "Oportunidades", Lightbulb]] },
+  { title: "Estratégia", items: [["okrs", "Objetivos", Target], ["krs", "Key Results", Sparkles], ["oportunidades", "Oportunidades", Lightbulb]] },
   { title: "Execução", items: [["epicos", "Épicos", Layers], ["roadmap", "Roadmap", Calendar]] },
   { title: "Produto", items: [["produtos", "Produtos e features", Package]] },
   { title: "Análises", items: [["analises", "Análises", BarChart3], ["desenvolvedores", "Desenvolvedores", Users]] },
@@ -4613,7 +4583,7 @@ function AppShell() {
 
       {menu === "visao" ? <OverviewScreen />
         : menu === "okrs" ? <OkrScreen />
-        : menu === "iniciativas" ? <InitiativesScreen />
+        : menu === "krs" ? <KeyResultsScreen />
         : menu === "oportunidades" ? <OpportunitiesScreen />
         : menu === "epicos" ? <EpicsScreen />
         : menu === "produtos" ? <ProductsScreen />
