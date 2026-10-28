@@ -17,7 +17,10 @@ const STAGES = ["Backlog", "Em design", "Em produto", "Análise técnica", "Pron
 const PRODUCTS = ["STLFLIX", "STL IA", "STL Seller", "STL Loja", "Backoffice", "STL Academy"];
 
 const EXTRA_PRODUCT_COLORS = ["#0f9fa8", "#c28a00", "#d6409f", "#3e7bfa", "#7c8a14", "#a35bd1"];
-const NAMED_PRODUCT_COLORS = { "Custom": "#0f9fa8", "Automações": "#c28a00", "Automacoes": "#c28a00" };
+const NAMED_PRODUCT_COLORS = { "Custom": "#0f9fa8", "Automações": "#c28a00", "Automacoes": "#c28a00", "Empresa": "#475467" };
+// "Produto" de objetivos e KRs da empresa toda (ex.: faturamento de R$ 100 mi) —
+// não existe no Jira, por isso não aparece no Roadmap nem nas Análises.
+const COMPANY_PRODUCT = "Empresa";
 /** PRODUCT_STYLE que nunca devolve undefined: produto sem cor ganha uma da
     paleta extra, sempre a mesma para o mesmo nome. */
 function withProductFallback(styles, dark) {
@@ -3272,7 +3275,7 @@ const FORMS = {
     fields: [
       { key: "name", label: "Objetivo", placeholder: "Ex.: Engajamento na Flix" },
       { key: "goal", label: "Meta", placeholder: "Ex.: Aumentar o engajamento em 20% até dezembro" },
-      { key: "product", label: "Produto", type: "select", required: true, half: true, options: (c) => c.products.map((p) => ({ value: p, label: p })) },
+      { key: "product", label: "Produto", type: "select", required: true, half: true, options: (c) => [COMPANY_PRODUCT, ...c.products].map((p) => ({ value: p, label: p })) },
       { key: "status", label: "Status", type: "select", half: true, options: () => statusOptions(["Em andamento", "Concluído", "Cancelado"]) },
       { key: "startDate", label: "Início do período", type: "date", half: true },
       { key: "endDate", label: "Fim do período", type: "date", half: true },
@@ -3289,7 +3292,7 @@ const FORMS = {
         derive: (c, v, d) => { const o = c.objectives.find((x) => x.id === v); return o && !d.product ? { product: o.product || "" } : {}; },
       },
       { key: "owner", label: "Responsável", type: "select", half: true, options: (c, d) => [{ value: "", label: "—" }, ...[...new Set([...(d.owner ? [d.owner] : []), ...c.people])].sort().map((n) => ({ value: n, label: n }))] },
-      { key: "product", label: "Produto", type: "select", half: true, options: (c, d) => [{ value: "", label: "—" }, ...[...new Set([...(d.product ? [d.product] : []), ...c.products])].map((x) => ({ value: x, label: x }))] },
+      { key: "product", label: "Produto", type: "select", half: true, options: (c, d) => [{ value: "", label: "—" }, ...[...new Set([COMPANY_PRODUCT, ...(d.product ? [d.product] : []), ...c.products])].map((x) => ({ value: x, label: x }))] },
       { key: "status", label: "Status", type: "select", half: true, options: () => statusOptions(KR_STATUSES) },
       { key: "quarter", label: "Quarter", type: "quarter", half: true },
       { key: "baseline", label: "Início", type: "number", third: true },
@@ -3578,6 +3581,7 @@ function ProductFilter({ value, onChange }) {
   return (
     <select value={value} onChange={(e) => onChange(e.target.value)} style={fieldStyle(T)}>
       <option value="all">Todos os produtos</option>
+      <option value={COMPANY_PRODUCT}>{COMPANY_PRODUCT}</option>
       {products.map((p) => <option key={p} value={p}>{p}</option>)}
     </select>
   );
