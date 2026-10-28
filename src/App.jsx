@@ -3314,7 +3314,8 @@ const FORMS = {
     title: "Oportunidade",
     fields: [
       { key: "name", label: "Oportunidade", placeholder: "Dor ou desejo do usuário" },
-      { key: "keyResultId", label: "Key Result", type: "select", required: true, options: (c) => optionsOf(c.keyResults) },
+      { key: "keyResultId", label: "Outcome (Key Result)", type: "select", required: true, options: (c) => optionsOf(c.keyResults) },
+      { key: "track", label: "Ramo", type: "select", options: () => [{ value: "", label: "— (sem ramo)" }, ...OPP_TRACKS.map((t) => ({ value: t, label: t }))] },
       { key: "parentId", label: "Dentro de", type: "select", options: (c, d) => [{ value: "", label: "— (direto no KR)" }, ...c.opportunities.filter((o) => o.id !== d.id && o.keyResultId === d.keyResultId).map((o) => ({ value: o.id, label: o.name }))] },
       { key: "status", label: "Status", type: "select", options: () => statusOptions(["Aberta", "Explorando", "Validada", "Descartada"]) },
       { key: "description", label: "Evidência", type: "textarea", placeholder: "Dados, entrevistas, tickets que mostram a dor" },
@@ -4039,8 +4040,12 @@ function OstDiagram({ open }) {
 
 /* ---- Árvore por produto: Produto → Outcome (Key Result) → hipóteses ---- */
 
-const OUTCOME_COLORS = ["#7c3aed", "#00955a", "#f54300", "#5166e6", "#d6409f", "#0f9fa8", "#c28a00"];
+const OUTCOME_COLORS = ["#5166e6", "#d6409f", "#0f9fa8", "#c28a00", "#7c8a14", "#a35bd1"];
 const NO_PRODUCT = "Sem produto";
+// Ramos fixos da árvore; cada hipótese também aponta para um outcome (KR).
+const OPP_TRACKS = ["UX", "Conteúdos", "Negócios"];
+const TRACK_COLORS = { "UX": "#7c3aed", "Conteúdos": "#00955a", "Negócios": "#f54300" };
+const NO_TRACK = "Sem ramo";
 
 /** Produto em que o KR aparece na árvore: o do KR, senão o do objetivo, senão o dos épicos. */
 function krTreeProduct(kr, idx) {
@@ -4048,7 +4053,7 @@ function krTreeProduct(kr, idx) {
   return kr.product || (obj && obj.product) || idx.productsOfKr(kr)[0] || NO_PRODUCT;
 }
 
-function HypothesisCard({ opp, color, open }) {
+function HypothesisCard({ opp, color, open, outcome }) {
   const { T } = useTheme();
   const { items } = usePlanning();
   const idx = usePlanIndex();
@@ -4083,7 +4088,10 @@ function HypothesisCard({ opp, color, open }) {
         </div>
       )}
       <div className="flex items-center justify-between" onClick={(e) => e.stopPropagation()} style={{ gap: 8, marginTop: 8, flexWrap: "wrap" }}>
-        <StatusBadge tone={statusTone(opp.status)}>{opp.status}</StatusBadge>
+        <span className="flex items-center" style={{ gap: 6, minWidth: 0 }}>
+          <StatusBadge tone={statusTone(opp.status)}>{opp.status}</StatusBadge>
+          {outcome && <span title={`Outcome: ${outcome.name}`} style={{ ...ellipsis, maxWidth: 110, fontSize: 11, color: outcome.color, background: `${outcome.color}1a`, borderRadius: 999, padding: "2px 8px" }}>{outcome.name}</span>}
+        </span>
         <span className="flex items-center" style={{ gap: 8 }}>
           <AddLink label="solução" onClick={() => open("solutions", null, { opportunityId: opp.id, status: "Ideia" })} />
           <AddLink label="experimento" onClick={() => open("experiments", null, { opportunityId: opp.id, solutionId: "", status: "Ideia", outcome: "" })} />
@@ -4095,7 +4103,7 @@ function HypothesisCard({ opp, color, open }) {
 
 function ProductOppTree({ open }) {
   const { T, PRODUCT_STYLE } = useTheme();
-  const { items } = usePlanning();
+  const { items, status } = usePlanning();
   const idx = usePlanIndex();
   const krs = items.keyResults.filter((k) => k.status !== "Cancelado");
   const groups = {};
@@ -4104,26 +4112,46 @@ function ProductOppTree({ open }) {
   const products = Object.keys(groups).sort((a, b) => (oppCount(groups[b]) > 0) - (oppCount(groups[a]) > 0) || (a === NO_PRODUCT) - (b === NO_PRODUCT) || a.localeCompare(b));
   const [picked, setPicked] = useState(null);
   const product = picked && groups[picked] ? picked : products[0];
-  // Outcome filtrado: a árvore abre só ele, com cada hipótese num galho.
+  const [view, setView] = useState("track"); // track (ramos fixos) | outcome
   const [outcomeId, setOutcomeId] = useState("");
   const scrollRef = useRef(null);
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollLeft = Math.max(0, (el.scrollWidth - el.clientWidth) / 2);
-  }, [product, outcomeId]);
+  }, [product, outcomeId, view]);
+  if (!product && status === "loading") return <Muted>Carregando…</Muted>;
   if (!product) return <Muted>A árvore começa num Key Result com produto. Cadastre um objetivo e seus KRs em Objetivos.</Muted>;
 
   const all = groups[product];
   const colorOf = (kr) => OUTCOME_COLORS[all.indexOf(kr) % OUTCOME_COLORS.length];
   const focused = all.find((k) => k.id === outcomeId);
-  const outcomes = focused ? [focused] : all;
+  const visibleKrs = focused ? [focused] : all;
+  const rootsOf = (kr) => idx.oppsOfKr(kr.id).filter((o) => !o.parentId || !idx.oppById[o.parentId]);
+  const roots = visibleKrs.flatMap(rootsOf);
   const style = PRODUCT_STYLE[product];
-  const root = product === NO_PRODUCT ? T.ink2 : style.primary;
-  const total = oppCount(outcomes);
+  const rootColor = product === NO_PRODUCT ? T.ink2 : style.primary;
+  const total = oppCount(all);
+
+  // Colunas: ramos fixos (com o outcome em cada cartão) ou um outcome por coluna.
+  const columns = view === "track"
+    ? [
+        ...OPP_TRACKS.map((t) => ({ key: t, label: t, color: TRACK_COLORS[t], opps: roots.filter((o) => o.track === t), seed: { track: t } })),
+        ...(roots.some((o) => !OPP_TRACKS.includes(o.track)) ? [{ key: NO_TRACK, label: NO_TRACK, color: T.ink2, opps: roots.filter((o) => !OPP_TRACKS.includes(o.track)), seed: { track: "" } }] : []),
+      ]
+    : visibleKrs.map((kr) => {
+        const pct = krProgress(kr);
+        return { key: kr.id, label: `${kr.name}${pct !== null ? ` · ${pct}%` : ""}`, color: colorOf(kr), opps: rootsOf(kr), kr, seed: { keyResultId: kr.id } };
+      });
+  const newOpp = (seed) => open("opportunities", null, { keyResultId: (focused || all[0]).id, track: "", ...seed, parentId: "", status: "Aberta" });
+  const outcomeTag = (o) => {
+    const kr = idx.krById[o.keyResultId];
+    return view === "track" && !focused && kr ? { name: kr.name, color: colorOf(kr) } : null;
+  };
+  const pill = (active, c) => ({ ...btnStyle(T), padding: "4px 10px", borderRadius: 999, background: active ? `${c}1f` : T.bg1, color: active ? c : T.ink1, borderColor: active ? c : T.border2 });
 
   return (
     <div>
-      <div className="flex items-center" style={{ gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
+      <div className="flex items-center" style={{ gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
         {products.map((p) => {
           const on = p === product;
           const c = p === NO_PRODUCT ? T.ink2 : PRODUCT_STYLE[p].primary;
@@ -4135,67 +4163,62 @@ function ProductOppTree({ open }) {
           );
         })}
       </div>
-      {all.length > 1 && (
-        <div className="flex items-center" style={{ gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
-          <span style={{ fontSize: 12, color: T.ink1, marginRight: 2 }}>Outcome:</span>
-          {[{ id: "", name: "Todos" }, ...all].map((k) => {
-            const on = k.id === (focused ? focused.id : "");
-            const c = k.id ? colorOf(k) : ACCENT;
-            return (
-              <button key={k.id || "all"} onClick={() => setOutcomeId(k.id)} style={{ ...btnStyle(T), padding: "4px 10px", borderRadius: 999, background: on ? `${c}1f` : T.bg1, color: on ? c : T.ink1, borderColor: on ? c : T.border2 }}>
-                {k.name}{k.id && <span style={{ fontSize: 11, color: T.ink2 }}>{idx.oppsOfKr(k.id).length}</span>}
-              </button>
-            );
-          })}
-        </div>
-      )}
+      <div className="flex items-center" style={{ gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 12, color: T.ink1, marginRight: 2 }}>Ver por:</span>
+        <button onClick={() => setView("track")} style={pill(view === "track", ACCENT)}>Ramo</button>
+        <button onClick={() => setView("outcome")} style={pill(view === "outcome", ACCENT)}>Outcome</button>
+        <span style={{ width: 1, height: 18, background: T.border2, margin: "0 6px" }} />
+        <span style={{ fontSize: 12, color: T.ink1, marginRight: 2 }}>Outcome:</span>
+        {[{ id: "", name: "Todos" }, ...all].map((k) => (
+          <button key={k.id || "all"} onClick={() => setOutcomeId(k.id)} style={pill(k.id === (focused ? focused.id : ""), k.id ? colorOf(k) : ACCENT)}>
+            {k.name}{k.id && <span style={{ fontSize: 11, color: T.ink2 }}>{idx.oppsOfKr(k.id).length}</span>}
+          </button>
+        ))}
+      </div>
       <div style={{ fontSize: 12, color: T.ink2, marginBottom: 6 }}>Árvore {product}{focused ? ` · ${focused.name}` : ""}</div>
       <div ref={scrollRef} className="pp-scroll ost" style={{ ...cardStyle(T), overflowX: "auto", padding: "18px 12px 22px", "--ost-line": T.borderStrong }}>
         <style>{OST_CSS}</style>
         <ul>
           <li>
-            <div style={{ background: root, color: "#fff", borderRadius: 10, padding: "10px 22px", textAlign: "center", boxShadow: T.cardShadow }}>
+            <div style={{ background: rootColor, color: "#fff", borderRadius: 10, padding: "10px 22px", textAlign: "center", boxShadow: T.cardShadow }}>
               <div style={{ fontSize: 15, fontWeight: 700, letterSpacing: 0.3 }}>{product}</div>
-              <div style={{ fontSize: 11, opacity: 0.85 }}>{outcomes.length} outcome{outcomes.length === 1 ? "" : "s"} · {total} hipótese{total === 1 ? "" : "s"}</div>
+              <div style={{ fontSize: 11, opacity: 0.85 }}>{all.length} outcome{all.length === 1 ? "" : "s"} · {total} hipótese{total === 1 ? "" : "s"}</div>
             </div>
-            <ul>
-              {outcomes.map((kr) => {
-                const color = colorOf(kr);
-                const roots = idx.oppsOfKr(kr.id).filter((o) => !o.parentId || !idx.oppById[o.parentId]);
-                const pct = krProgress(kr);
-                return (
-                  <li key={kr.id}>
-                    <button onClick={() => open("keyResults", kr)} title="Editar Key Result" style={{ maxWidth: 260, border: "none", borderRadius: 999, padding: "5px 14px", background: `${color}1f`, color, fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: "'Inter Tight', sans-serif" }}>
-                      {kr.name}{pct !== null ? ` · ${pct}%` : ""}
+            {view === "outcome" && focused ? (
+              // Um outcome só: cada hipótese vira um galho da árvore.
+              <ul>
+                <li>
+                  <button onClick={() => open("keyResults", focused)} title="Editar Key Result" style={{ maxWidth: 260, border: "none", borderRadius: 999, padding: "5px 14px", background: `${colorOf(focused)}1f`, color: colorOf(focused), fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: "'Inter Tight', sans-serif" }}>{columns[0].label}</button>
+                  {columns[0].opps.length > 0 && <ul>{columns[0].opps.map((o) => <li key={o.id}><div style={{ width: 260 }}><HypothesisCard opp={o} color={colorOf(focused)} open={open} /></div></li>)}</ul>}
+                  <div style={{ marginTop: 14, textAlign: "center" }}>
+                    {columns[0].opps.length === 0 && <Muted>Nenhuma hipótese ainda.</Muted>}
+                    <AddLink label="oportunidade" onClick={() => newOpp(columns[0].seed)} />
+                  </div>
+                </li>
+              </ul>
+            ) : (
+              <ul>
+                {columns.map((col) => (
+                  <li key={col.key}>
+                    <button onClick={col.kr ? () => open("keyResults", col.kr) : undefined} title={col.kr ? "Editar Key Result" : undefined} style={{ maxWidth: 260, border: "none", borderRadius: 999, padding: "5px 14px", background: `${col.color}1f`, color: col.color, fontSize: 12.5, fontWeight: 600, cursor: col.kr ? "pointer" : "default", fontFamily: "'Inter Tight', sans-serif" }}>
+                      {col.label}
                     </button>
-                    {focused ? (
-                      <>
-                        {roots.length > 0 && <ul>{roots.map((o) => <li key={o.id}><div style={{ width: 260 }}><HypothesisCard opp={o} color={color} open={open} /></div></li>)}</ul>}
-                        <div style={{ marginTop: 14 }}>
-                          {roots.length === 0 && <Muted style={{ textAlign: "center" }}>Nenhuma hipótese ainda.</Muted>}
-                          <AddLink label="oportunidade" onClick={() => open("opportunities", null, { keyResultId: kr.id, parentId: "", status: "Aberta" })} />
-                        </div>
-                      </>
-                    ) : (
-                    <>
                     <span style={{ width: 2, height: 14, background: T.borderStrong }} />
-                    <div style={{ width: 280, display: "flex", flexDirection: "column", gap: 10, padding: 10, border: `1px dashed ${color}80`, borderRadius: 10, background: T.bg1 }}>
-                      {roots.map((o) => <HypothesisCard key={o.id} opp={o} color={color} open={open} />)}
-                      {roots.length === 0 && <Muted style={{ textAlign: "center" }}>Nenhuma hipótese ainda.</Muted>}
+                    <div style={{ width: 280, display: "flex", flexDirection: "column", gap: 10, padding: 10, border: `1px dashed ${col.color}80`, borderRadius: 10, background: T.bg1 }}>
+                      {col.opps.map((o) => <HypothesisCard key={o.id} opp={o} color={col.color} open={open} outcome={outcomeTag(o)} />)}
+                      {col.opps.length === 0 && <Muted style={{ textAlign: "center" }}>Nenhuma hipótese ainda.</Muted>}
                       <div style={{ textAlign: "center" }}>
-                        <AddLink label="oportunidade" onClick={() => open("opportunities", null, { keyResultId: kr.id, parentId: "", status: "Aberta" })} />
+                        <AddLink label="oportunidade" onClick={() => newOpp(col.seed)} />
                       </div>
                     </div>
-                    </>
-                    )}
                   </li>
-                );
-              })}
-            </ul>
+                ))}
+              </ul>
+            )}
           </li>
         </ul>
       </div>
-      <Muted style={{ marginTop: 8 }}>Cada coluna é um outcome (Key Result) do produto; escolha um outcome para ver a árvore só dele. O produto vem do KR; sem ele, do objetivo.</Muted>
+      <Muted style={{ marginTop: 8 }}>Por ramo: UX, Conteúdos e Negócios fixos, com o outcome de cada hipótese no cartão. Por outcome: uma coluna por Key Result; escolha um para ver a árvore só dele.</Muted>
     </div>
   );
 }

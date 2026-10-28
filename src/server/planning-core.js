@@ -73,6 +73,7 @@ export const KINDS = {
     fields: {
       keyResultId: { type: "ref", required: true },
       parentId: { type: "ref" }, // sub-oportunidade
+      track: { type: "enum", options: ["", "UX", "Conteúdos", "Negócios"], default: "" }, // ramo fixo da árvore
       description: { type: "text" }, // dor, evidência
       links: { type: "links" }, // estudos, dashboards
       status: { type: "enum", options: ["Aberta", "Explorando", "Validada", "Descartada"], default: "Aberta" },
