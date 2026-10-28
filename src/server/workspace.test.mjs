@@ -64,8 +64,8 @@ test("dados de um workspace não aparecem no outro", async () => {
   const base = config(kv);
   const ws = (await handleCreate({ name: "Growth Lab" }, SUPER, base)).body;
   const inWs = await scopeConfig(base, cookie(ws.id));
-  await planCreate("objectives", { name: "Só no Growth" }, SUPER, inWs);
-  await planCreate("objectives", { name: "Só no STLFLIX" }, SUPER, await scopeConfig(base, ""));
+  await planCreate("objectives", { name: "Só no Growth", product: "STLFLIX" }, SUPER, inWs);
+  await planCreate("objectives", { name: "Só no STLFLIX", product: "STLFLIX" }, SUPER, await scopeConfig(base, ""));
   assert.deepEqual((await planList("objectives", inWs)).body.map((o) => o.name), ["Só no Growth"]);
   assert.deepEqual((await planList("objectives", base)).body.map((o) => o.name), ["Só no STLFLIX"]);
 });

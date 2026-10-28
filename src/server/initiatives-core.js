@@ -24,6 +24,7 @@ import { createClient } from "redis";
 import { loadConfig as loadAuthConfig, readCookie, resolveSession, AUTH_COOKIE } from "./auth-core.js";
 import { migrateInitiativesToFeatures } from "./legacy-migration.js";
 import { baseReady } from "./workspace.js";
+import { QUARTER_RE, cleanLinks } from "./links.js";
 
 const KV_KEY = "jira:initiatives";
 
@@ -91,10 +92,15 @@ async function writeAll(config, list) {
 
 export const INITIATIVE_STATUSES = ["Planejada", "Em andamento", "Concluída", "Pausada", "Cancelada"];
 
-/** Campos de texto livres da iniciativa: descrição e o KR que ela move (id de
+/** Campos opcionais da iniciativa: descrição, data de entrega, quarter (Q1/2026),
+    links e o KR que ela move (id de
     `jira:key-results`, vazio = nenhum). */
 function applyOptional(next, input) {
   if (typeof input.description === "string") next.description = input.description.trim();
+  if (typeof input.dueDate === "string" && (input.dueDate === "" || /^\d{4}-\d{2}-\d{2}$/.test(input.dueDate))) next.dueDate = input.dueDate;
+  if (typeof input.quarter === "string" && (input.quarter === "" || QUARTER_RE.test(input.quarter))) next.quarter = input.quarter;
+  const links = cleanLinks(input.links);
+  if (links) next.links = links;
   if (typeof input.keyResultId === "string") next.keyResultId = input.keyResultId.trim();
   if (typeof input.status === "string" && INITIATIVE_STATUSES.includes(input.status)) next.status = input.status;
   return next;
@@ -125,6 +131,9 @@ export async function handleCreate(input, session, config) {
     description: "",
     status: "Planejada",
     keyResultId: "",
+    dueDate: "",
+    quarter: "",
+    links: [],
     epicKeys: [],
     createdBy: session.user.email || null,
     createdAt: new Date().toISOString(),

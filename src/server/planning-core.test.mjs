@@ -23,7 +23,7 @@ function fakeConfig() {
 }
 
 async function tree(config) {
-  const obj = (await handleCreate("objectives", { name: "Engajamento na Flix", period: "2026-T4" }, ADMIN, config)).body;
+  const obj = (await handleCreate("objectives", { name: "Engajamento na Flix", product: "STLFLIX", startDate: "2026-10-01", endDate: "2026-12-31" }, ADMIN, config)).body;
   const kr = (await handleCreate("keyResults", { name: "DAU/MAU", objectiveId: obj.id, unit: "%", baseline: 20, target: 30 }, ADMIN, config)).body;
   const opp = (await handleCreate("opportunities", { name: "Usuário não acha o que baixar", keyResultId: kr.id }, ADMIN, config)).body;
   return { obj, kr, opp };
@@ -49,10 +49,13 @@ test("só admin ou super escrevem; leitura é aberta", async () => {
 test("cria com padrões do tipo e exige nome", async () => {
   const config = fakeConfig();
   assert.equal((await handleCreate("objectives", { name: "  " }, ADMIN, config)).status, 400);
-  const r = await handleCreate("objectives", { name: " Engajamento ", period: "2026-T4" }, ADMIN, config);
+  assert.equal((await handleCreate("objectives", { name: "Sem produto" }, ADMIN, config)).status, 400);
+  const r = await handleCreate("objectives", { name: " Engajamento ", product: "STLFLIX", startDate: "2026-10-01", endDate: "31/12/2026" }, ADMIN, config);
   assert.equal(r.status, 201);
   assert.equal(r.body.name, "Engajamento");
-  assert.equal(r.body.period, "2026-T4");
+  assert.equal(r.body.product, "STLFLIX");
+  assert.equal(r.body.startDate, "2026-10-01");
+  assert.equal(r.body.endDate, "");
   assert.equal(r.body.status, "Em andamento");
   assert.equal(r.body.createdBy, "ana@x.com");
 });
@@ -168,4 +171,20 @@ test("um épico fica numa feature só: vincular numa tira da outra", async () =>
   list = (await handleList("features", config)).body;
   assert.deepEqual(list.map((f) => f.id), [a.id, b.id]); // ordem preservada
   assert.deepEqual(list.find((f) => f.id === b.id).epicKeys, []);
+});
+
+test("oportunidade guarda links: só http(s), sem repetir, rótulo padrão = domínio", async () => {
+  const config = fakeConfig();
+  const { kr } = await tree(config);
+  const o = (await handleCreate("opportunities", { name: "O", keyResultId: kr.id, links: [
+    { label: " Estudo de churn ", url: "https://docs.google.com/document/d/abc" },
+    { url: "amplitude.com/chart/123" },
+    { label: "xss", url: "javascript:alert(1)" },
+    { label: "dup", url: "https://docs.google.com/document/d/abc" },
+    { label: "ftp", url: "ftp://x.com/a" },
+  ] }, ADMIN, config)).body;
+  assert.deepEqual(o.links, [
+    { label: "Estudo de churn", url: "https://docs.google.com/document/d/abc" },
+    { label: "amplitude.com", url: "https://amplitude.com/chart/123" },
+  ]);
 });

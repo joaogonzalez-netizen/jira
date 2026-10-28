@@ -17,6 +17,7 @@
 import { loadConfig as loadInitiativesConfig, resolveSessionFromCookie } from "./initiatives-core.js";
 import { migrateInitiativesToFeatures } from "./legacy-migration.js";
 import { baseReady } from "./workspace.js";
+import { cleanLinks } from "./links.js";
 
 export { resolveSessionFromCookie };
 
@@ -31,8 +32,11 @@ export const KINDS = {
     prefix: "obj",
     label: "Objetivo",
     fields: {
+      product: { type: "text", required: true }, // produto do Jira que o OKR mira
       description: { type: "text" },
-      period: { type: "text" }, // ex.: 2026-T4
+      period: { type: "text" }, // legado (ex.: 2026-T4); hoje o período são as datas
+      startDate: { type: "date" },
+      endDate: { type: "date" },
       status: { type: "enum", options: ["Em andamento", "Concluído", "Cancelado"], default: "Em andamento" },
     },
   },
@@ -62,6 +66,7 @@ export const KINDS = {
       keyResultId: { type: "ref", required: true },
       parentId: { type: "ref" }, // sub-oportunidade
       description: { type: "text" }, // dor, evidência
+      links: { type: "links" }, // estudos, dashboards
       status: { type: "enum", options: ["Aberta", "Explorando", "Validada", "Descartada"], default: "Aberta" },
     },
   },
@@ -218,6 +223,8 @@ function coerce(spec, value) {
     }
     case "checkins":
       return coerceCheckins(value);
+    case "links":
+      return cleanLinks(value);
     case "list":
       return Array.isArray(value) ? [...new Set(value.filter((v) => typeof v === "string" && v))] : undefined;
     default:
@@ -245,7 +252,7 @@ function defaults(kind) {
   const out = {};
   for (const [field, spec] of Object.entries(KINDS[kind].fields)) {
     if (spec.type === "enum") out[field] = spec.default;
-    else if (spec.type === "list" || spec.type === "checkins") out[field] = [];
+    else if (spec.type === "list" || spec.type === "checkins" || spec.type === "links") out[field] = [];
     else if (spec.type === "number" || spec.type === "score") out[field] = null;
     else out[field] = "";
   }

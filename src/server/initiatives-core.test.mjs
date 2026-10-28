@@ -71,3 +71,15 @@ test("ao listar, as iniciativas do Roadmap (com produto, sem KR) viram features"
   assert.equal(features[0].name, "Calculadora");
   assert.deepEqual(features[0].epicKeys, ["SELLER-42"]);
 });
+
+test("iniciativa: data de entrega, quarter Q1–Q4/ano e links", async () => {
+  const config = fakeConfig();
+  const r = await handleCreate({ name: "Reduzir cancelamento", dueDate: "2026-12-15", quarter: "Q4/2026", links: [{ label: "Dash", url: "https://app.amplitude.com/x" }, { url: "javascript:void(0)" }] }, ADMIN, config);
+  assert.equal(r.body.dueDate, "2026-12-15");
+  assert.equal(r.body.quarter, "Q4/2026");
+  assert.deepEqual(r.body.links, [{ label: "Dash", url: "https://app.amplitude.com/x" }]);
+  const u = await handleUpdate(r.body.id, { quarter: "Q5/2026", dueDate: "15/12/2026" }, ADMIN, config);
+  assert.equal(u.body.quarter, "Q4/2026");
+  assert.equal(u.body.dueDate, "2026-12-15");
+  assert.equal((await handleUpdate(r.body.id, { quarter: "", links: [] }, ADMIN, config)).body.quarter, "");
+});
