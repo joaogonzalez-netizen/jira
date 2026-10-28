@@ -1,8 +1,8 @@
 /**
- * Adaptador do Vite para Objetivos e Releases: serve `/api/planning` no dev
- * server e no preview. A lógica vive em `planning-core.js`, compartilhada com a
- * função da Vercel (`api/planning.js`) — aqui só se traduz `req`/`res` do Node,
- * igual a `initiatives-api.js`.
+ * Adaptador do Vite para o planejamento: serve `/api/planning` no dev server e
+ * no preview. A lógica vive em `planning-core.js`, compartilhada com a função
+ * da Vercel (`api/planning.js`) — aqui só se traduz `req`/`res` do Node, igual
+ * a `initiatives-api.js`.
  */
 import {
   configError,
@@ -13,6 +13,7 @@ import {
   loadConfig,
   resolveSessionFromCookie,
 } from "./planning-core.js";
+import { scopeConfig } from "./workspace.js";
 
 const MAX_BODY_BYTES = 64 * 1024;
 
@@ -51,7 +52,7 @@ function readJsonBody(req) {
 }
 
 export function planningApiPlugin(env) {
-  const config = loadConfig(env);
+  const configBase = loadConfig(env);
 
   const handler = async (req, res, next) => {
     if (!req.url || !req.url.startsWith("/api/planning")) return next();
@@ -60,10 +61,11 @@ export function planningApiPlugin(env) {
       return sendJson(res, { status: 404, body: { message: "Rota não encontrada" } });
     }
 
-    const misconfigured = configError(config);
+    const misconfigured = configError(configBase);
     if (misconfigured) return sendJson(res, misconfigured);
 
     try {
+      const config = await scopeConfig(configBase, req.headers.cookie);
       const params = new URLSearchParams(query || "");
       const session = await resolveSessionFromCookie(req.headers.cookie, config);
       if (req.method === "GET") return sendJson(res, await handleList(params.get("kind"), config));

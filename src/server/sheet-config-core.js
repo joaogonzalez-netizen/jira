@@ -13,6 +13,7 @@
  */
 import { createClient } from "redis";
 import { loadConfig as loadAuthConfig, readCookie, resolveSession, AUTH_COOKIE } from "./auth-core.js";
+import { baseReady } from "./workspace.js";
 
 const KV_KEY = "jira:sheet-config";
 
@@ -50,7 +51,7 @@ export function configError(config) {
 }
 
 async function ensureConnected(config) {
-  if (!config.kvReady) config.kvReady = config.kv.connect ? config.kv.connect() : Promise.resolve();
+  if (!config.kvReady) config.kvReady = baseReady(config.kv);
   await config.kvReady;
   return config.kv;
 }

@@ -25,6 +25,7 @@
  */
 import { createClient } from "redis";
 import { loadConfig as loadAuthConfig, readCookie, resolveSession, AUTH_COOKIE } from "./auth-core.js";
+import { baseReady } from "./workspace.js";
 
 const STATE_KEY = "jira:roadmap";
 const SNAPSHOT_KEY = "jira:sheet-snapshot";
@@ -93,7 +94,7 @@ export function configError(config) {
 }
 
 async function ensureConnected(config) {
-  if (!config.kvReady) config.kvReady = config.kv.connect ? config.kv.connect() : Promise.resolve();
+  if (!config.kvReady) config.kvReady = baseReady(config.kv);
   await config.kvReady;
   return config.kv;
 }

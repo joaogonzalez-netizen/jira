@@ -8,16 +8,18 @@ import {
   resolveSessionFromCookie,
 } from "../src/server/planning-core.js";
 import { jsonBody, sendJson } from "./_lib/respond.js";
+import { scopeConfig } from "../src/server/workspace.js";
 
-const config = loadConfig(process.env);
+const configBase = loadConfig(process.env);
 
 export default async function handler(req, res) {
-  const misconfigured = configError(config);
+  const misconfigured = configError(configBase);
   if (misconfigured) return sendJson(res, misconfigured);
 
   const q = (name) => (typeof req.query?.[name] === "string" ? req.query[name] : null);
 
   try {
+    const config = await scopeConfig(configBase, req.headers.cookie);
     const session = await resolveSessionFromCookie(req.headers.cookie, config);
     if (req.method === "GET") return sendJson(res, await handleList(q("kind"), config));
     if (req.method === "POST") {

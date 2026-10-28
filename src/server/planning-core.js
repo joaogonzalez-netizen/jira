@@ -16,6 +16,7 @@
  */
 import { loadConfig as loadInitiativesConfig, resolveSessionFromCookie } from "./initiatives-core.js";
 import { migrateInitiativesToFeatures } from "./legacy-migration.js";
+import { baseReady } from "./workspace.js";
 
 export { resolveSessionFromCookie };
 
@@ -127,7 +128,7 @@ export function configError(config) {
 }
 
 async function ensureConnected(config) {
-  if (!config.kvReady) config.kvReady = config.kv.connect();
+  if (!config.kvReady) config.kvReady = baseReady(config.kv);
   await config.kvReady;
   return config.kv;
 }

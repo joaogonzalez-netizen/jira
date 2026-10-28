@@ -6,6 +6,7 @@
  */
 import { configError, loadConfig, resolveSessionFromCookie, sharedMemoryKv } from "./roadmap-core.js";
 import { handleCancelEpic, handleCreateEpic, handleListAssignees, handleStatus, handleUpdateEpic, loadJiraConfig } from "./jira-core.js";
+import { scopeConfig } from "./workspace.js";
 
 const MAX_BODY_BYTES = 64 * 1024;
 
@@ -44,7 +45,7 @@ function readJsonBody(req) {
 
 export function jiraApiPlugin(env) {
   // mesmo KV do roadmap-api.js: o documento é um só
-  const rcfg = loadConfig(env, env.FILA_DEV_FAKE_KV === "1" ? sharedMemoryKv() : undefined);
+  const rcfgBase = loadConfig(env, env.FILA_DEV_FAKE_KV === "1" ? sharedMemoryKv() : undefined);
   const jira = loadJiraConfig(env);
 
   const handler = async (req, res, next) => {
@@ -56,10 +57,11 @@ export function jiraApiPlugin(env) {
     }
     if (path === "/api/jira/epics" && req.method === "GET") return sendJson(res, handleStatus(jira));
 
-    const misconfigured = configError(rcfg);
+    const misconfigured = configError(rcfgBase);
     if (misconfigured) return sendJson(res, misconfigured);
 
     try {
+      const rcfg = await scopeConfig(rcfgBase, req.headers.cookie);
       const session = await resolveSessionFromCookie(req.headers.cookie, rcfg);
       if (path === "/api/jira/assignees") {
         if (req.method !== "GET") return sendJson(res, { status: 405, body: { message: "Método não permitido" } });

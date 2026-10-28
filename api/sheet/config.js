@@ -6,14 +6,16 @@ import {
   resolveSessionFromCookie,
 } from "../../src/server/sheet-config-core.js";
 import { jsonBody, sendJson } from "../_lib/respond.js";
+import { scopeConfig } from "../../src/server/workspace.js";
 
-const config = loadConfig(process.env);
+const configBase = loadConfig(process.env);
 
 export default async function handler(req, res) {
-  const misconfigured = configError(config);
+  const misconfigured = configError(configBase);
   if (misconfigured) return sendJson(res, misconfigured);
 
   try {
+    const config = await scopeConfig(configBase, req.headers.cookie);
     const session = await resolveSessionFromCookie(req.headers.cookie, config);
     if (req.method === "GET") return sendJson(res, await handleGet(config, session));
     if (req.method === "PATCH") return sendJson(res, await handleSet(jsonBody(req), session, config));

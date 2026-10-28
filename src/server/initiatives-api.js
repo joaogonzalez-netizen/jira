@@ -13,6 +13,7 @@ import {
   loadConfig,
   resolveSessionFromCookie,
 } from "./initiatives-core.js";
+import { scopeConfig } from "./workspace.js";
 
 const MAX_BODY_BYTES = 64 * 1024;
 
@@ -51,7 +52,7 @@ function readJsonBody(req) {
 }
 
 export function initiativesApiPlugin(env) {
-  const config = loadConfig(env);
+  const configBase = loadConfig(env);
 
   const handler = async (req, res, next) => {
     if (!req.url || !req.url.startsWith("/api/initiatives")) return next();
@@ -60,10 +61,11 @@ export function initiativesApiPlugin(env) {
       return sendJson(res, { status: 404, body: { message: "Rota não encontrada" } });
     }
 
-    const misconfigured = configError(config);
+    const misconfigured = configError(configBase);
     if (misconfigured) return sendJson(res, misconfigured);
 
     try {
+      const config = await scopeConfig(configBase, req.headers.cookie);
       const session = await resolveSessionFromCookie(req.headers.cookie, config);
       if (req.method === "GET") return sendJson(res, await handleList(config));
       if (req.method === "POST") return sendJson(res, await handleCreate(await readJsonBody(req), session, config));

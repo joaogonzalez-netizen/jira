@@ -15,6 +15,7 @@ import {
   readSheetIdOverride,
   resolveSessionFromCookie,
 } from "./sheet-config-core.js";
+import { scopeConfig } from "./workspace.js";
 
 const MAX_BODY_BYTES = 8 * 1024;
 
@@ -54,21 +55,26 @@ function readJsonBody(req) {
 
 export function sheetApiPlugin(env) {
   const config = loadSheetConfig(env);
-  const kvConfig = loadKvConfig(env);
+  const kvConfigBase = loadKvConfig(env);
 
   const handler = async (req, res, next) => {
     if (!req.url || !req.url.startsWith("/api/sheet/")) return next();
     const route = req.url.split("?")[0];
 
     try {
+      const kvConfig = await scopeConfig(kvConfigBase, req.headers.cookie);
       if (route === "/api/sheet/sync" && req.method === "GET") {
         const misconfigured = configError(config);
         if (misconfigured) return sendJson(res, misconfigured);
         const override = await readSheetIdOverride(kvConfig);
+        // Projeto novo sem planilha: não cai na planilha do STLFLIX.
+        if (!override && kvConfig.workspace && kvConfig.workspace !== "default") {
+          return sendJson(res, { status: 409, body: { message: "Este projeto ainda não tem planilha: configure em Configurações" } });
+        }
         return sendJson(res, await handleSync(config, override));
       }
       if (route === "/api/sheet/config") {
-        const misconfigured = kvConfigError(kvConfig);
+        const misconfigured = kvConfigError(kvConfigBase);
         if (misconfigured) return sendJson(res, misconfigured);
         const session = await resolveSessionFromCookie(req.headers.cookie, kvConfig);
         if (req.method === "GET") return sendJson(res, await handleConfigGet(kvConfig, session));

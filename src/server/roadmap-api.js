@@ -20,6 +20,7 @@ import {
   loadConfig,
   resolveSessionFromCookie,
 } from "./roadmap-core.js";
+import { scopeConfig } from "./workspace.js";
 
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
 
@@ -57,7 +58,7 @@ function readJsonBody(req) {
 }
 
 export function roadmapApiPlugin(env) {
-  const config = loadConfig(env, env.FILA_DEV_FAKE_KV === "1" ? sharedMemoryKv() : undefined);
+  const configBase = loadConfig(env, env.FILA_DEV_FAKE_KV === "1" ? sharedMemoryKv() : undefined);
 
   const handler = async (req, res, next) => {
     if (!req.url || !req.url.startsWith("/api/roadmap")) return next();
@@ -66,10 +67,11 @@ export function roadmapApiPlugin(env) {
       return sendJson(res, { status: 404, body: { message: "Rota não encontrada" } });
     }
 
-    const misconfigured = configError(config);
+    const misconfigured = configError(configBase);
     if (misconfigured) return sendJson(res, misconfigured);
 
     try {
+      const config = await scopeConfig(configBase, req.headers.cookie);
       if (route === "/api/roadmap/snapshot") {
         if (req.method === "GET") return sendJson(res, await handleSnapshotGet(config));
         if (req.method === "PUT") {

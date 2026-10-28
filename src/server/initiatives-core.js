@@ -23,6 +23,7 @@
 import { createClient } from "redis";
 import { loadConfig as loadAuthConfig, readCookie, resolveSession, AUTH_COOKIE } from "./auth-core.js";
 import { migrateInitiativesToFeatures } from "./legacy-migration.js";
+import { baseReady } from "./workspace.js";
 
 const KV_KEY = "jira:initiatives";
 
@@ -49,7 +50,7 @@ export function configError(config) {
 /** Garante que o client conectou antes de usar — só chama `.connect()` uma
     vez mesmo com requests concorrentes na mesma instância (cold start). */
 async function ensureConnected(config) {
-  if (!config.kvReady) config.kvReady = config.kv.connect();
+  if (!config.kvReady) config.kvReady = baseReady(config.kv);
   await config.kvReady;
   return config.kv;
 }

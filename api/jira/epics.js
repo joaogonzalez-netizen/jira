@@ -1,17 +1,19 @@
 import { configError, loadConfig, resolveSessionFromCookie } from "../../src/server/roadmap-core.js";
 import { handleCancelEpic, handleCreateEpic, handleStatus, handleUpdateEpic, loadJiraConfig } from "../../src/server/jira-core.js";
 import { jsonBody, sendJson } from "../_lib/respond.js";
+import { scopeConfig } from "../../src/server/workspace.js";
 
-const rcfg = loadConfig(process.env);
+const rcfgBase = loadConfig(process.env);
 const jira = loadJiraConfig(process.env);
 
 export default async function handler(req, res) {
   if (req.method === "GET") return sendJson(res, handleStatus(jira));
 
-  const misconfigured = configError(rcfg);
+  const misconfigured = configError(rcfgBase);
   if (misconfigured) return sendJson(res, misconfigured);
 
   try {
+    const rcfg = await scopeConfig(rcfgBase, req.headers.cookie);
     const session = await resolveSessionFromCookie(req.headers.cookie, rcfg);
     if (req.method === "POST") return sendJson(res, await handleCreateEpic(jsonBody(req), session, rcfg, jira));
     if (req.method === "PATCH") return sendJson(res, await handleUpdateEpic(jsonBody(req), session, rcfg, jira));
