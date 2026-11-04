@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:mock": "node scripts/mock/dev-mock.mjs",
     "build": "vite build",
     "preview": "vite preview",
     "test": "node --test \"src/**/*.test.mjs\""
