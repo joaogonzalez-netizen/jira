@@ -2126,12 +2126,13 @@ function RoadmapScreen() {
     return r;
   };
 
-  // Tarefa entra no Gantt quando alguém a agenda (painel "Na fila (Produto)");
-  // fora disso ela não aparece nas listas de priorização, que são de épicos.
+  // Tarefa, story ou bug entra no Roadmap quando alguém a agenda no Gantt ou a
+  // põe numa fila (Produto/UX); fora disso fica só na camada Projetos.
   const allEpics = useMemo(() => {
-    const scheduledTasks = (TASKS || []).filter((t) => positions[t.key] && positions[t.key].roadmapLane);
-    return [...mergeCustomEpics(EPICS_SEED, customEpicsShown), ...scheduledTasks];
-  }, [EPICS_SEED, customEpicsShown, TASKS, positions]);
+    const queued = new Set([...filaProdutoOrder, ...filaUxOrder]);
+    const placedTasks = (TASKS || []).filter((t) => (positions[t.key] && positions[t.key].roadmapLane) || queued.has(t.key));
+    return [...mergeCustomEpics(EPICS_SEED, customEpicsShown), ...placedTasks];
+  }, [EPICS_SEED, customEpicsShown, TASKS, positions, filaProdutoOrder, filaUxOrder]);
   const byKey = useMemo(() => Object.fromEntries([...(TASKS || []), ...allEpics].map((e) => [e.key, e])), [allEpics, TASKS]);
 
   const PAST_WEEKS = 4; // ~1 mês antes de hoje, sempre visível pra trás
@@ -2256,7 +2257,6 @@ function RoadmapScreen() {
   // Um épico só fica em uma fila por vez: entrar na de Produto tira da de UX e vice-versa.
   const moveToFilaProduto = (key) => {
     if (!ownsCard(byKey[key])) return;
-    if (!isEpicItem(byKey[key])) return; // a fila é de épicos; tarefa vai direto para o Gantt
     if (filaProdutoOrder.includes(key)) return;
     const nextFilaProduto = [...filaProdutoOrder, key];
     const nextFilaUx = filaUxOrder.filter((k) => k !== key);
@@ -2522,7 +2522,7 @@ function RoadmapScreen() {
             <>
               <span style={{ width: 1, height: 18, background: T.border2, margin: "0 4px" }} />
               {toggle("kind", [["epics", "Épicos"], ["tasks", "Tarefas"], ["stories", "Story"], ["bugs", "Bugs"]])}
-              {toggle("state", [["open", "Na fila"], ["done", "Done"]])}
+              {toggle("state", [["open", "Em aberto"], ["done", "Done"]])}
               {browsing && toggle("sort", [["desc", "Mais recentes"], ["asc", "Mais antigos"]])}
             </>
           )}
@@ -2819,6 +2819,8 @@ function RoadmapScreen() {
                     key={e.key} epic={e} onDragStart={onDragStart}
                     onOpen={() => openItem(e)}
                     onAdd={e.project && ownsCard(e) ? addToGantt : undefined}
+                    onMoveToFilaProduto={ownsCard(e) && !isEpicDone(e) ? moveToFilaProduto : undefined}
+                    onMoveToFilaUx={ownsCard(e) && !isEpicDone(e) ? moveToFilaUx : undefined}
                     canDrag={ownsCard(e)}
                   />
                 ) : (
