@@ -2903,7 +2903,8 @@ function RoadmapScreen() {
 
 /* =====================================================================
    ENTREGAS — o que foi concluído no Gantt, semana a semana: uma aba por
-   produto, uma layer por feature, um card por entrega
+   produto, uma layer por feature, um card por entrega. As próximas semanas
+   mostram o que está previsto para terminar nelas.
    ===================================================================== */
 
 /** Semana da entrega: a da data de conclusão; sem data, a semana em que a
@@ -2916,6 +2917,17 @@ function deliveryWeek(item, now) {
 }
 
 const NO_FEATURE = "__sem_feature__";
+/** Quantas semanas à frente da atual a tela mostra (com o que está previsto). */
+const DELIVERY_AHEAD_WEEKS = 2;
+/** "2 entregas · 1 prevista" */
+function deliveryCountLabel(items) {
+  const done = items.filter((e) => !e.planned).length;
+  const planned = items.length - done;
+  const parts = [];
+  if (done || !planned) parts.push(`${done} ${done === 1 ? "entrega" : "entregas"}`);
+  if (planned) parts.push(`${planned} ${planned === 1 ? "prevista" : "previstas"}`);
+  return parts.join(" · ");
+}
 
 function DeliveryCard({ item }) {
   const { T, PRODUCT_STYLE } = useTheme();
@@ -2924,8 +2936,8 @@ function DeliveryCard({ item }) {
   return (
     <a
       href={jiraUrl(item.key)} target="_blank" rel="noopener noreferrer" className="pp-card"
-      title={item.byGantt ? "Sem data de conclusão no Jira: semana em que a barra termina no Gantt" : undefined}
-      style={{ display: "block", textDecoration: "none", background: T.bg1, boxShadow: T.cardShadow, borderRadius: 10, padding: "8px 10px", border: `1px solid ${T.border2}`, borderLeft: `3px solid ${prod.primary}`, fontFamily: "'Inter Tight', sans-serif" }}
+      title={item.planned ? "Previsto: ainda não concluído, a barra termina nesta semana no Gantt" : item.byGantt ? "Sem data de conclusão no Jira: semana em que a barra termina no Gantt" : undefined}
+      style={{ display: "block", textDecoration: "none", background: item.planned ? "transparent" : T.bg1, boxShadow: item.planned ? "none" : T.cardShadow, borderRadius: 10, padding: "8px 10px", border: `1px ${item.planned ? "dashed" : "solid"} ${item.planned ? `${prod.primary}88` : T.border2}`, borderLeft: `3px ${item.planned ? "dashed" : "solid"} ${prod.primary}`, fontFamily: "'Inter Tight', sans-serif" }}
     >
       <div className="flex items-center justify-between" style={{ gap: 6 }}>
         <span style={{ fontSize: 10.5, fontWeight: 500, color: T.ink1 }}>{item.key}</span>
@@ -2943,9 +2955,15 @@ function DeliveryCard({ item }) {
           )}
           <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{item.assignee ? shortName(item.assignee) : "Sem responsável"}</span>
         </span>
-        <span className="flex items-center" style={{ gap: 3, color: DONE_COLOR, flexShrink: 0 }}>
-          <Check size={11} /> {item.dataConcl ? item.dataConcl.split(" ")[0].slice(0, 5) : "Gantt"}
-        </span>
+        {item.planned ? (
+          <span className="flex items-center" style={{ gap: 3, color: T.ink2, flexShrink: 0 }}>
+            <Calendar size={11} /> {item.status || "Previsto"}
+          </span>
+        ) : (
+          <span className="flex items-center" style={{ gap: 3, color: DONE_COLOR, flexShrink: 0 }}>
+            <Check size={11} /> {item.dataConcl ? item.dataConcl.split(" ")[0].slice(0, 5) : "Gantt"}
+          </span>
+        )}
       </div>
     </a>
   );
@@ -2959,20 +2977,27 @@ function DeliveriesScreen() {
   const { initiatives, initiativeByEpicKey } = useRoadmapFeatures();
 
   // Mesmo recorte do Gantt: épicos (planilha + criados aqui) e as tarefas que
-  // alguém agendou; entrega = o que está numa raia e foi concluído.
+  // alguém agendou; entrega = o que está numa raia e foi concluído. Previsto =
+  // o que não foi concluído e tem a barra terminando entre esta semana e as
+  // próximas DELIVERY_AHEAD_WEEKS.
   const delivered = useMemo(() => {
     const pool = [...mergeCustomEpics(epics, customEpicsShown), ...(tasks || [])];
     const seen = new Set();
     return pool
       .filter((e) => !seen.has(e.key) && seen.add(e.key))
       .map((e) => ({ ...e, ...(positions[e.key] || {}) }))
-      .filter((e) => e.roadmapLane && e.startWeek != null && isEpicDone(e))
-      .map((e) => ({ ...e, ...deliveryWeek(e, now) }));
+      .filter((e) => e.roadmapLane && e.startWeek != null)
+      .flatMap((e) => {
+        if (isEpicDone(e)) return [{ ...e, ...deliveryWeek(e, now) }];
+        const end = e.startWeek + (e.durationWeeks || 2) - 1;
+        if (end < 0 || end > DELIVERY_AHEAD_WEEKS) return [];
+        return [{ ...e, week: addDays(startOfWeek(now), end * 7), planned: true }];
+      });
   }, [epics, tasks, positions, customEpicsShown, now]);
 
   const countByProduct = useMemo(() => {
     const c = {};
-    delivered.forEach((e) => { c[e.roadmapLane] = (c[e.roadmapLane] || 0) + 1; });
+    delivered.forEach((e) => { (c[e.roadmapLane] = c[e.roadmapLane] || []).push(e); });
     return c;
   }, [delivered]);
   const tabs = useMemo(() => [...products.filter((p) => countByProduct[p]), ...Object.keys(countByProduct).filter((p) => !products.includes(p))], [products, countByProduct]);
@@ -2981,7 +3006,12 @@ function DeliveriesScreen() {
 
   const board = useMemo(() => {
     const items = delivered.filter((e) => e.roadmapLane === product);
-    const weekTimes = [...new Set(items.map((e) => e.week.getTime()))].sort((a, b) => a - b);
+    // Toda semana, da primeira entrega até DELIVERY_AHEAD_WEEKS depois da
+    // atual, sem pular as vazias (sempre ao menos a semana anterior).
+    const current = startOfWeek(now);
+    const first = items.reduce((min, e) => (e.week < min ? e.week : min), addDays(current, -7));
+    const weekTimes = [];
+    for (let w = first; w <= addDays(current, DELIVERY_AHEAD_WEEKS * 7); w = addDays(w, 7)) weekTimes.push(w.getTime());
     const layers = {};
     items.forEach((e) => {
       const f = initiativeByEpicKey[e.key];
@@ -2996,25 +3026,37 @@ function DeliveriesScreen() {
       if (b.id === NO_FEATURE) return -1;
       return order.indexOf(a.id) - order.indexOf(b.id);
     });
-    return { weekTimes, rows, total: items.length };
-  }, [delivered, product, initiatives, initiativeByEpicKey]);
-
-  const scrollRef = useRef(null);
-  // As semanas mais recentes ficam à direita, como no Gantt: abre no fim.
-  useEffect(() => {
-    if (scrollRef.current) scrollRef.current.scrollLeft = scrollRef.current.scrollWidth;
-  }, [product, board.weekTimes.length]);
+    return { weekTimes, rows, items };
+  }, [delivered, product, initiatives, initiativeByEpicKey, now]);
 
   const prod = product ? PRODUCT_STYLE[product] : null;
   const FEATURE_COL_PX = 180;
-  const WEEK_COL_PX = 230;
+  const VISIBLE_WEEKS = 3;
   const thisWeek = startOfWeek(now).getTime();
+
+  // Cabem 3 semanas na tela (anterior, atual, próxima): a largura da coluna
+  // acompanha a do quadro.
+  const scrollRef = useRef(null);
+  const [boardWidth, setBoardWidth] = useState(0);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return undefined;
+    const ro = new ResizeObserver(([entry]) => setBoardWidth(entry.contentRect.width));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [tabs.length > 0]);
+  const weekColPx = Math.max(200, Math.floor((boardWidth - FEATURE_COL_PX) / VISIBLE_WEEKS));
+  // Abre com a semana atual no centro: a anterior encosta na coluna de features.
+  const prevWeekIndex = board.weekTimes.indexOf(addDays(startOfWeek(now), -7).getTime());
+  useEffect(() => {
+    if (scrollRef.current && prevWeekIndex >= 0) scrollRef.current.scrollLeft = prevWeekIndex * weekColPx;
+  }, [product, prevWeekIndex, weekColPx]);
 
   return (
     <ScreenShell>
-      <PageTitle title="Entregas" sub="O que foi concluído no Gantt, semana a semana. A semana é a da data de conclusão no Jira." />
+      <PageTitle title="Entregas" sub={`O que foi concluído no Gantt, semana a semana, e o previsto até ${DELIVERY_AHEAD_WEEKS} semanas à frente. A semana da entrega é a da data de conclusão no Jira.`} />
       {tabs.length === 0 ? (
-        <Muted>Nenhuma entrega ainda: itens concluídos aparecem aqui quando estão numa raia do Gantt.</Muted>
+        <Muted>Nenhuma entrega ainda: itens concluídos, ou previstos para as próximas semanas, aparecem aqui quando estão numa raia do Gantt.</Muted>
       ) : (
         <>
           <div className="flex items-center" role="tablist" style={{ gap: 4, borderBottom: `1px solid ${T.border2}`, marginBottom: 16, overflowX: "auto" }}>
@@ -3028,25 +3070,25 @@ function DeliveriesScreen() {
                 >
                   <span style={{ width: 7, height: 7, borderRadius: 999, background: st.primary }} />
                   {p}
-                  <span style={{ fontSize: 11, color: T.ink2, background: T.bg2, borderRadius: 999, padding: "0 7px" }}>{countByProduct[p]}</span>
+                  <span title={deliveryCountLabel(countByProduct[p])} style={{ fontSize: 11, color: T.ink2, background: T.bg2, borderRadius: 999, padding: "0 7px" }}>{countByProduct[p].filter((e) => !e.planned).length}</span>
                 </button>
               );
             })}
           </div>
 
           <div ref={scrollRef} className="pp-scroll" style={{ overflowX: "auto", border: `1px solid ${T.border2}`, borderRadius: 12, background: T.bg0 }}>
-            <div style={{ display: "grid", gridTemplateColumns: `${FEATURE_COL_PX}px repeat(${board.weekTimes.length}, minmax(${WEEK_COL_PX}px, 1fr))`, minWidth: FEATURE_COL_PX + board.weekTimes.length * WEEK_COL_PX }}>
+            <div style={{ display: "grid", gridTemplateColumns: `${FEATURE_COL_PX}px repeat(${board.weekTimes.length}, ${weekColPx}px)`, width: FEATURE_COL_PX + board.weekTimes.length * weekColPx }}>
               <div style={{ position: "sticky", left: 0, zIndex: 2, background: T.bg1, borderBottom: `1px solid ${T.border2}`, borderRight: `1px solid ${T.border2}`, padding: "10px 12px", fontSize: 11, fontWeight: 600, color: T.ink2 }}>
                 Feature
               </div>
               {board.weekTimes.map((t) => {
-                const n = board.rows.reduce((s, r) => s + r.items.filter((e) => e.week.getTime() === t).length, 0);
+                const inWeek = board.items.filter((e) => e.week.getTime() === t);
                 return (
                   <div key={t} style={{ background: T.bg1, borderBottom: `1px solid ${T.border2}`, borderRight: `1px solid ${T.border1}`, padding: "10px 12px", display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 6 }}>
                     <span style={{ fontSize: 12, fontWeight: 600, color: t === thisWeek ? prod.primary : T.ink0 }}>
                       Semana de {fmtWeek(new Date(t))}{t === thisWeek ? " · atual" : ""}
                     </span>
-                    <span style={{ fontSize: 11, color: T.ink2 }}>{n} {n === 1 ? "entrega" : "entregas"}</span>
+                    <span style={{ fontSize: 11, color: T.ink2 }}>{deliveryCountLabel(inWeek)}</span>
                   </div>
                 );
               })}
@@ -3056,7 +3098,7 @@ function DeliveriesScreen() {
                     <span className="flex items-center" style={{ gap: 6, fontSize: 12.5, fontWeight: 600, color: row.id === NO_FEATURE ? T.ink2 : T.ink0 }}>
                       <Layers size={13} style={{ color: prod.primary, flexShrink: 0 }} /> {row.name}
                     </span>
-                    <span style={{ fontSize: 11, color: T.ink2 }}>{row.items.length} {row.items.length === 1 ? "entrega" : "entregas"}</span>
+                    <span style={{ fontSize: 11, color: T.ink2 }}>{deliveryCountLabel(row.items)}</span>
                   </div>
                   {board.weekTimes.map((t) => (
                     <div key={t} style={{ borderBottom: `1px dashed ${prod.primary}66`, borderRight: `1px solid ${T.border1}`, padding: 8, display: "flex", flexDirection: "column", gap: 8, background: t === thisWeek ? prod.subtle : "transparent" }}>
@@ -3067,7 +3109,7 @@ function DeliveriesScreen() {
               ))}
             </div>
           </div>
-          <Muted style={{ marginTop: 10 }}>{board.total} {board.total === 1 ? "entrega" : "entregas"} em {product}. Clique num card para abrir no Jira.</Muted>
+          <Muted style={{ marginTop: 10 }}>{deliveryCountLabel(board.items)} em {product}. Cards tracejados são previstos: ainda não concluídos, com a barra do Gantt terminando naquela semana. Clique num card para abrir no Jira.</Muted>
         </>
       )}
     </ScreenShell>
