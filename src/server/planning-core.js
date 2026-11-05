@@ -137,7 +137,7 @@ export const KINDS = {
     nameMax: 2000,
     ownerOnly: true,
     fields: {
-      cardKey: { type: "ref", required: true },
+      cardKey: { type: "ref", required: true, max: 40 },
     },
   },
 };
@@ -248,7 +248,8 @@ function coerce(spec, value) {
   switch (spec.type) {
     case "text":
     case "ref":
-      return typeof value === "string" ? value.trim() : undefined;
+      if (typeof value !== "string") return undefined;
+      return spec.max ? value.trim().slice(0, spec.max) : value.trim();
     case "enum":
       return typeof value === "string" && spec.options.includes(value) ? value : undefined;
     case "date":

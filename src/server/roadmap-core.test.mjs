@@ -77,6 +77,8 @@ test("posição guarda a semana de entrega escolhida à mão, e só no formato A
   assert.deepEqual(ok.body.state.positions["SELLER-1"], { roadmapLane: "STL Seller", startWeek: -2, durationWeeks: 1, doneWeek: "2026-10-19" });
   const bad = await handlePatch({ positions: { "SELLER-1": { ...pos("STL Seller", -2, 1), doneWeek: "19/10/2026" } } }, SUPER, config);
   assert.equal(bad.status, 400);
+  const impossible = await handlePatch({ positions: { "SELLER-1": { ...pos("STL Seller", -2, 1), doneWeek: "2026-99-99" } } }, SUPER, config);
+  assert.equal(impossible.status, 400);
   const cleared = await handlePatch({ positions: { "SELLER-1": pos("STL Seller", 0) } }, SUPER, config);
   assert.equal("doneWeek" in cleared.body.state.positions["SELLER-1"], false);
 });

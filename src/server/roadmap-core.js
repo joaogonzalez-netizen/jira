@@ -143,7 +143,7 @@ function cleanPosition(p) {
   // a data de conclusão do Jira. Opcional — sem ela, a posição fica como sempre.
   const done = p.doneWeek;
   if (done == null) return { roadmapLane: lane, startWeek: sw, durationWeeks: dw };
-  if (typeof done !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(done)) throw new ValidationError("Semana de entrega inválida");
+  if (typeof done !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(done) || Number.isNaN(Date.parse(done))) throw new ValidationError("Semana de entrega inválida");
   return { roadmapLane: lane, startWeek: sw, durationWeeks: dw, doneWeek: done };
 }
 

@@ -40,6 +40,9 @@ test("comentários: texto e card obrigatórios, limite de tamanho, só o autor (
   const created = await handleCreate("comments", { name: "a".repeat(5000), cardKey: "SELLER-1" }, ADMIN, config);
   assert.equal(created.status, 201);
   assert.equal(created.body.name.length, 2000);
+  const longKey = await handleCreate("comments", { name: "x", cardKey: "K".repeat(500) }, ADMIN, config);
+  assert.equal(longKey.body.cardKey.length, 40);
+  assert.equal((await handleDelete("comments", longKey.body.id, ADMIN, config)).status, 200);
   assert.equal(created.body.createdBy, "ana@x.com");
   const id = created.body.id;
 

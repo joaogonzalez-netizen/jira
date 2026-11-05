@@ -405,7 +405,7 @@ function cleanPosition(p) {
   if (dw < 1 || dw > 52) throw new JiraError(400, "Duração inválida");
   const done = p.doneWeek ?? null;
   if (done === null) return { roadmapLane: lane, startWeek: sw, durationWeeks: dw };
-  if (typeof done !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(done)) throw new JiraError(400, "Semana de entrega inválida");
+  if (typeof done !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(done) || Number.isNaN(Date.parse(done))) throw new JiraError(400, "Semana de entrega inválida");
   return { roadmapLane: lane, startWeek: sw, durationWeeks: dw, doneWeek: done };
 }
 
