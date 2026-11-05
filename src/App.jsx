@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { ChevronUp, ChevronDown, ChevronRight, ChevronLeft, X, BarChart3, Sun, Moon, Calendar, Plus, Minus, RefreshCw, LogOut, Lock, Layers, Trash2, Users, Settings, Sparkles, Target, LayoutDashboard, Lightbulb, Package, FlaskConical, Check, ExternalLink, Puzzle } from "lucide-react";
+import { ChevronUp, ChevronDown, ChevronRight, ChevronLeft, X, BarChart3, Sun, Moon, Calendar, Plus, Minus, RefreshCw, LogOut, Lock, Layers, Trash2, Users, Settings, Sparkles, Target, LayoutDashboard, Lightbulb, Package, FlaskConical, Check, ExternalLink, Puzzle, PackageCheck } from "lucide-react";
 import { BarChart, Bar, LineChart, Line, PieChart, Pie, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell, LabelList, ReferenceLine } from "recharts";
 import storage from "./lib/storage";
 import { roadmapStore, diffRoadmap, isEmptyDiff, summarizeRoadmap, emptyRoadmap, applyEpicOverrides, mergeCustomEpics } from "./lib/roadmap-store";
@@ -2902,6 +2902,179 @@ function RoadmapScreen() {
 }
 
 /* =====================================================================
+   ENTREGAS — o que foi concluído no Gantt, semana a semana: uma aba por
+   produto, uma layer por feature, um card por entrega
+   ===================================================================== */
+
+/** Semana da entrega: a da data de conclusão; sem data, a semana em que a
+    barra termina no Gantt (startWeek é relativo à semana atual). */
+function deliveryWeek(item, now) {
+  const done = parseBRDate(item.dataConcl);
+  if (done) return { week: startOfWeek(done), byGantt: false };
+  const end = item.startWeek + (item.durationWeeks || 2) - 1;
+  return { week: addDays(startOfWeek(now), end * 7), byGantt: true };
+}
+
+const NO_FEATURE = "__sem_feature__";
+
+function DeliveryCard({ item }) {
+  const { T, PRODUCT_STYLE } = useTheme();
+  const prod = PRODUCT_STYLE[item.roadmapLane] || PRODUCT_STYLE["Backoffice"];
+  const kind = isEpicItem(item) ? "Épico" : item.type || "Issue";
+  return (
+    <a
+      href={jiraUrl(item.key)} target="_blank" rel="noopener noreferrer" className="pp-card"
+      title={item.byGantt ? "Sem data de conclusão no Jira: semana em que a barra termina no Gantt" : undefined}
+      style={{ display: "block", textDecoration: "none", background: T.bg1, boxShadow: T.cardShadow, borderRadius: 10, padding: "8px 10px", border: `1px solid ${T.border2}`, borderLeft: `3px solid ${prod.primary}`, fontFamily: "'Inter Tight', sans-serif" }}
+    >
+      <div className="flex items-center justify-between" style={{ gap: 6 }}>
+        <span style={{ fontSize: 10.5, fontWeight: 500, color: T.ink1 }}>{item.key}</span>
+        <span style={{ fontSize: 9.5, fontWeight: 600, color: prod.text, background: prod.subtle, borderRadius: 999, padding: "1px 7px" }}>{kind}</span>
+      </div>
+      <p style={{ margin: "4px 0 6px", fontSize: 12, fontWeight: 500, color: T.ink0, lineHeight: 1.35, display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+        {item.summary}
+      </p>
+      <div className="flex items-center justify-between" style={{ gap: 6, fontSize: 10.5, color: T.ink2 }}>
+        <span className="flex items-center" style={{ gap: 5, minWidth: 0 }}>
+          {item.assignee && (
+            <span style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 16, height: 16, borderRadius: 999, background: prod.primary, color: "#fff", fontSize: 7.5, fontWeight: 700, textTransform: "uppercase", flexShrink: 0 }}>
+              {initials(item.assignee)}
+            </span>
+          )}
+          <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{item.assignee ? shortName(item.assignee) : "Sem responsável"}</span>
+        </span>
+        <span className="flex items-center" style={{ gap: 3, color: DONE_COLOR, flexShrink: 0 }}>
+          <Check size={11} /> {item.dataConcl ? item.dataConcl.split(" ")[0].slice(0, 5) : "Gantt"}
+        </span>
+      </div>
+    </a>
+  );
+}
+
+function DeliveriesScreen() {
+  const { T, PRODUCT_STYLE } = useTheme();
+  const now = useNow();
+  const products = useProducts();
+  const { epics, tasks, positions, customEpicsShown } = useData();
+  const { initiatives, initiativeByEpicKey } = useRoadmapFeatures();
+
+  // Mesmo recorte do Gantt: épicos (planilha + criados aqui) e as tarefas que
+  // alguém agendou; entrega = o que está numa raia e foi concluído.
+  const delivered = useMemo(() => {
+    const pool = [...mergeCustomEpics(epics, customEpicsShown), ...(tasks || [])];
+    const seen = new Set();
+    return pool
+      .filter((e) => !seen.has(e.key) && seen.add(e.key))
+      .map((e) => ({ ...e, ...(positions[e.key] || {}) }))
+      .filter((e) => e.roadmapLane && e.startWeek != null && isEpicDone(e))
+      .map((e) => ({ ...e, ...deliveryWeek(e, now) }));
+  }, [epics, tasks, positions, customEpicsShown, now]);
+
+  const countByProduct = useMemo(() => {
+    const c = {};
+    delivered.forEach((e) => { c[e.roadmapLane] = (c[e.roadmapLane] || 0) + 1; });
+    return c;
+  }, [delivered]);
+  const tabs = useMemo(() => [...products.filter((p) => countByProduct[p]), ...Object.keys(countByProduct).filter((p) => !products.includes(p))], [products, countByProduct]);
+  const [picked, setPicked] = useState(null);
+  const product = tabs.includes(picked) ? picked : tabs[0];
+
+  const board = useMemo(() => {
+    const items = delivered.filter((e) => e.roadmapLane === product);
+    const weekTimes = [...new Set(items.map((e) => e.week.getTime()))].sort((a, b) => a - b);
+    const layers = {};
+    items.forEach((e) => {
+      const f = initiativeByEpicKey[e.key];
+      const id = f ? f.id : NO_FEATURE;
+      if (!layers[id]) layers[id] = { id, name: f ? f.name : "Sem feature", items: [] };
+      layers[id].items.push(e);
+    });
+    // Na ordem das features do Gantt; "Sem feature" por último.
+    const order = initiatives.map((i) => i.id);
+    const rows = Object.values(layers).sort((a, b) => {
+      if (a.id === NO_FEATURE) return 1;
+      if (b.id === NO_FEATURE) return -1;
+      return order.indexOf(a.id) - order.indexOf(b.id);
+    });
+    return { weekTimes, rows, total: items.length };
+  }, [delivered, product, initiatives, initiativeByEpicKey]);
+
+  const scrollRef = useRef(null);
+  // As semanas mais recentes ficam à direita, como no Gantt: abre no fim.
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollLeft = scrollRef.current.scrollWidth;
+  }, [product, board.weekTimes.length]);
+
+  const prod = product ? PRODUCT_STYLE[product] : null;
+  const FEATURE_COL_PX = 180;
+  const WEEK_COL_PX = 230;
+  const thisWeek = startOfWeek(now).getTime();
+
+  return (
+    <ScreenShell>
+      <PageTitle title="Entregas" sub="O que foi concluído no Gantt, semana a semana. A semana é a da data de conclusão no Jira." />
+      {tabs.length === 0 ? (
+        <Muted>Nenhuma entrega ainda: itens concluídos aparecem aqui quando estão numa raia do Gantt.</Muted>
+      ) : (
+        <>
+          <div className="flex items-center" role="tablist" style={{ gap: 4, borderBottom: `1px solid ${T.border2}`, marginBottom: 16, overflowX: "auto" }}>
+            {tabs.map((p) => {
+              const active = p === product;
+              const st = PRODUCT_STYLE[p];
+              return (
+                <button
+                  key={p} role="tab" aria-selected={active} onClick={() => setPicked(p)}
+                  style={{ display: "flex", alignItems: "center", gap: 7, padding: "8px 12px", marginBottom: -1, border: "none", borderBottom: `2px solid ${active ? st.primary : "transparent"}`, background: "transparent", color: active ? T.ink0 : T.ink1, fontSize: 13, fontWeight: active ? 600 : 500, cursor: "pointer", whiteSpace: "nowrap", fontFamily: "'Inter Tight', sans-serif" }}
+                >
+                  <span style={{ width: 7, height: 7, borderRadius: 999, background: st.primary }} />
+                  {p}
+                  <span style={{ fontSize: 11, color: T.ink2, background: T.bg2, borderRadius: 999, padding: "0 7px" }}>{countByProduct[p]}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div ref={scrollRef} className="pp-scroll" style={{ overflowX: "auto", border: `1px solid ${T.border2}`, borderRadius: 12, background: T.bg0 }}>
+            <div style={{ display: "grid", gridTemplateColumns: `${FEATURE_COL_PX}px repeat(${board.weekTimes.length}, minmax(${WEEK_COL_PX}px, 1fr))`, minWidth: FEATURE_COL_PX + board.weekTimes.length * WEEK_COL_PX }}>
+              <div style={{ position: "sticky", left: 0, zIndex: 2, background: T.bg1, borderBottom: `1px solid ${T.border2}`, borderRight: `1px solid ${T.border2}`, padding: "10px 12px", fontSize: 11, fontWeight: 600, color: T.ink2 }}>
+                Feature
+              </div>
+              {board.weekTimes.map((t) => {
+                const n = board.rows.reduce((s, r) => s + r.items.filter((e) => e.week.getTime() === t).length, 0);
+                return (
+                  <div key={t} style={{ background: T.bg1, borderBottom: `1px solid ${T.border2}`, borderRight: `1px solid ${T.border1}`, padding: "10px 12px", display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 6 }}>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: t === thisWeek ? prod.primary : T.ink0 }}>
+                      Semana de {fmtWeek(new Date(t))}{t === thisWeek ? " · atual" : ""}
+                    </span>
+                    <span style={{ fontSize: 11, color: T.ink2 }}>{n} {n === 1 ? "entrega" : "entregas"}</span>
+                  </div>
+                );
+              })}
+              {board.rows.map((row) => (
+                <React.Fragment key={row.id}>
+                  <div style={{ position: "sticky", left: 0, zIndex: 1, background: T.bg1, borderBottom: `1px dashed ${prod.primary}66`, borderRight: `1px solid ${T.border2}`, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 3 }}>
+                    <span className="flex items-center" style={{ gap: 6, fontSize: 12.5, fontWeight: 600, color: row.id === NO_FEATURE ? T.ink2 : T.ink0 }}>
+                      <Layers size={13} style={{ color: prod.primary, flexShrink: 0 }} /> {row.name}
+                    </span>
+                    <span style={{ fontSize: 11, color: T.ink2 }}>{row.items.length} {row.items.length === 1 ? "entrega" : "entregas"}</span>
+                  </div>
+                  {board.weekTimes.map((t) => (
+                    <div key={t} style={{ borderBottom: `1px dashed ${prod.primary}66`, borderRight: `1px solid ${T.border1}`, padding: 8, display: "flex", flexDirection: "column", gap: 8, background: t === thisWeek ? prod.subtle : "transparent" }}>
+                      {row.items.filter((e) => e.week.getTime() === t).map((e) => <DeliveryCard key={e.key} item={e} />)}
+                    </div>
+                  ))}
+                </React.Fragment>
+              ))}
+            </div>
+          </div>
+          <Muted style={{ marginTop: 10 }}>{board.total} {board.total === 1 ? "entrega" : "entregas"} em {product}. Clique num card para abrir no Jira.</Muted>
+        </>
+      )}
+    </ScreenShell>
+  );
+}
+
+/* =====================================================================
    APP — casca com o menu Projetos / Tarefas / Análises + toggle de tema
    ===================================================================== */
 
@@ -4994,7 +5167,7 @@ const SIDEBAR_KEY = "pp-sidebar-collapsed";
 const SIDEBAR_GROUPS = [
   { id: "visao", title: null, label: "Visão geral", items: [["visao", "Visão geral", LayoutDashboard]] },
   { id: "estrategia", title: "Estratégia", items: [["okrs", "Objetivos", Target], ["krs", "Key Results", Sparkles], ["oportunidades", "Oportunidades", Lightbulb]] },
-  { id: "execucao", title: "Execução", items: [["epicos", "Épicos", Layers], ["roadmap", "Roadmap", Calendar]] },
+  { id: "execucao", title: "Execução", items: [["epicos", "Épicos", Layers], ["roadmap", "Roadmap", Calendar], ["entregas", "Entregas", PackageCheck]] },
   { id: "produto", title: "Produto", items: [["produtos", "Produtos e features", Package]] },
   { id: "analises", title: "Análises", items: [["analises", "Análises", BarChart3], ["desenvolvedores", "Desenvolvedores", Users]] },
 ];
@@ -5133,6 +5306,7 @@ function AppShell() {
         : menu === "produtos" ? <ProductsScreen />
         : menu === "analises" ? <AnaliseScreen />
         : menu === "desenvolvedores" ? <DevelopersScreen />
+        : menu === "entregas" ? <DeliveriesScreen />
         : <RoadmapScreen />}
 
       {showSheetConfig && <SheetConfigModal onClose={() => setShowSheetConfig(false)} />}
