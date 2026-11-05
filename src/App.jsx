@@ -2087,7 +2087,7 @@ function RoadmapScreen() {
   const [layerFilters, setLayerFilters] = useState({
     produtos: { product: "all", search: "" },
     ux: { product: "all", search: "" },
-    projetos: { product: "all", search: "", kind: "epics", state: "open", limit: 40 },
+    projetos: { product: "all", search: "", kind: "epics", state: "open", limit: 40, sort: "desc" },
   });
   const setLayerFilter = (layer, patch) => setLayerFilters((prev) => ({ ...prev, [layer]: { ...prev[layer], ...patch } }));
   // Recolher/expandir: quais produtos e iniciativas estão com os épicos
@@ -2468,7 +2468,11 @@ function RoadmapScreen() {
       .filter(passes(pf))
       .filter((e) => (pf.state === "done") === isEpicDone(e))
       .filter((e) => !(positions[e.key] && positions[e.key].roadmapLane) && !filaSet.has(e.key))
-      .sort((x, y) => (parseBRDate(y.dataConcl || y.created) || 0) - (parseBRDate(x.dataConcl || x.created) || 0));
+      .sort((x, y) => {
+        // Done ordena pela data de conclusão; em aberto, pela de criação.
+        const at = (e) => (parseBRDate(pf.state === "done" ? e.dataConcl || e.created : e.created) || 0);
+        return pf.sort === "asc" ? at(x) - at(y) : at(y) - at(x);
+      });
   })();
   const projetosShown = projetosList.slice(0, browsing ? pf.limit : projetosList.length);
   const projetosGroups = (() => {
@@ -2519,6 +2523,7 @@ function RoadmapScreen() {
               <span style={{ width: 1, height: 18, background: T.border2, margin: "0 4px" }} />
               {toggle("kind", [["epics", "Épicos"], ["tasks", "Tarefas"], ["stories", "Story"], ["bugs", "Bugs"]])}
               {toggle("state", [["open", "Na fila"], ["done", "Done"]])}
+              {browsing && toggle("sort", [["desc", "Mais recentes"], ["asc", "Mais antigos"]])}
             </>
           )}
         </div>
@@ -2796,7 +2801,7 @@ function RoadmapScreen() {
       {/* Camada 3 — Projetos: priorização por projeto, ou tarefas/feitos para agendar */}
       <div onDragOver={(e) => e.preventDefault()} onDrop={browsing ? undefined : onDropPrio} style={{ padding: "18px 24px 24px" }}>
         {layerHeader("projetos", "Projetos", projetosList.length, browsing
-          ? `${{ epics: "Épicos", tasks: "Tarefas", stories: "Stories", bugs: "Bugs" }[pf.kind]} ${pf.state === "done" ? "já feitos (mais recentes primeiro)" : "em aberto"} fora do Gantt, por projeto. Marque "Gantt" ou arraste para colocar no Roadmap.`
+          ? `${{ epics: "Épicos", tasks: "Tarefas", stories: "Stories", bugs: "Bugs" }[pf.kind]} ${pf.state === "done" ? "já feitos" : "em aberto"} fora do Gantt, por projeto, ${pf.sort === "asc" ? "dos mais antigos" : "dos mais recentes"} para ${pf.sort === "asc" ? "os mais recentes" : "os mais antigos"} (data de ${pf.state === "done" ? "conclusão" : "criação"}). Marque "Gantt" ou arraste para colocar no Roadmap.`
           : 'Épicos para priorizar, por projeto. Marque "Fila Produto" ou "Fila UX", ou arraste para a camada.')}
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           {projetosGroups.length === 0 && <p style={{ fontSize: 12, color: T.ink2, fontFamily: "'Inter Tight', sans-serif" }}>Nada aqui com esse filtro.</p>}
