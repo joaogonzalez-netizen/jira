@@ -29,6 +29,31 @@ async function tree(config) {
   return { obj, kr, opp };
 }
 
+test("comentários: texto e card obrigatórios, limite de tamanho, só o autor (ou o super) altera", async () => {
+  const config = fakeConfig();
+  const OUTRA = { role: "admin", user: { id: "3", email: "bia@x.com" } };
+  const SUPER = { role: "super", user: { id: "4", email: "joao@x.com" } };
+  assert.equal((await handleCreate("comments", { name: "Sem card" }, ADMIN, config)).status, 400);
+  assert.equal((await handleCreate("comments", { name: "", cardKey: "SELLER-1" }, ADMIN, config)).status, 400);
+  assert.equal((await handleCreate("comments", { name: "x", cardKey: "SELLER-1" }, LEITOR, config)).status, 403);
+
+  const created = await handleCreate("comments", { name: "a".repeat(5000), cardKey: "SELLER-1" }, ADMIN, config);
+  assert.equal(created.status, 201);
+  assert.equal(created.body.name.length, 2000);
+  const longKey = await handleCreate("comments", { name: "x", cardKey: "K".repeat(500) }, ADMIN, config);
+  assert.equal(longKey.body.cardKey.length, 40);
+  assert.equal((await handleDelete("comments", longKey.body.id, ADMIN, config)).status, 200);
+  assert.equal(created.body.createdBy, "ana@x.com");
+  const id = created.body.id;
+
+  assert.equal((await handleUpdate("comments", id, { name: "reescrito" }, OUTRA, config)).status, 403);
+  assert.equal((await handleDelete("comments", id, OUTRA, config)).status, 403);
+  // a chave do card mudou (rascunho virou issue do Jira): qualquer admin move
+  assert.equal((await handleUpdate("comments", id, { cardKey: "SELLER-2" }, OUTRA, config)).body.cardKey, "SELLER-2");
+  assert.equal((await handleDelete("comments", id, SUPER, config)).status, 200);
+  assert.deepEqual((await handleList("comments", config)).body, []);
+});
+
 test("kind desconhecido ou herdado do protótipo é recusado", async () => {
   const config = fakeConfig();
   for (const kind of ["nope", "constructor", "__proto__", undefined, "releases", "initiatives"]) {
