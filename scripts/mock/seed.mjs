@@ -118,6 +118,8 @@ export function buildSeed(today = new Date()) {
   const stamp = (list) => list.map((x) => ({ createdAt: now, updatedAt: now, createdBy: "mock@local.test", ...x }));
   const snapshot = sheetSnapshot(today);
   return {
+    // Roadmap already on the server, as in production (no migration banner).
+    "jira:roadmap": { v: 1, rev: 1, updatedAt: now, updatedBy: "mock@local.test", positions: {}, customEpics: [], epicOverrides: {}, prioOrder: [], filaProdutoOrder: [], filaUxOrder: [] },
     "jira:sheet-snapshot": snapshot,
     "jira:sheet-snapshot-at": snapshot.syncedAt,
     "jira:migrations:initiatives-to-features": "done",
