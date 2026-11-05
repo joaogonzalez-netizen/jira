@@ -700,14 +700,16 @@ function DataProvider({ children }) {
   const value = useMemo(() => ({
     epics: epicsShown, tasks: tasksShown, allProjects, setEpics, setTasks, syncFromSheet, lastSync, syncStatus, syncError,
     jiraConfigured,
-    positions, setPositions, customEpics: customShown, setCustomEpics, prioOrder, setPrioOrder,
+    // customEpics = lista completa (é ela que se salva: o servidor trata o que
+    // falta como apagado); customEpicsShown = filtrada, só para exibir.
+    positions, setPositions, customEpics, customEpicsShown: customShown, setCustomEpics, prioOrder, setPrioOrder,
     filaProdutoOrder, setFilaProdutoOrder, filaUxOrder, setFilaUxOrder,
     roadmapSaving, persistRoadmap, updatePosition, addEpic, deleteEpic, saveDrawer, roadmapWeeks,
     roadmapMode, roadmapError, clearRoadmapError, localSummary, migrateToServer, reassignEpic, notifyRoadmapError,
   }), [
     epicsShown, tasksShown, allProjects, syncFromSheet, lastSync, syncStatus, syncError,
     jiraConfigured,
-    positions, customShown, prioOrder, filaProdutoOrder, filaUxOrder,
+    positions, customEpics, customShown, prioOrder, filaProdutoOrder, filaUxOrder,
     roadmapSaving, persistRoadmap, updatePosition, addEpic, deleteEpic, saveDrawer, roadmapWeeks,
     roadmapMode, roadmapError, clearRoadmapError, localSummary, migrateToServer, reassignEpic, notifyRoadmapError,
   ]);
@@ -2020,7 +2022,7 @@ function RoadmapScreen() {
   const NOW_DATE = useNow();
   const {
     epics: EPICS_SEED, tasks: TASKS,
-    positions, setPositions, customEpics, setCustomEpics, prioOrder, setPrioOrder,
+    positions, setPositions, customEpics, customEpicsShown, setCustomEpics, prioOrder, setPrioOrder,
     filaProdutoOrder, setFilaProdutoOrder, filaUxOrder, setFilaUxOrder,
     roadmapSaving: saving, persistRoadmap: persist, updatePosition, addEpic: addEpicShared, deleteEpic: deleteEpicShared, saveDrawer: saveDrawerShared,
     roadmapMode, roadmapError, clearRoadmapError, localSummary, migrateToServer, jiraConfigured, reassignEpic, notifyRoadmapError,
@@ -2038,6 +2040,9 @@ function RoadmapScreen() {
   const setViewMode = (v) => { setViewModeState(v); try { localStorage.setItem("roadmap-view", v); } catch { /* sem storage: vale só nesta sessão */ } };
   const byAssignee = viewMode === "responsavel";
   const [openKey, setOpenKey] = useState(null);
+  // Tarefa, story ou bug abre um drawer de leitura (o de épico edita no Jira).
+  const [openIssueKey, setOpenIssueKey] = useState(null);
+  const openItem = (e) => (isEpicItem(e) || e.key.startsWith("NOVO-") ? setOpenKey(e.key) : setOpenIssueKey(e.key));
   const [migrating, setMigrating] = useState(false);
   const [migrationMsg, setMigrationMsg] = useState(null);
   const importInputRef = useRef(null);
@@ -2125,8 +2130,8 @@ function RoadmapScreen() {
   // fora disso ela não aparece nas listas de priorização, que são de épicos.
   const allEpics = useMemo(() => {
     const scheduledTasks = (TASKS || []).filter((t) => positions[t.key] && positions[t.key].roadmapLane);
-    return [...mergeCustomEpics(EPICS_SEED, customEpics), ...scheduledTasks];
-  }, [EPICS_SEED, customEpics, TASKS, positions]);
+    return [...mergeCustomEpics(EPICS_SEED, customEpicsShown), ...scheduledTasks];
+  }, [EPICS_SEED, customEpicsShown, TASKS, positions]);
   const byKey = useMemo(() => Object.fromEntries([...(TASKS || []), ...allEpics].map((e) => [e.key, e])), [allEpics, TASKS]);
 
   const PAST_WEEKS = 4; // ~1 mês antes de hoje, sempre visível pra trás
@@ -2365,10 +2370,27 @@ function RoadmapScreen() {
     if (dragKey && !filaUxOrder.includes(dragKey)) moveToFilaUx(dragKey);
     setDragKey(null);
   };
+  // Item concluído (épico, story, tarefa, bug) que entra no Gantt vai para a
+  // semana em que foi feito: a barra termina na semana da data de conclusão.
+  // Antes da janela visível, encosta na primeira semana mostrada.
+  const doneStartWeek = (item, duration) => {
+    if (!item || !isEpicDone(item)) return null;
+    const d = parseBRDate(item.dataConcl);
+    if (!d) return null;
+    const doneWeek = Math.round((startOfWeek(d) - startOfWeek(NOW_DATE)) / (7 * 86400000));
+    return Math.min(weekCount - duration, Math.max(-PAST_WEEKS, doneWeek - duration + 1));
+  };
+  const enteringStart = (key, weekIndex, duration) => {
+    const scheduled = positions[key] && positions[key].roadmapLane;
+    const doneAt = scheduled ? null : doneStartWeek(byKey[key], duration);
+    return doneAt === null ? weekIndex : doneAt;
+  };
+
   const onDropCell = (e, laneKey, weekIndex) => {
     e.preventDefault();
     if (!dragKey) return;
     const cur = positions[dragKey] || { durationWeeks: 2 };
+    weekIndex = enteringStart(dragKey, weekIndex, cur.durationWeeks || 2);
     if (!byAssignee) {
       updatePosition(dragKey, { roadmapLane: laneKey, startWeek: weekIndex, durationWeeks: cur.durationWeeks || 2 });
       setDragKey(null);
@@ -2411,10 +2433,23 @@ function RoadmapScreen() {
     updatePosition(key, { roadmapLane: null, startWeek: null });
   };
 
+  // Realinha o que já está no Gantt e foi concluído: cada barra vai para a
+  // semana da data de conclusão. Só mexe no que a pessoa pode mover.
+  const misplacedDone = enriched.filter((e) => e.roadmapLane && e.startWeek !== null && ownsCard(e)
+    && (() => { const at = doneStartWeek(e, e.durationWeeks || 2); return at !== null && at !== e.startWeek; })());
+  const alignDone = () => {
+    if (!misplacedDone.length) return;
+    const next = { ...positions };
+    misplacedDone.forEach((e) => { next[e.key] = { ...next[e.key], startWeek: doneStartWeek(e, e.durationWeeks || 2) }; });
+    setPositions(next);
+    persist(next, customEpics, prioOrder, filaProdutoOrder, filaUxOrder);
+  };
+
   const addToGantt = (key) => {
     const epic = byKey[key];
     const cur = positions[key] || { durationWeeks: 2 };
-    updatePosition(key, { roadmapLane: epic?.project || null, startWeek: 0, durationWeeks: cur.durationWeeks || 2 });
+    const duration = cur.durationWeeks || 2;
+    updatePosition(key, { roadmapLane: epic?.project || null, startWeek: enteringStart(key, 0, duration), durationWeeks: duration });
   };
 
   const passes = (f) => {
@@ -2428,7 +2463,7 @@ function RoadmapScreen() {
   const projetosList = (() => {
     if (!browsing) return prioItems.filter(passes(pf));
     // Fora do Gantt e das filas: tarefas, ou o que já foi feito — para agendar.
-    const pool = pf.kind === "epics" ? mergeCustomEpics(EPICS_SEED, customEpics) : (TASKS || []).filter(ISSUE_KIND_MATCH[pf.kind]);
+    const pool = pf.kind === "epics" ? mergeCustomEpics(EPICS_SEED, customEpicsShown) : (TASKS || []).filter(ISSUE_KIND_MATCH[pf.kind]);
     return pool
       .filter(passes(pf))
       .filter((e) => (pf.state === "done") === isEpicDone(e))
@@ -2522,6 +2557,12 @@ function RoadmapScreen() {
             {canCreateCard && (
               <button onClick={() => { setNewInitError(null); setShowAddInitiative(true); }} style={{ display: "flex", alignItems: "center", gap: 5, borderRadius: 8, padding: "6px 10px", fontSize: 12, fontWeight: 500, border: `1px solid ${T.border2}`, cursor: "pointer", background: T.bg1, color: T.ink0, fontFamily: "'Inter Tight', sans-serif" }}>
                 <Layers size={12} /> Nova feature
+              </button>
+            )}
+            {misplacedDone.length > 0 && (
+              <button onClick={alignDone} title="Move os itens concluídos para a semana da data de conclusão"
+                style={{ display: "flex", alignItems: "center", gap: 5, borderRadius: 8, padding: "6px 10px", fontSize: 12, fontWeight: 500, border: `1px solid ${DONE_COLOR}`, cursor: "pointer", background: `${DONE_COLOR}14`, color: DONE_COLOR, fontFamily: "'Inter Tight', sans-serif" }}>
+                <Check size={12} /> Alinhar concluídos ({misplacedDone.length})
               </button>
             )}
             <div className="flex items-center" style={{ gap: 4 }}>
@@ -2679,7 +2720,7 @@ function RoadmapScreen() {
                       </div>
                       {g.items.map((e) => (
                         <div key={e.key} style={{ gridColumn: `${colOf(e.startWeek)} / span ${e.durationWeeks}`, gridRow: g.bodyStartRow + g.rowOf[e.key], display: "flex", alignItems: "center", zIndex: 1 }}>
-                          <EpicBar epic={e} onDragStart={onDragStart} onOpen={() => setOpenKey(e.key)} onResize={resizeEpic} onRemove={removeFromGantt} canEdit={ownsCard(e)} />
+                          <EpicBar epic={e} onDragStart={onDragStart} onOpen={() => openItem(e)} onResize={resizeEpic} onRemove={removeFromGantt} canEdit={ownsCard(e)} />
                         </div>
                       ))}
                       <div style={{ gridColumn: "1 / -1", gridRow: g.headerRow + initRowSpan, borderTop: `1px dashed ${style.primary}`, pointerEvents: "none" }} />
@@ -2688,7 +2729,7 @@ function RoadmapScreen() {
                   })}
                   {lane.unassigned.map((e) => (
                     <div key={e.key} style={{ gridColumn: `${colOf(e.startWeek)} / span ${e.durationWeeks}`, gridRow: lane.unassignedStartRow + lane.unassignedRowOf[e.key], display: "flex", alignItems: "center", zIndex: 1 }}>
-                      <EpicBar epic={e} onDragStart={onDragStart} onOpen={() => setOpenKey(e.key)} onResize={resizeEpic} onRemove={removeFromGantt} canEdit={ownsCard(e)} showAssignee={!byAssignee} />
+                      <EpicBar epic={e} onDragStart={onDragStart} onOpen={() => openItem(e)} onResize={resizeEpic} onRemove={removeFromGantt} canEdit={ownsCard(e)} showAssignee={!byAssignee} />
                     </div>
                   ))}
                 </React.Fragment>
@@ -2723,7 +2764,7 @@ function RoadmapScreen() {
           {filaProdutoShown.length === 0 && <span style={{ fontSize: 11.5, color: T.ink2, fontFamily: "'Inter Tight', sans-serif" }}>Nada na fila de Produto. Marque "Fila Produto" num card de Projetos ou arraste para cá.</span>}
           {filaProdutoShown.map((e) => (
             <PrioCard
-              key={e.key} epic={e} onDragStart={onDragStart} onOpen={() => setOpenKey(e.key)}
+              key={e.key} epic={e} onDragStart={onDragStart} onOpen={() => openItem(e)}
               onAdd={e.project && ownsCard(e) ? addToGantt : undefined}
               onDragOverCard={onFilaProdutoDragOverCard} onDropOnCard={onFilaProdutoDropOnCard}
               onDragEndCard={() => setFilaProdutoDropInfo(null)}
@@ -2741,7 +2782,7 @@ function RoadmapScreen() {
           {filaUxShown.length === 0 && <span style={{ fontSize: 11.5, color: T.ink2, fontFamily: "'Inter Tight', sans-serif" }}>Nada na fila de UX. Marque "Fila UX" num card de Projetos ou arraste para cá.</span>}
           {filaUxShown.map((e) => (
             <PrioCard
-              key={e.key} epic={e} onDragStart={onDragStart} onOpen={() => setOpenKey(e.key)}
+              key={e.key} epic={e} onDragStart={onDragStart} onOpen={() => openItem(e)}
               onAdd={e.project && ownsCard(e) ? addToGantt : undefined}
               onDragOverCard={onFilaUxDragOverCard} onDropOnCard={onFilaUxDropOnCard}
               onDragEndCard={() => setFilaUxDropInfo(null)}
@@ -2771,13 +2812,13 @@ function RoadmapScreen() {
                 {group.items.map((e) => (browsing ? (
                   <PrioCard
                     key={e.key} epic={e} onDragStart={onDragStart}
-                    onOpen={() => { if (isEpicItem(e)) setOpenKey(e.key); else window.open(jiraUrl(e.key), "_blank", "noopener"); }}
+                    onOpen={() => openItem(e)}
                     onAdd={e.project && ownsCard(e) ? addToGantt : undefined}
                     canDrag={ownsCard(e)}
                   />
                 ) : (
                   <PrioCard
-                    key={e.key} epic={e} onDragStart={onDragStart} onOpen={() => setOpenKey(e.key)}
+                    key={e.key} epic={e} onDragStart={onDragStart} onOpen={() => openItem(e)}
                     onAdd={e.project && ownsCard(e) ? addToGantt : undefined}
                     onMoveToFilaProduto={ownsCard(e) ? moveToFilaProduto : undefined}
                     onMoveToFilaUx={ownsCard(e) ? moveToFilaUx : undefined}
@@ -2798,6 +2839,14 @@ function RoadmapScreen() {
         </div>
       </div>
 
+      {openIssueKey && byKey[openIssueKey] && (
+        <IssueDrawer
+          issue={byKey[openIssueKey]} parent={byKey[byKey[openIssueKey].parent]} position={positions[openIssueKey]}
+          onClose={() => setOpenIssueKey(null)}
+          onAdd={ownsCard(byKey[openIssueKey]) && byKey[openIssueKey].project ? () => addToGantt(openIssueKey) : null}
+          onRemove={ownsCard(byKey[openIssueKey]) ? () => removeFromGantt(openIssueKey) : null}
+        />
+      )}
       <EpicDrawer epic={openEpic} weeks={weeks} onClose={() => setOpenKey(null)} onSave={saveDrawer} onDelete={deleteEpic} canEdit={ownsCard(openEpic)} jiraConfigured={jiraConfigured === true} />
 
       {showAddInitiative && (
@@ -3543,6 +3592,60 @@ const FORMS = {
     ],
   },
 };
+
+/** Drawer de leitura de uma issue que não é épico (tarefa, story, bug): os
+    dados da planilha, o link do Jira e colocar/tirar do Gantt. */
+function IssueDrawer({ issue, parent, position, onClose, onAdd, onRemove }) {
+  const { T, PRODUCT_STYLE } = useTheme();
+  const scheduled = !!(position && position.roadmapLane);
+  const prod = issue.project ? (PRODUCT_STYLE[issue.project] || PRODUCT_STYLE["Backoffice"]) : null;
+  const day = (v) => (v ? String(v).slice(0, 10) : null);
+  const rows = [
+    ["Tipo", issue.type],
+    ["Status", issue.status],
+    ["Responsável", issue.assignee],
+    ["Desenvolvedor", issue.developer],
+    ["Quem testou", issue.tester],
+    ["Reporter", issue.reporter],
+    ["Tipo de entrega", issue.tipo],
+    ["Prioridade", issue.priority],
+    ["Criado em", day(issue.created)],
+    ["Início", day(issue.dataInicio)],
+    ["Concluído em", day(issue.dataConcl)],
+  ].filter(([, v]) => v);
+  return (
+    <SideDrawer title={issue.type || "Issue"} onClose={onClose}>
+      <a href={jiraUrl(issue.key)} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, fontWeight: 500, color: ACCENT, textDecoration: "none" }}>
+        {issue.key} <ExternalLink size={12} />
+      </a>
+      <h3 style={{ margin: "6px 0 10px", fontSize: 17, fontWeight: 700, color: T.ink0, fontFamily: "'Plus Jakarta Sans', sans-serif", lineHeight: 1.3 }}>{issue.summary || "(sem título)"}</h3>
+      <div className="flex items-center" style={{ gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
+        {prod && <Badge bg={prod.subtle} color={prod.text}>{issue.project}</Badge>}
+        {isEpicDone(issue) && issue.dataConcl && <Badge bg={`${DONE_COLOR}1f`} color={DONE_COLOR}>Done em {day(issue.dataConcl)}</Badge>}
+        {scheduled && <Badge bg="rgba(81,102,230,0.12)" color={ACCENT}>No Gantt</Badge>}
+      </div>
+      {parent && (
+        <div style={{ marginBottom: 14, padding: "8px 10px", borderRadius: 8, background: T.bg1, border: `1px solid ${T.border2}` }}>
+          <div style={{ fontSize: 11, color: T.ink2, marginBottom: 2 }}>Épico pai</div>
+          <a href={jiraUrl(parent.key)} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12.5, color: T.ink0, textDecoration: "none" }}>{parent.key} · {parent.summary}</a>
+        </div>
+      )}
+      <div style={{ display: "grid", gridTemplateColumns: "120px 1fr", rowGap: 8, columnGap: 10, fontSize: 12.5 }}>
+        {rows.map(([label, value]) => (
+          <React.Fragment key={label}>
+            <span style={{ color: T.ink2 }}>{label}</span>
+            <span style={{ color: T.ink0 }}>{value}</span>
+          </React.Fragment>
+        ))}
+      </div>
+      <div className="flex items-center" style={{ gap: 8, marginTop: 20 }}>
+        {!scheduled && onAdd && <button onClick={() => { onAdd(); onClose(); }} style={btnStyle(T, true)}><Plus size={13} /> Colocar no Gantt</button>}
+        {scheduled && onRemove && <button onClick={() => { onRemove(); onClose(); }} style={btnStyle(T)}>Tirar do Gantt</button>}
+        <a href={jiraUrl(issue.key)} target="_blank" rel="noopener noreferrer" style={{ ...btnStyle(T), textDecoration: "none" }}><ExternalLink size={13} /> Abrir no Jira</a>
+      </div>
+    </SideDrawer>
+  );
+}
 
 function SideDrawer({ title, onClose, children }) {
   const { T } = useTheme();
@@ -4472,7 +4575,7 @@ const EPIC_STATUS_ORDER = ["Rascunho", "Backlog", "Produto", "Em design", "Em re
 function EpicsScreen() {
   const { T, PRODUCT_STYLE } = useTheme();
   const {
-    epics: sheetEpics, lastSync, customEpics, positions, roadmapWeeks, jiraConfigured,
+    epics: sheetEpics, lastSync, customEpicsShown: customEpics, positions, roadmapWeeks, jiraConfigured,
     addEpic, saveDrawer: saveDrawerShared, deleteEpic: deleteEpicShared,
   } = useData();
   const { canCreateCard, ownsCard } = useAuth();
