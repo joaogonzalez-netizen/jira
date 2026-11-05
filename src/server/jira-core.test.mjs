@@ -7,6 +7,7 @@ import {
   handleCancelEpic,
   handleCreateEpic,
   handleListAssignees,
+  handleListIssueTypes,
   handleUpdateEpic,
   handleRenameEpic,
   handleStatus,
@@ -167,7 +168,38 @@ test("URL base precisa ser https e a barra final é ignorada; status diz 'config
 });
 
 test("todo produto do Roadmap tem projeto no Jira", () => {
-  assert.deepEqual(Object.keys(PRODUCT_TO_PROJECT).sort(), ["STL IA", "STL Loja", "STL Academy", "STL Seller", "STLFLIX", "Backoffice"].sort());
+  assert.deepEqual(Object.keys(PRODUCT_TO_PROJECT).sort(), ["STL IA", "STL Loja", "STL Academy", "STL Seller", "STLFLIX", "Backoffice", "Custom", "Automação", "Dados", "Infra", "Tarefas"].sort());
+});
+
+/* --------------------------- tipo de issue e pai --------------------------- */
+
+test("tipos de issue: lista os do projeto do produto, marcando o épico; leitor não lista", async () => {
+  const { j } = await setup();
+  const r = await handleListIssueTypes({ product: "STL Seller" }, SUPER, j);
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body.types, [{ id: "10001", name: "Story", epic: false }, { id: "10000", name: "Epic", epic: true }]);
+  assert.equal((await handleListIssueTypes({ product: "STL Seller" }, LEITOR, j)).status, 403);
+  assert.equal((await handleListIssueTypes({ product: "Inexistente" }, SUPER, j)).status, 400);
+});
+
+test("criar com tipo: história com épico pai do mesmo projeto vai com issuetype e parent", async () => {
+  const { rcfg, jira, j } = await setup();
+  const r = await handleCreateEpic({ key: "NOVO-100", summary: "Tela de login", product: "STL Seller", issueTypeId: "10001", parentKey: "SELLER-1" }, SUPER, rcfg, j);
+  assert.equal(r.status, 200);
+  const post = jira.calls.find((c) => c.method === "POST" && c.path === "/rest/api/3/issue");
+  assert.deepEqual(post.body.fields, { project: { key: "SELLER" }, issuetype: { id: "10001" }, summary: "Tela de login", parent: { key: "SELLER-1" } });
+  const rec = (await state(rcfg)).state.customEpics.find((e) => e.key === r.body.key);
+  assert.equal(rec.epic, false);
+  assert.equal(rec.type, "Story");
+  assert.equal(rec.parent, "SELLER-1");
+});
+
+test("criar com tipo: tipo de fora do projeto, pai de outro projeto e épico com pai são recusados antes do POST", async () => {
+  const { rcfg, jira, j } = await setup();
+  assert.equal((await handleCreateEpic({ key: "NOVO-100", summary: "X", product: "STL Seller", issueTypeId: "99999" }, SUPER, rcfg, j)).status, 400);
+  assert.equal((await handleCreateEpic({ key: "NOVO-100", summary: "X", product: "STL Seller", issueTypeId: "10001", parentKey: "FLIX-9" }, SUPER, rcfg, j)).status, 400);
+  assert.equal((await handleCreateEpic({ key: "NOVO-100", summary: "X", product: "STL Seller", issueTypeId: "10000", parentKey: "SELLER-1" }, SUPER, rcfg, j)).status, 400);
+  assert.equal(jira.writes().length, 0);
 });
 
 /* ---------------------------------- criar --------------------------------- */

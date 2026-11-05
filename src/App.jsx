@@ -493,7 +493,8 @@ function DataProvider({ children }) {
   }, [adoptState, readLocalRoadmap, resyncFromServer, setMode, writeLocalRoadmap]);
 
   const allEpicsWithCustom = useMemo(() => mergeCustomEpics(epicsView, customEpics), [epicsView, customEpics]);
-  const byKeyWithCustom = useMemo(() => Object.fromEntries(allEpicsWithCustom.map((e) => [e.key, e])), [allEpicsWithCustom]);
+  // Tarefas também entram: dá para agendar tarefa no Gantt (e o gate de dono precisa achá-la).
+  const byKeyWithCustom = useMemo(() => Object.fromEntries([...(tasks || []), ...allEpicsWithCustom].map((e) => [e.key, e])), [allEpicsWithCustom, tasks]);
 
   // Choke point de toda mudança de posição (drop no Gantt, resize, remover,
   // "Gantt", e o Salvar do drawer para épico da planilha): um único gate cobre
@@ -567,7 +568,7 @@ function DataProvider({ children }) {
       if (jiraOn && project) {
         if (roadmapModeRef.current !== "server") return { ok: false, message: "O Roadmap precisa estar no servidor pra criar no Jira." };
         if (!summary) return { ok: false, message: "Dê um nome ao épico antes de criar no Jira." };
-        const r = await jiraApi.createEpic({ key, summary, product: project, description, tipo: patch.tipo || null, assignee: patch.assignee || undefined, position });
+        const r = await jiraApi.createEpic({ key, summary, product: project, description, tipo: patch.tipo || null, assignee: patch.assignee || undefined, position, issueTypeId: patch.issueTypeId || null, parentKey: patch.parentKey || null });
         if (!r.ok) return { ok: false, message: r.message };
         applyServerDoc(r);
         if (r.warning) setRoadmapError(r.warning);
@@ -679,7 +680,18 @@ function DataProvider({ children }) {
     const only = onlyKey ? new Set(onlyKey.split("|").map(normProject)) : null;
     const keep = (r) => !only || !r.project || only.has(normProject(r.project));
     const all = [...new Set([...epicsView, ...(tasks || [])].map((r) => r.project).filter(Boolean))].sort();
-    return { epicsShown: only ? epicsView.filter(keep) : epicsView, tasksShown: only ? (tasks || []).filter(keep) : tasks, customShown: only ? customEpics.filter(keep) : customEpics, allProjects: all };
+    // Issue criada aqui com outro tipo (tarefa, história…) mora em customEpics
+    // com epic: false — aparece junto das tarefas até a planilha trazê-la.
+    const customVisible = only ? customEpics.filter(keep) : customEpics;
+    const taskKeys = new Set((tasks || []).map((t) => t.key));
+    const customTasks = customVisible.filter((c) => c.epic === false && !taskKeys.has(c.key));
+    const baseTasks = only ? (tasks || []).filter(keep) : (tasks || []);
+    return {
+      epicsShown: only ? epicsView.filter(keep) : epicsView,
+      tasksShown: customTasks.length ? [...customTasks, ...baseTasks] : baseTasks,
+      customShown: customVisible.filter((c) => c.epic !== false),
+      allProjects: all,
+    };
   }, [epicsView, tasks, customEpics, onlyKey]);
 
   const value = useMemo(() => ({
@@ -867,9 +879,15 @@ function EpicDrawer({ epic, onClose, weeks, onSave, onDelete, canEdit, jiraConfi
   const [tipo, setTipo] = useState(epic?.tipo || "");
   const [assigneeName, setAssigneeName] = useState(epic?.assignee || "");
   const [people, setPeople] = useState([]);
+  // Tipo de issue do rascunho ("" = Épico) e épico pai (só para o que não é épico).
+  const [issueTypeId, setIssueTypeId] = useState("");
+  const [parentKey, setParentKey] = useState("");
+  const [issueTypes, setIssueTypes] = useState([]);
+  const { epics: sheetEpics } = useData();
+  const products = useProducts();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
-  useEffect(() => { setSummary(epic?.summary || ""); setLane(epic?.roadmapLane || PRIORIZACAO_KEY); setStartWeek(epic?.startWeek ?? 0); setDuration(epic?.durationWeeks ?? 2); setProject(epic?.project || ""); setDescription(epic?.resumo || ""); setTipo(epic?.tipo || ""); setAssigneeName(epic?.assignee || ""); setError(null); }, [epic]);
+  useEffect(() => { setSummary(epic?.summary || ""); setLane(epic?.roadmapLane || PRIORIZACAO_KEY); setStartWeek(epic?.startWeek ?? 0); setDuration(epic?.durationWeeks ?? 2); setProject(epic?.project || ""); setDescription(epic?.resumo || ""); setTipo(epic?.tipo || ""); setAssigneeName(epic?.assignee || ""); setIssueTypeId(""); setParentKey(""); setError(null); }, [epic]);
   const epicKey = epic?.key || null;
   const isDraftKey = !!epicKey && epicKey.startsWith("NOVO-");
   const draftProjectForPeople = isDraftKey ? (project || (lane !== PRIORIZACAO_KEY ? lane : "")) : "";
@@ -883,6 +901,14 @@ function EpicDrawer({ epic, onClose, weeks, onSave, onDelete, canEdit, jiraConfi
     jiraApi.assignees(q).then((r) => { if (alive && r?.ok) setPeople(r.users || []); });
     return () => { alive = false; };
   }, [epicKey, isDraftKey, draftProjectForPeople, schedulable, jiraConfigured, canEdit]);
+  // Tipos de issue do projeto do rascunho, direto do Jira.
+  useEffect(() => {
+    setIssueTypes([]);
+    if (!isDraftKey || !draftProjectForPeople || !jiraConfigured || !canEdit) return undefined;
+    let alive = true;
+    jiraApi.issueTypes(draftProjectForPeople).then((r) => { if (alive && r.ok) setIssueTypes(r.types); });
+    return () => { alive = false; };
+  }, [isDraftKey, draftProjectForPeople, jiraConfigured, canEdit]);
   if (!epic) return null;
   const prod = PRODUCT_STYLE[epic.project] || PRODUCT_STYLE["Backoffice"];
   const isCustom = schedulable && epic.key.startsWith("NOVO-");
@@ -908,12 +934,15 @@ function EpicDrawer({ epic, onClose, weeks, onSave, onDelete, canEdit, jiraConfi
     }
     return run(() => onSave(epic.key, {
       summary, roadmapLane: lane === PRIORIZACAO_KEY ? null : lane, startWeek: lane === PRIORIZACAO_KEY ? null : startWeek, durationWeeks: duration,
-      ...(isCustom ? { project: project || null, description, tipo: tipo || null } : {}),
+      ...(isCustom ? { project: project || null, description, tipo: tipo || null, issueTypeId: issueTypeId || null, parentKey: chosenType && !chosenType.epic ? parentKey || null : null } : {}),
       ...(assigneeName !== (epic.assignee || "") ? { assignee: assigneeName ? (people.find((u) => u.displayName === assigneeName) || { displayName: assigneeName }) : null } : {}),
     }));
   };
   // Projeto efetivo do rascunho: o escolhido, ou a camada de produto.
   const draftProject = project || (lane !== PRIORIZACAO_KEY ? lane : "");
+  const chosenType = issueTypes.find((t) => t.id === issueTypeId) || null;
+  const typeLabel = chosenType && !chosenType.epic ? chosenType.name : "épico";
+  const parentOptions = sheetEpics.filter((e) => e.project === draftProject && !e.key.startsWith("NOVO-"));
   const handleDelete = () => run(() => onDelete(epic.key));
   // Responsável: editável em rascunho e em épico do Jira (com integração ligada); senão só leitura.
   const assigneeEditable = schedulable && canEdit && (isCustom || (isJira && jiraConfigured));
@@ -937,7 +966,7 @@ function EpicDrawer({ epic, onClose, weeks, onSave, onDelete, canEdit, jiraConfi
     </>
   );
   const hint = !jiraConfigured || !canEdit ? null
-    : isCustom ? (draftProject ? `Ao salvar, este épico será criado no Jira (projeto ${draftProject}).` : "Escolha o projeto para criar este épico no Jira. Até lá ele é só um rascunho daqui.")
+    : isCustom ? (draftProject ? `Ao salvar, ${chosenType && !chosenType.epic ? `esta issue (${typeLabel})` : "este épico"} será criado no Jira (projeto ${draftProject}).` : "Escolha o projeto para criar no Jira. Até lá é só um rascunho daqui.")
     : isJira ? "Mudar o nome aqui também muda no Jira." : null;
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 50, display: "flex", justifyContent: "flex-end", background: "rgba(0,0,0,0.45)" }}>
@@ -968,8 +997,33 @@ function EpicDrawer({ epic, onClose, weeks, onSave, onDelete, canEdit, jiraConfi
               style={{ width: "100%", borderRadius: 8, border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink0, fontSize: 13, padding: "7px 8px", fontFamily: "'Inter Tight', sans-serif" }}
             >
               <option value="">Selecione o projeto…</option>
-              {PRODUCTS.map((p) => <option key={p} value={p}>{p}</option>)}
+              {[...new Set([...products, ...(project ? [project] : [])])].map((p) => <option key={p} value={p}>{p}</option>)}
             </select>
+
+            {jiraConfigured && draftProject && (
+              <>
+                <p style={{ marginTop: 14, marginBottom: 6, fontSize: 12, fontWeight: 500, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>Tipo de issue</p>
+                <select
+                  value={issueTypeId} onChange={(e) => { setIssueTypeId(e.target.value); setParentKey(""); }} disabled={!canEdit || busy}
+                  style={{ width: "100%", borderRadius: 8, border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink0, fontSize: 13, padding: "7px 8px", fontFamily: "'Inter Tight', sans-serif" }}
+                >
+                  <option value="">Épico</option>
+                  {issueTypes.filter((t) => !t.epic).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                </select>
+                {chosenType && !chosenType.epic && (
+                  <>
+                    <p style={{ marginTop: 14, marginBottom: 6, fontSize: 12, fontWeight: 500, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>Épico pai (opcional)</p>
+                    <select
+                      value={parentKey} onChange={(e) => setParentKey(e.target.value)} disabled={!canEdit || busy}
+                      style={{ width: "100%", borderRadius: 8, border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink0, fontSize: 13, padding: "7px 8px", fontFamily: "'Inter Tight', sans-serif" }}
+                    >
+                      <option value="">Sem épico pai</option>
+                      {parentOptions.map((e) => <option key={e.key} value={e.key}>{e.key} · {e.summary}</option>)}
+                    </select>
+                  </>
+                )}
+              </>
+            )}
 
             <p style={{ marginTop: 14, marginBottom: 6, fontSize: 12, fontWeight: 500, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>Tipo de entrega</p>
             <select
@@ -1957,7 +2011,7 @@ function RoadmapScreen() {
   // (e as próprias semanas do Gantt) travam no dia em que a aba foi aberta.
   const NOW_DATE = useNow();
   const {
-    epics: EPICS_SEED,
+    epics: EPICS_SEED, tasks: TASKS,
     positions, setPositions, customEpics, setCustomEpics, prioOrder, setPrioOrder,
     filaProdutoOrder, setFilaProdutoOrder, filaUxOrder, setFilaUxOrder,
     roadmapSaving: saving, persistRoadmap: persist, updatePosition, addEpic: addEpicShared, deleteEpic: deleteEpicShared, saveDrawer: saveDrawerShared,
@@ -2014,6 +2068,12 @@ function RoadmapScreen() {
   const [prioDropInfo, setPrioDropInfo] = useState(null);
   const [filaProdutoDropInfo, setFilaProdutoDropInfo] = useState(null);
   const [filaUxDropInfo, setFilaUxDropInfo] = useState(null);
+  // Painel "Na fila (Produto)": aba de produto, tipo (épicos/tarefas) e situação (na fila/done).
+  const [filaProduct, setFilaProduct] = useState("all");
+  const [filaKind, setFilaKind] = useState("epics");
+  const [filaState, setFilaState] = useState("open");
+  const [filaSearch, setFilaSearch] = useState("");
+  const [filaLimit, setFilaLimit] = useState(40);
   // Recolher/expandir: quais produtos e iniciativas estão com os épicos
   // escondidos no Gantt. Não persiste entre sessões de propósito — é um
   // estado de visualização, não um dado do board.
@@ -2050,8 +2110,13 @@ function RoadmapScreen() {
     return r;
   };
 
-  const allEpics = useMemo(() => mergeCustomEpics(EPICS_SEED, customEpics), [EPICS_SEED, customEpics]);
-  const byKey = useMemo(() => Object.fromEntries(allEpics.map((e) => [e.key, e])), [allEpics]);
+  // Tarefa entra no Gantt quando alguém a agenda (painel "Na fila (Produto)");
+  // fora disso ela não aparece nas listas de priorização, que são de épicos.
+  const allEpics = useMemo(() => {
+    const scheduledTasks = (TASKS || []).filter((t) => positions[t.key] && positions[t.key].roadmapLane);
+    return [...mergeCustomEpics(EPICS_SEED, customEpics), ...scheduledTasks];
+  }, [EPICS_SEED, customEpics, TASKS, positions]);
+  const byKey = useMemo(() => Object.fromEntries([...(TASKS || []), ...allEpics].map((e) => [e.key, e])), [allEpics, TASKS]);
 
   const PAST_WEEKS = 4; // ~1 mês antes de hoje, sempre visível pra trás
   const WEEK_COL_PX = 200; // largura mínima de cada coluna de semana — mais larga pra caber ~6 semanas por tela em vez de 8
@@ -2181,6 +2246,7 @@ function RoadmapScreen() {
   // Um épico só fica em uma fila por vez: entrar na de Produto tira da de UX e vice-versa.
   const moveToFilaProduto = (key) => {
     if (!ownsCard(byKey[key])) return;
+    if (!isEpicItem(byKey[key])) return; // a fila é de épicos; tarefa vai direto para o Gantt
     if (filaProdutoOrder.includes(key)) return;
     const nextFilaProduto = [...filaProdutoOrder, key];
     const nextFilaUx = filaUxOrder.filter((k) => k !== key);
@@ -2341,10 +2407,28 @@ function RoadmapScreen() {
   };
 
   const addToGantt = (key) => {
-    const epic = enriched.find((e) => e.key === key);
+    const epic = byKey[key];
     const cur = positions[key] || { durationWeeks: 2 };
     updatePosition(key, { roadmapLane: epic?.project || null, startWeek: 0, durationWeeks: cur.durationWeeks || 2 });
   };
+
+  // Itens do painel "Na fila (Produto)". Épicos na fila = a fila de sempre;
+  // o resto lista o que ainda não está no Gantt, para agendar (inclusive o já feito).
+  const filaPanelItems = (() => {
+    const inProduct = (e) => filaProduct === "all" || e.project === filaProduct;
+    if (filaKind === "epics" && filaState === "open") {
+      const items = filaProdutoItems.filter(inProduct);
+      return { items, total: items.length, more: 0 };
+    }
+    const needle = filaSearch.trim().toLowerCase();
+    const pool = filaKind === "epics" ? mergeCustomEpics(EPICS_SEED, customEpics) : (TASKS || []).filter(isTaskItem);
+    const list = pool
+      .filter((e) => inProduct(e) && (filaState === "done") === isEpicDone(e))
+      .filter((e) => !(positions[e.key] && positions[e.key].roadmapLane))
+      .filter((e) => !needle || `${e.key} ${e.summary || ""}`.toLowerCase().includes(needle))
+      .sort((a, b) => (parseBRDate(b.dataConcl || b.created) || 0) - (parseBRDate(a.dataConcl || a.created) || 0));
+    return { items: list.slice(0, filaLimit), total: list.length, more: Math.max(0, list.length - filaLimit) };
+  })();
 
   const openEpic = openKey ? enriched.find((e) => e.key === openKey) : null;
 
@@ -2574,22 +2658,69 @@ function RoadmapScreen() {
       <div className="flex" style={{ borderBottom: `1px solid ${T.border1}` }}>
         <div
           onDragOver={(e) => e.preventDefault()} onDrop={onDropFilaProduto}
-          style={{ flex: 1, padding: "16px 24px", borderRight: `1px solid ${T.border1}` }}
+          style={{ flex: 1, minWidth: 0, padding: "16px 24px", borderRight: `1px solid ${T.border1}` }}
         >
-          <p style={{ fontSize: 12.5, fontWeight: 600, color: T.ink0, marginBottom: 3, fontFamily: "'Plus Jakarta Sans', sans-serif" }}>Na fila (Produto) <span style={{ color: T.ink2, fontWeight: 400, fontFamily: "'Inter Tight', sans-serif" }}>({filaProdutoItems.length})</span></p>
-          <p style={{ fontSize: 11.5, color: T.ink2, marginBottom: 10, fontFamily: "'Inter Tight', sans-serif" }}>Próximas prioridades de Produto, na ordem em que vamos trabalhar</p>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, minHeight: 40, borderRadius: 10, border: `1px dashed ${T.border2}`, padding: 8 }}>
-            {filaProdutoItems.length === 0 && <span style={{ fontSize: 11.5, color: T.ink2, fontFamily: "'Inter Tight', sans-serif" }}>Marque "Fila Produto" num card de priorização pra trazer pra aqui</span>}
-            {filaProdutoItems.map((e) => (
-              <PrioCard
-                key={e.key} epic={e} onDragStart={onDragStart} onOpen={() => setOpenKey(e.key)}
-                onAdd={e.project && ownsCard(e) ? addToGantt : undefined}
-                onDragOverCard={onFilaProdutoDragOverCard} onDropOnCard={onFilaProdutoDropOnCard}
-                onDragEndCard={() => setFilaProdutoDropInfo(null)}
-                dropIndicator={filaProdutoDropInfo?.key === e.key ? filaProdutoDropInfo.position : null}
-                canDrag={ownsCard(e)}
-              />
+          <p style={{ fontSize: 12.5, fontWeight: 600, color: T.ink0, marginBottom: 3, fontFamily: "'Plus Jakarta Sans', sans-serif" }}>Na fila (Produto) <span style={{ color: T.ink2, fontWeight: 400, fontFamily: "'Inter Tight', sans-serif" }}>({filaPanelItems.total})</span></p>
+          <p style={{ fontSize: 11.5, color: T.ink2, marginBottom: 10, fontFamily: "'Inter Tight', sans-serif" }}>
+            {filaKind === "epics" && filaState === "open" ? "Próximas prioridades de Produto, na ordem em que vamos trabalhar" : "Arraste para o Gantt (ou marque \"Gantt\") para colocar no Roadmap"}
+          </p>
+          <div className="flex items-center" style={{ gap: 4, flexWrap: "wrap", marginBottom: 8 }}>
+            {["all", ...products].map((p) => {
+              const on = filaProduct === p;
+              const c = p === "all" ? "#5166e6" : (PRODUCT_STYLE[p] || PRODUCT_STYLE["Backoffice"]).primary;
+              return (
+                <button key={p} onClick={() => { setFilaProduct(p); setFilaLimit(40); }}
+                  style={{ display: "inline-flex", alignItems: "center", gap: 5, borderRadius: 999, padding: "3px 10px", fontSize: 11.5, fontWeight: 500, cursor: "pointer", fontFamily: "'Inter Tight', sans-serif", border: `1px solid ${on ? c : T.border2}`, background: on ? `${c}1f` : T.bg1, color: on ? T.ink0 : T.ink1 }}>
+                  {p !== "all" && <span style={{ width: 6, height: 6, borderRadius: 999, background: c }} />}{p === "all" ? "Todos" : p}
+                </button>
+              );
+            })}
+          </div>
+          <div className="flex items-center" style={{ gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+            {[[filaKind, setFilaKind, [["epics", "Épicos"], ["tasks", "Tarefas"]]], [filaState, setFilaState, [["open", "Na fila"], ["done", "Done"]]]].map(([value, set, opts], i) => (
+              <div key={i} className="flex" style={{ border: `1px solid ${T.border2}`, borderRadius: 8, overflow: "hidden" }}>
+                {opts.map(([k, label]) => (
+                  <button key={k} onClick={() => { set(k); setFilaLimit(40); }}
+                    style={{ padding: "4px 10px", fontSize: 11.5, fontWeight: 500, border: "none", cursor: "pointer", fontFamily: "'Inter Tight', sans-serif", background: value === k ? "rgba(81,102,230,0.12)" : T.bg1, color: value === k ? "#5166e6" : T.ink1 }}>
+                    {label}
+                  </button>
+                ))}
+              </div>
             ))}
+            {!(filaKind === "epics" && filaState === "open") && (
+              <input value={filaSearch} onChange={(e) => { setFilaSearch(e.target.value); setFilaLimit(40); }} placeholder="Buscar chave ou título"
+                style={{ flex: 1, minWidth: 140, borderRadius: 8, border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink0, fontSize: 12, padding: "5px 8px", fontFamily: "'Inter Tight', sans-serif" }} />
+            )}
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, minHeight: 40, borderRadius: 10, border: `1px dashed ${T.border2}`, padding: 8 }}>
+            {filaPanelItems.items.length === 0 && (
+              <span style={{ fontSize: 11.5, color: T.ink2, fontFamily: "'Inter Tight', sans-serif" }}>
+                {filaKind === "epics" && filaState === "open" ? 'Marque "Fila Produto" num card de priorização pra trazer pra aqui' : "Nada aqui fora do Gantt"}
+              </span>
+            )}
+            {filaPanelItems.items.map((e) => (
+              filaKind === "epics" && filaState === "open" ? (
+                <PrioCard
+                  key={e.key} epic={e} onDragStart={onDragStart} onOpen={() => setOpenKey(e.key)}
+                  onAdd={e.project && ownsCard(e) ? addToGantt : undefined}
+                  onDragOverCard={onFilaProdutoDragOverCard} onDropOnCard={onFilaProdutoDropOnCard}
+                  onDragEndCard={() => setFilaProdutoDropInfo(null)}
+                  dropIndicator={filaProdutoDropInfo?.key === e.key ? filaProdutoDropInfo.position : null}
+                  canDrag={ownsCard(e)}
+                />
+              ) : (
+                <PrioCard
+                  key={e.key} epic={e} onDragStart={onDragStart} onOpen={() => { if (isEpicItem(e)) setOpenKey(e.key); else window.open(jiraUrl(e.key), "_blank", "noopener"); }}
+                  onAdd={e.project && ownsCard(e) ? addToGantt : undefined}
+                  canDrag={ownsCard(e)}
+                />
+              )
+            ))}
+            {filaPanelItems.more > 0 && (
+              <button onClick={() => setFilaLimit((n) => n + 40)} style={{ alignSelf: "center", border: "none", background: "none", color: "#5166e6", fontSize: 12, cursor: "pointer", fontFamily: "'Inter Tight', sans-serif" }}>
+                Mostrar mais {filaPanelItems.more}
+              </button>
+            )}
           </div>
         </div>
 
@@ -2797,6 +2928,9 @@ const EXPERIMENT_STATUSES = ["Ideia", "Rodando", "Analisando", "Concluído"];
 const KR_STATUSES = ["Em andamento", "Planejado", "Pausado", "Concluído", "Cancelado"];
 
 const isEpicDone = (e) => e.status === "Done" || e.stage === "Concluído";
+/** Épico (da planilha ou criado aqui) x tarefa — o painel da fila mostra só esses dois. */
+const isEpicItem = (e) => !!e && e.epic !== false && (e.epic === true || /^(epic|épico)$/i.test(e.type || ""));
+const isTaskItem = (e) => !!e && /^(task|tarefa)$/i.test(e.type || "");
 function epicBucket(e) {
   if (isEpicDone(e)) return "done";
   if (e.status === "Backlog" || e.stage === "Backlog" || e.status === "Produto") return "todo";

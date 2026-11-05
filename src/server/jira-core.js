@@ -30,6 +30,11 @@ export const PRODUCT_TO_PROJECT = {
   "STL Loja": "LOJA",
   "Backoffice": "BACK",
   "STL Academy": "ACADEMY",
+  "Custom": "CUSTOM",
+  "Automação": "AUT",
+  "Dados": "DADOS",
+  "Infra": "INFRA",
+  "Tarefas": "TASK",
 };
 
 const JIRA_KEY_RE = /^[A-Z][A-Z0-9]{1,9}-\d{1,9}$/;
@@ -144,6 +149,14 @@ const norm = (s) => String(s ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g,
 
 const isEpicType = (t) => !!t && (t.hierarchyLevel === 1 || /^(epic|épico)$/i.test(t.name || ""));
 
+/** Tipos de issue que dá para criar no projeto (sem subtarefa, que exige pai). */
+async function projectIssueTypes(j, projectKey) {
+  const project = await jiraFetch(j, "GET", `/rest/api/3/project/${projectKey}`);
+  return (project?.issueTypes || [])
+    .filter((t) => t && !t.subtask && t.id)
+    .map((t) => ({ id: String(t.id), name: t.name || "", epic: isEpicType(t) }));
+}
+
 async function epicTypeId(j, projectKey) {
   const cached = j.typeCache.get(projectKey);
   if (cached) return cached;
@@ -189,10 +202,11 @@ function resolveTipoEntrega(fields, tipo) {
   return { fieldId: f.fieldId, value: isArray ? [option] : option };
 }
 
-/** Cria o épico; projetos com "Epic Name" obrigatório respondem 400 apontando o campo. */
-async function createJiraEpic(j, projectKey, summary, description, tipo) {
-  const typeId = await epicTypeId(j, projectKey);
-  let fields = { project: { key: projectKey }, issuetype: { id: typeId }, summary };
+/** Cria a issue (épico por padrão, ou o tipo escolhido, com épico pai opcional);
+    projetos com "Epic Name" obrigatório respondem 400 apontando o campo. */
+async function createJiraEpic(j, projectKey, summary, description, tipo, { typeId: chosenTypeId = null, parentKey = null } = {}) {
+  const typeId = chosenTypeId || await epicTypeId(j, projectKey);
+  let fields = { project: { key: projectKey }, issuetype: { id: typeId }, summary, ...(parentKey ? { parent: { key: parentKey } } : {}) };
 
   // Tipo de entrega: descobre o campo do projeto (id, tipo e opções) e já manda o valor certo.
   let tipoNote = "";
@@ -250,7 +264,7 @@ async function createJiraEpic(j, projectKey, summary, description, tipo) {
       throw e;
     }
   }
-  throw new JiraError(502, "O Jira continuou recusando a criação do épico");
+  throw new JiraError(502, "O Jira continuou recusando a criação da issue");
 }
 
 async function getEpicIssue(j, key) {
@@ -342,6 +356,18 @@ async function resolveAssigneeId(j, key, a) {
 }
 
 const assignInJira = (j, key, accountId) => jiraFetch(j, "PUT", `/rest/api/3/issue/${key}/assignee`, { accountId });
+
+/** Tipos de issue do projeto do produto, pro select do rascunho (só admin/super). */
+export async function handleListIssueTypes(input, session, j) {
+  const cfgErr = jiraConfigError(j);
+  if (cfgErr) return cfgErr;
+  if (!canWriteSession(session)) return forbidden("Sem permissão para listar os tipos de issue do Jira");
+  return wrap(async () => {
+    const projectKey = PRODUCT_TO_PROJECT[input?.product];
+    if (!projectKey) return bad("Escolha o projeto para listar os tipos de issue");
+    return { status: 200, body: { types: await projectIssueTypes(j, projectKey) } };
+  });
+}
 
 /** Lista de pessoas pro select de Responsável (só admin/super). `product` p/ rascunho, `key` p/ épico do Jira. */
 export async function handleListAssignees(input, session, j) {
@@ -455,6 +481,21 @@ export async function handleCreateEpic(input, session, rcfg, j) {
     if (position && position.roadmapLane !== null && position.roadmapLane !== product) {
       return bad("A camada do épico precisa ser o produto escolhido");
     }
+    // Tipo de issue: sem escolha, é épico. O tipo tem que existir no projeto;
+    // épico pai só vale para o que não é épico.
+    let issueType = null;
+    if (input?.issueTypeId !== undefined && input?.issueTypeId !== null && input?.issueTypeId !== "") {
+      if (typeof input.issueTypeId !== "string" || !/^\d{1,12}$/.test(input.issueTypeId)) return bad("Tipo de issue inválido");
+      issueType = (await projectIssueTypes(j, projectKey)).find((t) => t.id === input.issueTypeId);
+      if (!issueType) return bad("Esse tipo de issue não existe no projeto do Jira");
+    }
+    const isEpic = !issueType || issueType.epic;
+    let parentKey = null;
+    if (input?.parentKey) {
+      if (isEpic) return bad("Épico não tem épico pai");
+      if (!isJiraKey(input.parentKey) || !input.parentKey.startsWith(`${projectKey}-`)) return bad("O épico pai precisa ser do mesmo projeto");
+      parentKey = input.parentKey;
+    }
 
     const { doc } = await readDoc(rcfg);
     if (!doc) return { status: 409, body: { code: "not-initialized", message: "O Roadmap ainda não foi migrado para o servidor" } };
@@ -462,7 +503,7 @@ export async function handleCreateEpic(input, session, rcfg, j) {
     if (!draft) return { status: 404, body: { message: "Esse épico não existe mais (ou já foi criado no Jira)" } };
     if (!mayTouchEpic(session, doc, oldKey)) return forbidden("Esse épico é de outra pessoa");
 
-    const { created, descriptionDropped } = await createJiraEpic(j, projectKey, summary, description, tipo);
+    const { created, descriptionDropped } = await createJiraEpic(j, projectKey, summary, description, tipo, { typeId: issueType && !issueType.epic ? issueType.id : null, parentKey });
     const newKey = created?.key;
     if (typeof newKey !== "string" || !JIRA_KEY_RE.test(newKey)) throw new JiraError(502, "O Jira não devolveu a chave do épico criado");
 
@@ -494,7 +535,7 @@ export async function handleCreateEpic(input, session, rcfg, j) {
       positions[newKey] = position || oldPos || { roadmapLane: null, startWeek: null, durationWeeks: 2 };
       return touchDoc({
         ...cur,
-        customEpics: cur.customEpics.map((e) => (e.key === oldKey ? { ...e, key: newKey, project: product, summary, status, resumo: description || null, tipo: tipo || e.tipo || null, assignee: assignedName } : e)),
+        customEpics: cur.customEpics.map((e) => (e.key === oldKey ? { ...e, key: newKey, project: product, summary, status, resumo: description || null, tipo: tipo || e.tipo || null, assignee: assignedName, type: isEpic ? "Epic" : issueType.name, epic: isEpic, parent: parentKey } : e)),
         positions,
         prioOrder: swapKey(cur.prioOrder, oldKey, newKey),
         filaProdutoOrder: swapKey(cur.filaProdutoOrder, oldKey, newKey),

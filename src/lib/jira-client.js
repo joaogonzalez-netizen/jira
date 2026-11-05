@@ -30,7 +30,13 @@ export const jiraApi = {
     const r = await call("GET", "/api/jira/epics");
     return r.ok ? !!r.data.configured : null;
   },
-  createEpic: async ({ key, summary, product, description, tipo, assignee, position }) => result(await call("POST", "/api/jira/epics", { key, summary, product, description, tipo, assignee, position })),
+  /** `issueTypeId` vazio = épico; `parentKey` = épico pai (só para o que não é épico). */
+  createEpic: async ({ key, summary, product, description, tipo, assignee, position, issueTypeId, parentKey }) => result(await call("POST", "/api/jira/epics", { key, summary, product, description, tipo, assignee, position, issueTypeId: issueTypeId || undefined, parentKey: parentKey || undefined })),
+  /** Tipos de issue que dá para criar no projeto do produto: [{ id, name, epic }]. */
+  async issueTypes(product) {
+    const r = await call("GET", `/api/jira/issue-types?product=${encodeURIComponent(product || "")}`);
+    return r.ok ? { ok: true, types: r.data.types || [] } : { ok: false, message: r.data?.message || `Erro ${r.status}` };
+  },
   renameEpic: async ({ key, summary }) => result(await call("PATCH", "/api/jira/epics", { key, summary })),
   /** Nome e/ou responsável: `assignee` = { displayName, accountId? } atribui, `null` remove, ausente não mexe. */
   updateEpic: async ({ key, summary, assignee }) => {

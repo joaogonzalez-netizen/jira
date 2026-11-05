@@ -5,7 +5,7 @@
  * Node, igual a `roadmap-api.js`.
  */
 import { configError, loadConfig, resolveSessionFromCookie, sharedMemoryKv } from "./roadmap-core.js";
-import { handleCancelEpic, handleCreateEpic, handleListAssignees, handleStatus, handleUpdateEpic, loadJiraConfig } from "./jira-core.js";
+import { handleCancelEpic, handleCreateEpic, handleListAssignees, handleListIssueTypes, handleStatus, handleUpdateEpic, loadJiraConfig } from "./jira-core.js";
 import { scopeConfig } from "./workspace.js";
 
 const MAX_BODY_BYTES = 64 * 1024;
@@ -52,7 +52,7 @@ export function jiraApiPlugin(env) {
     if (!req.url || !req.url.startsWith("/api/jira")) return next();
     const [route, query] = req.url.split("?");
     const path = route.replace(/\/+$/, "");
-    if (path !== "/api/jira/epics" && path !== "/api/jira/assignees") {
+    if (path !== "/api/jira/epics" && path !== "/api/jira/assignees" && path !== "/api/jira/issue-types") {
       return sendJson(res, { status: 404, body: { message: "Rota não encontrada" } });
     }
     if (path === "/api/jira/epics" && req.method === "GET") return sendJson(res, handleStatus(jira));
@@ -67,6 +67,10 @@ export function jiraApiPlugin(env) {
         if (req.method !== "GET") return sendJson(res, { status: 405, body: { message: "Método não permitido" } });
         const params = new URLSearchParams(query || "");
         return sendJson(res, await handleListAssignees({ key: params.get("key"), product: params.get("product") }, session, jira));
+      }
+      if (path === "/api/jira/issue-types") {
+        if (req.method !== "GET") return sendJson(res, { status: 405, body: { message: "Método não permitido" } });
+        return sendJson(res, await handleListIssueTypes({ product: new URLSearchParams(query || "").get("product") }, session, jira));
       }
       if (req.method === "POST") return sendJson(res, await handleCreateEpic(await readJsonBody(req), session, rcfg, jira));
       if (req.method === "PATCH") return sendJson(res, await handleUpdateEpic(await readJsonBody(req), session, rcfg, jira));
