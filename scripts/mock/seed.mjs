@@ -131,3 +131,44 @@ export function buildSeed(today = new Date()) {
     "jira:features": stamp(features),
   };
 }
+
+// Projects that only the new workspaces pull (Custom, ProductOps), to exercise
+// the per-workspace Jira project filter in mock mode.
+const EXTRA_PROJECTS = [
+  { project: "Custom", prefix: "CUS", epics: ["Pedidos de impressão sob medida", "Orçamento automático de peças", "Portal do cliente Custom"] },
+  { project: "Automação", prefix: "AUT", epics: ["STLResearch PT", "Bot de triagem do Intercom", "Publicação automática de drops"] },
+  { project: "Dados", prefix: "DAD", epics: ["Data warehouse de assinaturas", "Dashboard de churn por coorte"] },
+];
+const PEOPLE = ["Ray Lima", "Jonas Tolentino", "Michel Angelo", "Caroline Araújo da Silva"];
+const STATUSES = ["Backlog", "Em design", "Em DEV", "Em rollout", "Done"];
+
+/** The embedded seed plus the extra projects, in the sheet's own row format
+    (what /api/sheet/sync returns), dated up to today. */
+export function sheetRows(today = new Date()) {
+  const { epics, tasks } = sheetSnapshot(today);
+  const fmt = (d) => `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} 10:00:00`;
+  const toRow = (r) => ({
+    Key: r.key, Project: r.project, "Issue Type": r.type || (r.epic ? "Epic" : "Task"), Summary: r.summary || "",
+    Assignee: r.assignee || "", Reporter: r.reporter || "", Desenvolvedor: r.developer || "", "Quem testou": r.tester || "",
+    parent: r.parent || "", Status: r.status || "", "Tipo de entrega": r.tipo || "", Created: r.created || "",
+    "Data de início": r.dataInicio || "", "Data Concluído": r.dataConcl || "", Priority: r.priority || "",
+  });
+  const extra = [];
+  EXTRA_PROJECTS.forEach(({ project, prefix, epics: names }) => {
+    let n = 1;
+    names.forEach((summary, i) => {
+      const epicKey = `${prefix}-${n++}`;
+      const status = STATUSES[(i * 2) % STATUSES.length];
+      extra.push(toRow({ key: epicKey, project, type: "Epic", epic: true, summary, status, tipo: "Inovação", reporter: "João Gonzalez", created: fmt(new Date(today.getTime() - (20 + i * 9) * DAY)) }));
+      for (let t = 0; t < 4; t++) {
+        const created = new Date(today.getTime() - (t * 3 + i) * DAY);
+        extra.push(toRow({
+          key: `${prefix}-${n++}`, project, type: ["Story", "Task", "Bug", "Task"][t], summary: `${summary} — parte ${t + 1}`,
+          status: STATUSES[(t + i) % STATUSES.length], assignee: PEOPLE[(t + i) % PEOPLE.length], reporter: "João Gonzalez",
+          parent: epicKey, tipo: ["Inovação", "Melhoria", "Sustentação"][t % 3], created: fmt(created),
+        }));
+      }
+    });
+  });
+  return [...epics, ...tasks].map(toRow).concat(extra);
+}
