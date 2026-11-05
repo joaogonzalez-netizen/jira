@@ -39,7 +39,7 @@ http.createServer((req, res) => {
 
 const vite = spawn("npx", ["vite", "--port", String(APP_PORT), "--strictPort"], {
   stdio: "inherit",
-  env: { ...process.env, REDIS_URL: `redis://127.0.0.1:${REDIS_PORT}`, JWT_SECRET: SECRET, MOCK_SHEET_ROWS: rowsFile },
+  env: { ...process.env, REDIS_URL: `redis://127.0.0.1:${REDIS_PORT}`, JWT_SECRET: SECRET, MOCK_SHEET_ROWS: rowsFile, JIRA_API_TOKEN: "", JIRA_EMAIL: "", JIRA_BASE_URL: "" }, // never write to the real Jira
 });
 console.log(`\n  Mock mode: open http://localhost:${LOGIN_PORT} to sign in as "Teste Local"\n`);
 
