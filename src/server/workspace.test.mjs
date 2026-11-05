@@ -101,6 +101,18 @@ test("lista: padrão primeiro, identidade do padrão editável sem mover dados",
   assert.equal((await handleUpdate("nao-existe", { name: "Z" }, SUPER, base)).status, 404);
 });
 
+test("projeto guarda os projetos do Jira e os menus, validados", async () => {
+  const base = config(fakeKv());
+  const r = await handleCreate({ name: "ProductOps", jiraProjects: [" Automações ", "Dados", "Dados", 7, ""], modules: ["execucao", "inventado"] }, SUPER, base);
+  assert.equal(r.status, 201);
+  assert.deepEqual(r.body.jiraProjects, ["Automações", "Dados"]);
+  assert.deepEqual(r.body.modules, ["execucao"]);
+  // Lista vazia de menus não esconde tudo: mantém o que havia.
+  const u = await handleUpdate(r.body.id, { modules: [], jiraProjects: [] }, SUPER, base);
+  assert.deepEqual(u.body.modules, ["execucao"]);
+  assert.deepEqual(u.body.jiraProjects, []);
+});
+
 test("slugify tira acento e símbolo", () => {
   assert.equal(slugify("Automações & Custom!"), "automacoes-custom");
   assert.equal(slugify("***"), "projeto");

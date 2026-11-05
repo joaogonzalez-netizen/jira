@@ -1,7 +1,7 @@
-import { configError, handleSync, loadSheetConfig } from "../../src/server/sheet-core.js";
+import { configError, handleSync, handleWorkspaceSync, loadSheetConfig } from "../../src/server/sheet-core.js";
 import { loadConfig as loadKvConfig, readSheetIdOverride } from "../../src/server/sheet-config-core.js";
 import { sendJson } from "../_lib/respond.js";
-import { scopeConfig } from "../../src/server/workspace.js";
+import { findWorkspace, scopeConfig } from "../../src/server/workspace.js";
 
 const config = loadSheetConfig(process.env);
 const kvConfigBase = loadKvConfig(process.env);
@@ -16,11 +16,9 @@ export default async function handler(req, res) {
   try {
     const kvConfig = await scopeConfig(kvConfigBase, req.headers.cookie);
     const override = await readSheetIdOverride(kvConfig);
-    // Projeto novo sem planilha: não cai na planilha do STLFLIX.
-    if (!override && kvConfig.workspace && kvConfig.workspace !== "default") {
-      return sendJson(res, { status: 409, body: { message: "Este projeto ainda não tem planilha: configure em Configurações" } });
-    }
-    return sendJson(res, await handleSync(config, override));
+    const workspace = kvConfig.workspace && kvConfig.workspace !== "default" ? (await findWorkspace(kvConfigBase.kv, kvConfig.workspace)) || {} : null;
+    const fetchRows = async (sheetId) => (await handleSync(config, sheetId)).body;
+    return sendJson(res, await handleWorkspaceSync(fetchRows, override, workspace));
   } catch (e) {
     console.error("[sheet/sync]", e);
     return sendJson(res, { status: 500, body: { message: e.message || "Erro interno" } });

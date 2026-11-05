@@ -15,6 +15,9 @@ import { DEFAULT_WS, REGISTRY_KEY, WS_ID_RE, baseReady, configForWorkspace, read
 export { resolveSessionFromCookie };
 
 export const WS_COLORS = ["#5166e6", "#00955a", "#ad54ff", "#f54300", "#e5484d", "#0f9fa8", "#c28a00", "#d6409f", "#8b8b8d"];
+// Grupos do menu lateral que o projeto mostra (vazio/ausente = todos).
+export const WS_MODULES = ["visao", "estrategia", "execucao", "produto", "analises"];
+const MAX_JIRA_PROJECTS = 20;
 const DEFAULT_IDENTITY = { id: DEFAULT_WS, name: "STLFLIX", initials: "S", color: "#00955a" };
 
 export function loadConfig(env) {
@@ -34,12 +37,22 @@ function initialsOf(name) {
   return ((words[0]?.[0] || "") + (words[1]?.[0] || "")).toUpperCase() || "P";
 }
 
-/** Nome, sigla (até 3 letras) e cor da paleta; o que vier inválido é ignorado. */
+/** Nome, sigla (até 3 letras), cor da paleta, projetos do Jira que o projeto
+    puxa da planilha (vazio = todos) e grupos do menu que ele mostra (vazio =
+    todos); o que vier inválido é ignorado. */
 export function applyIdentity(base, input) {
   const next = { ...base };
   if (typeof input.name === "string" && input.name.trim()) next.name = input.name.trim().slice(0, 60);
   if (typeof input.initials === "string" && input.initials.trim()) next.initials = input.initials.trim().slice(0, 3);
   if (typeof input.color === "string" && WS_COLORS.includes(input.color)) next.color = input.color;
+  if (Array.isArray(input.jiraProjects)) {
+    const names = input.jiraProjects.filter((p) => typeof p === "string").map((p) => p.trim().slice(0, 60)).filter(Boolean);
+    next.jiraProjects = [...new Set(names)].slice(0, MAX_JIRA_PROJECTS);
+  }
+  if (Array.isArray(input.modules)) {
+    const modules = WS_MODULES.filter((m) => input.modules.includes(m));
+    if (modules.length) next.modules = modules;
+  }
   return next;
 }
 

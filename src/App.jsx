@@ -159,10 +159,17 @@ function normalizeDateStr(v) {
   return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
-function transformSheetRow(r) {
+/** Nome de projeto do Jira sem acento nem caixa — "Automação" = "automacao". */
+const normProject = (s) => String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase();
+
+/** `only`: projetos do Jira que o workspace puxa (Set de nomes normalizados).
+    Quando definido, vale só ele — inclusive para projetos que o padrão exclui,
+    como Dados. */
+function transformSheetRow(r, only = null) {
   const proj = (r["Project"] || "").trim();
   const status = (r["Status"] || "").trim();
-  if (EXCLUDE_PROJECTS_JS.has(proj) || EXCLUDE_STATUS_JS.has(status) || !r["Key"]) return null;
+  if (only ? !only.has(normProject(proj)) : EXCLUDE_PROJECTS_JS.has(proj)) return null;
+  if (EXCLUDE_STATUS_JS.has(status) || !r["Key"]) return null;
   const issueType = (r["Issue Type"] || "").trim();
   const isEpic = issueType === "Epic";
   const stage = STAGE_MAP_JS[status] || null;
@@ -191,6 +198,9 @@ function useData() { return useContext(DataCtx); }
 
 function DataProvider({ children }) {
   const { canWriteShared, canCreateCard, ownsCard, user } = useAuth();
+  const { current: currentWs } = useWorkspaces();
+  const jiraProjectsRef = useRef(null);
+  jiraProjectsRef.current = currentWs && currentWs.jiraProjects && currentWs.jiraProjects.length ? new Set(currentWs.jiraProjects.map(normProject)) : null;
   // Os dados embutidos são do STLFLIX: projeto novo começa vazio até ter planilha.
   const [epics, setEpics] = useState(() => (isDefaultWorkspace() ? EPICS_SEED_INITIAL : []));
   const [tasks, setTasks] = useState(() => (isDefaultWorkspace() ? TASKS_SEED_INITIAL : []));
@@ -627,7 +637,8 @@ function DataProvider({ children }) {
       const res = await fetch("/api/sheet/sync");
       const rows = await res.json();
       if (!res.ok) throw new Error(rows?.message || `HTTP ${res.status}`);
-      const transformed = rows.map(transformSheetRow).filter(Boolean);
+      const only = jiraProjectsRef.current;
+      const transformed = rows.map((r) => transformSheetRow(r, only)).filter(Boolean);
       const nextEpics = withResumoFallback(transformed.filter((r) => r.epic));
       const nextTasks = transformed.filter((r) => !r.epic);
       // A planilha sempre teve dezenas de épicos; se a resposta vier com linhas
@@ -635,7 +646,8 @@ function DataProvider({ children }) {
       // desalinhamento de colunas — melhor falhar alto do que esvaziar o
       // Roadmap silenciosamente (posições agendadas ficam órfãs sem épico pra
       // exibir, mesmo continuando salvas no navegador).
-      if (rows.length > 0 && nextEpics.length === 0) {
+      // Projeto filtrado (ex.: só Custom) pode não ter épico nenhum: lá a checagem não vale.
+      if (!only && rows.length > 0 && nextEpics.length === 0) {
         throw new Error("A planilha voltou sem nenhum épico — mantendo os dados anteriores.");
       }
       const syncedAt = new Date().toISOString();
@@ -4663,6 +4675,16 @@ function WorkspaceEditor({ editor, onClose }) {
   const [name, setName] = useState(base.name);
   const [initials, setInitials] = useState(base.initials);
   const [color, setColor] = useState(base.color);
+  const [jiraProjects, setJiraProjects] = useState(base.jiraProjects || []);
+  const [modules, setModules] = useState(base.modules && base.modules.length ? base.modules : SIDEBAR_GROUPS.map((g) => g.id));
+  const [extra, setExtra] = useState("");
+  // Projetos que a planilha já trouxe neste board, mais Dados (que o padrão esconde).
+  const known = useProducts();
+  const projectOptions = [...new Set([...known, "Dados", ...jiraProjects])];
+  const hasProject = (p) => jiraProjects.some((x) => normProject(x) === normProject(p));
+  const toggleProject = (p) => setJiraProjects((list) => (hasProject(p) ? list.filter((x) => normProject(x) !== normProject(p)) : [...list, p]));
+  const addExtra = () => { const v = extra.trim(); if (v && !hasProject(v)) setJiraProjects((list) => [...list, v]); setExtra(""); };
+  const toggleModule = (id) => setModules((list) => (list.includes(id) ? (list.length > 1 ? list.filter((m) => m !== id) : list) : [...list, id]));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const preview = { name: name || "Projeto", initials: initials || (name.trim()[0] || "P").toUpperCase(), color };
@@ -4671,7 +4693,7 @@ function WorkspaceEditor({ editor, onClose }) {
   const save = async () => {
     if (!name.trim()) { setError("Dê um nome ao projeto."); return; }
     setBusy(true);
-    const fields = { name, color, ...(initials.trim() ? { initials } : {}) };
+    const fields = { name, color, jiraProjects, modules, ...(initials.trim() ? { initials } : {}) };
     const r = editing ? await update(base.id, fields) : await create(fields);
     setBusy(false);
     if (r.ok) onClose(); else setError(r.message || "Não foi possível salvar.");
@@ -4701,7 +4723,40 @@ function WorkspaceEditor({ editor, onClose }) {
             ))}
           </div>
         </div>
-        {!editing && <Muted>O projeto começa vazio. Depois de criar, configure a planilha dele em Configurações e cadastre objetivos, features e Roadmap.</Muted>}
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <span style={{ fontSize: 11.5, fontWeight: 500, color: T.ink1 }}>Projetos do Jira</span>
+          <div className="flex flex-wrap" style={{ gap: 6 }}>
+            {projectOptions.map((p) => {
+              const on = hasProject(p);
+              return (
+                <button key={p} onClick={() => toggleProject(p)} aria-pressed={on}
+                  style={{ ...btnStyle(T), padding: "4px 10px", borderRadius: 999, background: on ? "rgba(81,102,230,0.12)" : T.bg1, color: on ? ACCENT : T.ink1, borderColor: on ? ACCENT : T.border2 }}>
+                  {on && <Check size={12} />}{p}
+                </button>
+              );
+            })}
+          </div>
+          <div className="flex items-center" style={{ gap: 6 }}>
+            <input value={extra} onChange={(e) => setExtra(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") addExtra(); }} placeholder="Outro projeto (nome como está no Jira)" maxLength={60} style={{ ...st, flex: 1 }} />
+            <button onClick={addExtra} style={btnStyle(T)}>Adicionar</button>
+          </div>
+          <Muted>{jiraProjects.length ? "O Atualizar deste projeto traz só as issues desses projetos do Jira." : "Nenhum marcado: traz todos os projetos, como o STLFLIX."}</Muted>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <span style={{ fontSize: 11.5, fontWeight: 500, color: T.ink1 }}>Menus</span>
+          <div className="flex flex-wrap" style={{ gap: 6 }}>
+            {SIDEBAR_GROUPS.map((g) => {
+              const on = modules.includes(g.id);
+              return (
+                <button key={g.id} onClick={() => toggleModule(g.id)} aria-pressed={on}
+                  style={{ ...btnStyle(T), padding: "4px 10px", borderRadius: 999, background: on ? "rgba(81,102,230,0.12)" : T.bg1, color: on ? ACCENT : T.ink1, borderColor: on ? ACCENT : T.border2 }}>
+                  {on && <Check size={12} />}{g.title || g.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        {!editing && <Muted>O projeto começa vazio. Depois de criar, clique em Atualizar para puxar a planilha (só os projetos do Jira marcados).</Muted>}
       </div>
       {error && <p style={{ marginTop: 12, fontSize: 12, color: LATE_COLOR }}>{error}</p>}
       <div className="flex items-center justify-end" style={{ gap: 8, marginTop: 20 }}>
@@ -4714,18 +4769,25 @@ function WorkspaceEditor({ editor, onClose }) {
 
 const SIDEBAR_KEY = "pp-sidebar-collapsed";
 const SIDEBAR_GROUPS = [
-  { title: null, items: [["visao", "Visão geral", LayoutDashboard]] },
-  { title: "Estratégia", items: [["okrs", "Objetivos", Target], ["krs", "Key Results", Sparkles], ["oportunidades", "Oportunidades", Lightbulb]] },
-  { title: "Execução", items: [["epicos", "Épicos", Layers], ["roadmap", "Roadmap", Calendar]] },
-  { title: "Produto", items: [["produtos", "Produtos e features", Package]] },
-  { title: "Análises", items: [["analises", "Análises", BarChart3], ["desenvolvedores", "Desenvolvedores", Users]] },
+  { id: "visao", title: null, label: "Visão geral", items: [["visao", "Visão geral", LayoutDashboard]] },
+  { id: "estrategia", title: "Estratégia", items: [["okrs", "Objetivos", Target], ["krs", "Key Results", Sparkles], ["oportunidades", "Oportunidades", Lightbulb]] },
+  { id: "execucao", title: "Execução", items: [["epicos", "Épicos", Layers], ["roadmap", "Roadmap", Calendar]] },
+  { id: "produto", title: "Produto", items: [["produtos", "Produtos e features", Package]] },
+  { id: "analises", title: "Análises", items: [["analises", "Análises", BarChart3], ["desenvolvedores", "Desenvolvedores", Users]] },
 ];
 
 function AppShell() {
   const { T, theme, toggleTheme } = useTheme();
   const { syncFromSheet, lastSync, syncStatus, syncError } = useData();
   const { user, role, logout, canWriteShared } = useAuth();
-  const [menu, setMenu] = useState("visao");
+  const { current: currentWs } = useWorkspaces();
+  const [picked, setPicked] = useState("visao");
+  // Projeto com menus escolhidos (ex.: só Execução) esconde os outros grupos;
+  // a tela aberta cai na primeira que sobrou.
+  const groups = currentWs && currentWs.modules && currentWs.modules.length ? SIDEBAR_GROUPS.filter((g) => currentWs.modules.includes(g.id)) : SIDEBAR_GROUPS;
+  const visibleKeys = groups.flatMap((g) => g.items.map(([key]) => key));
+  const menu = visibleKeys.includes(picked) ? picked : visibleKeys[0];
+  const setMenu = setPicked;
   // Menu recolhido = só os ícones. Preferência deste navegador.
   const [collapsed, setCollapsed] = useState(() => { try { return localStorage.getItem(SIDEBAR_KEY) === "1"; } catch (e) { return false; } });
   const toggleSidebar = () => setCollapsed((c) => { try { localStorage.setItem(SIDEBAR_KEY, c ? "0" : "1"); } catch (e) {} return !c; });
@@ -4753,7 +4815,7 @@ function AppShell() {
             {collapsed ? <ChevronRight size={15} /> : <ChevronLeft size={15} />}
           </button>
         </div>
-        {SIDEBAR_GROUPS.map((group) => (
+        {groups.map((group) => (
           <div key={group.title || "inicio"} style={{ marginBottom: collapsed ? 10 : 18 }}>
             {group.title && (collapsed
               ? <div style={{ height: 1, background: T.border2, margin: "0 6px 10px" }} />

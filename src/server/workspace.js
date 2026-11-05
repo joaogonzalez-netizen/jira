@@ -52,6 +52,12 @@ export async function readRegistry(kv) {
   }
 }
 
+/** Registro de um workspace (null para o padrão ou id desconhecido). */
+export async function findWorkspace(kv, id) {
+  if (!id || id === DEFAULT_WS) return null;
+  return (await readRegistry(kv)).find((w) => w.id === id) || null;
+}
+
 /** Id do workspace pedido no cookie, já validado contra a lista. */
 export async function resolveWorkspaceId(kv, cookieHeader) {
   const id = readCookie(cookieHeader || "", WS_COOKIE);

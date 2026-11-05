@@ -6,7 +6,8 @@
  * `api/sheet/config.js`) — aqui só se traduz `req`/`res` do Node, igual ao
  * `auth-api.js`.
  */
-import { configError, handleSync, loadSheetConfig } from "./sheet-core.js";
+import fs from "node:fs";
+import { configError, handleSync, handleWorkspaceSync, loadSheetConfig } from "./sheet-core.js";
 import {
   configError as kvConfigError,
   handleGet as handleConfigGet,
@@ -15,7 +16,7 @@ import {
   readSheetIdOverride,
   resolveSessionFromCookie,
 } from "./sheet-config-core.js";
-import { scopeConfig } from "./workspace.js";
+import { findWorkspace, scopeConfig } from "./workspace.js";
 
 const MAX_BODY_BYTES = 8 * 1024;
 
@@ -64,14 +65,16 @@ export function sheetApiPlugin(env) {
     try {
       const kvConfig = await scopeConfig(kvConfigBase, req.headers.cookie);
       if (route === "/api/sheet/sync" && req.method === "GET") {
-        const misconfigured = configError(config);
+        // Modo de teste local (npm run dev:mock): linhas de exemplo no lugar do Google.
+        const mockFile = env.MOCK_SHEET_ROWS;
+        const misconfigured = mockFile ? null : configError(config);
         if (misconfigured) return sendJson(res, misconfigured);
         const override = await readSheetIdOverride(kvConfig);
-        // Projeto novo sem planilha: não cai na planilha do STLFLIX.
-        if (!override && kvConfig.workspace && kvConfig.workspace !== "default") {
-          return sendJson(res, { status: 409, body: { message: "Este projeto ainda não tem planilha: configure em Configurações" } });
-        }
-        return sendJson(res, await handleSync(config, override));
+        const workspace = kvConfig.workspace && kvConfig.workspace !== "default" ? (await findWorkspace(kvConfigBase.kv, kvConfig.workspace)) || {} : null;
+        const fetchRows = mockFile
+          ? async () => JSON.parse(fs.readFileSync(mockFile, "utf8"))
+          : async (sheetId) => (await handleSync(config, sheetId)).body;
+        return sendJson(res, await handleWorkspaceSync(fetchRows, override, workspace));
       }
       if (route === "/api/sheet/config") {
         const misconfigured = kvConfigError(kvConfigBase);

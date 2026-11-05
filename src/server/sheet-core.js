@@ -117,3 +117,26 @@ export async function handleSync(config, overrideSheetId) {
   const rows = await fetchSheetRows(effective);
   return { status: 200, body: rows };
 }
+
+const normProject = (s) => String(s ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").trim().toLowerCase();
+
+/** Linhas só dos projetos do Jira escolhidos — "Automação" casa com "automacao". */
+export function filterRowsByProject(rows, projects) {
+  const only = new Set(projects.map(normProject));
+  return rows.filter((r) => only.has(normProject(r["Project"])));
+}
+
+/**
+ * Sync de um workspace. `workspace` é o registro do projeto (null = STLFLIX).
+ * Projeto com projetos do Jira marcados usa a planilha padrão filtrada por
+ * eles; sem filtro e sem planilha própria, é recusado — não cai na planilha
+ * do STLFLIX inteira. `fetchRows(sheetIdOrNull)` lê as linhas.
+ */
+export async function handleWorkspaceSync(fetchRows, override, workspace) {
+  const scoped = workspace && Array.isArray(workspace.jiraProjects) && workspace.jiraProjects.length ? workspace.jiraProjects : null;
+  if (!override && workspace && !scoped) {
+    return { status: 409, body: { message: "Este projeto ainda não tem planilha: configure em Configurações ou marque os projetos do Jira em Editar projeto" } };
+  }
+  const rows = await fetchRows(override);
+  return { status: 200, body: scoped ? filterRowsByProject(rows, scoped) : rows };
+}
