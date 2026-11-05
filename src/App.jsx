@@ -3220,15 +3220,15 @@ function DeliveriesScreen() {
             })}
           </div>
 
-          <div ref={scrollRef} className="pp-scroll" style={{ overflowX: "auto", border: `1px solid ${T.border2}`, borderRadius: 12, background: T.bg0 }}>
+          <div ref={scrollRef} className="pp-scroll" style={{ overflow: "auto", maxHeight: "calc(100vh - 230px)", border: `1px solid ${T.border2}`, borderRadius: 12, background: T.bg0 }}>
             <div style={{ display: "grid", gridTemplateColumns: `${FEATURE_COL_PX}px repeat(${board.weekTimes.length + 1}, ${weekColPx}px)`, width: FEATURE_COL_PX + (board.weekTimes.length + 1) * weekColPx }}>
-              <div style={{ position: "sticky", left: 0, zIndex: 2, background: T.bg1, borderBottom: `1px solid ${T.border2}`, borderRight: `1px solid ${T.border2}`, padding: "10px 12px", fontSize: 11, fontWeight: 600, color: T.ink2 }}>
+              <div style={{ position: "sticky", top: 0, left: 0, zIndex: 4, background: T.bg1, borderBottom: `1px solid ${T.border2}`, borderRight: `1px solid ${T.border2}`, padding: "10px 12px", fontSize: 11, fontWeight: 600, color: T.ink2 }}>
                 Feature
               </div>
               {board.weekTimes.map((t) => {
                 const inWeek = board.items.filter((e) => e.week && e.week.getTime() === t);
                 return (
-                  <div key={t} style={{ background: T.bg1, borderBottom: `1px solid ${T.border2}`, borderRight: `1px solid ${T.border1}`, padding: "10px 12px", display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 6 }}>
+                  <div key={t} style={{ position: "sticky", top: 0, zIndex: 3, background: T.bg1, borderBottom: `1px solid ${T.border2}`, borderRight: `1px solid ${T.border1}`, padding: "10px 12px", display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 6 }}>
                     <span style={{ fontSize: 12, fontWeight: 600, color: t === thisWeek ? prod.primary : T.ink0 }}>
                       Semana de {fmtWeek(new Date(t))}{t === thisWeek ? " · atual" : ""}
                     </span>
@@ -3236,7 +3236,7 @@ function DeliveriesScreen() {
                   </div>
                 );
               })}
-              <div style={{ background: T.bg1, borderBottom: `1px solid ${T.border2}`, borderLeft: `2px solid ${prod.primary}66`, padding: "10px 12px", display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 6 }}>
+              <div style={{ position: "sticky", top: 0, zIndex: 3, background: T.bg1, borderBottom: `1px solid ${T.border2}`, borderLeft: `2px solid ${prod.primary}66`, padding: "10px 12px", display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 6 }}>
                 <span style={{ fontSize: 12, fontWeight: 600, color: T.ink0 }}>Próximas entregas</span>
                 <span style={{ fontSize: 11, color: T.ink2 }}>{deliveryCountLabel(board.items.filter((e) => e.upcoming))}</span>
               </div>
