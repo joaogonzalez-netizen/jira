@@ -34,7 +34,7 @@ export const jiraApi = {
   createEpic: async ({ key, summary, product, description, tipo, assignee, position, issueTypeId, parentKey }) => result(await call("POST", "/api/jira/epics", { key, summary, product, description, tipo, assignee, position, issueTypeId: issueTypeId || undefined, parentKey: parentKey || undefined })),
   /** Tipos de issue que dá para criar no projeto do produto: [{ id, name, epic }]. */
   async issueTypes(product) {
-    const r = await call("GET", `/api/jira/issue-types?product=${encodeURIComponent(product || "")}`);
+    const r = await call("GET", `/api/jira/assignees?list=issue-types&product=${encodeURIComponent(product || "")}`);
     return r.ok ? { ok: true, types: r.data.types || [] } : { ok: false, message: r.data?.message || `Erro ${r.status}` };
   },
   renameEpic: async ({ key, summary }) => result(await call("PATCH", "/api/jira/epics", { key, summary })),

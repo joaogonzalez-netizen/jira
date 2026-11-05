@@ -1,5 +1,5 @@
 import { configError, loadConfig, resolveSessionFromCookie } from "../../src/server/roadmap-core.js";
-import { handleListAssignees, loadJiraConfig } from "../../src/server/jira-core.js";
+import { handleListAssignees, handleListIssueTypes, loadJiraConfig } from "../../src/server/jira-core.js";
 import { sendJson } from "../_lib/respond.js";
 
 const rcfg = loadConfig(process.env);
@@ -12,6 +12,8 @@ export default async function handler(req, res) {
   try {
     const session = await resolveSessionFromCookie(req.headers.cookie, rcfg);
     const q = req.query || {};
+    // Tipos de issue moram aqui também: o plano da Vercel aceita no máximo 12 funções.
+    if (q.list === "issue-types") return sendJson(res, await handleListIssueTypes({ product: typeof q.product === "string" ? q.product : null }, session, jira));
     return sendJson(res, await handleListAssignees({ key: typeof q.key === "string" ? q.key : null, product: typeof q.product === "string" ? q.product : null }, session, jira));
   } catch (e) {
     console.error("[jira/assignees]", e);

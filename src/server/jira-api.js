@@ -52,7 +52,7 @@ export function jiraApiPlugin(env) {
     if (!req.url || !req.url.startsWith("/api/jira")) return next();
     const [route, query] = req.url.split("?");
     const path = route.replace(/\/+$/, "");
-    if (path !== "/api/jira/epics" && path !== "/api/jira/assignees" && path !== "/api/jira/issue-types") {
+    if (path !== "/api/jira/epics" && path !== "/api/jira/assignees") {
       return sendJson(res, { status: 404, body: { message: "Rota não encontrada" } });
     }
     if (path === "/api/jira/epics" && req.method === "GET") return sendJson(res, handleStatus(jira));
@@ -66,11 +66,8 @@ export function jiraApiPlugin(env) {
       if (path === "/api/jira/assignees") {
         if (req.method !== "GET") return sendJson(res, { status: 405, body: { message: "Método não permitido" } });
         const params = new URLSearchParams(query || "");
+        if (params.get("list") === "issue-types") return sendJson(res, await handleListIssueTypes({ product: params.get("product") }, session, jira));
         return sendJson(res, await handleListAssignees({ key: params.get("key"), product: params.get("product") }, session, jira));
-      }
-      if (path === "/api/jira/issue-types") {
-        if (req.method !== "GET") return sendJson(res, { status: 405, body: { message: "Método não permitido" } });
-        return sendJson(res, await handleListIssueTypes({ product: new URLSearchParams(query || "").get("product") }, session, jira));
       }
       if (req.method === "POST") return sendJson(res, await handleCreateEpic(await readJsonBody(req), session, rcfg, jira));
       if (req.method === "PATCH") return sendJson(res, await handleUpdateEpic(await readJsonBody(req), session, rcfg, jira));
