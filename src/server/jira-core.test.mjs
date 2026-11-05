@@ -392,16 +392,17 @@ test("renomear: admin só os próprios (registro com o e-mail dele); nada vai ao
   assert.ok(writesBefore >= 1);
 });
 
-test("renomear: só épico — história/tarefa e chaves malformadas são recusadas", async () => {
+test("renomear: qualquer tipo de issue; chaves malformadas são recusadas", async () => {
   const { rcfg, jira, j } = await setup(withEpics());
-  const story = await handleRenameEpic({ key: "SELLER-77", summary: "x" }, SUPER, rcfg, j);
-  assert.equal(story.status, 409);
-  assert.match(story.body.message, /não é um épico/);
+  const story = await handleRenameEpic({ key: "SELLER-77", summary: "História renomeada" }, SUPER, rcfg, j);
+  assert.equal(story.status, 200);
+  assert.equal(jira.issues.get("SELLER-77").summary, "História renomeada");
+  const writesBefore = jira.writes().length;
   for (const key of ["NOVO-100", "seller-1", "SELLER-1/../../x", "SELLER-", "", null, "SELLER-1?x=1"]) {
     assert.equal((await handleRenameEpic({ key, summary: "x" }, SUPER, rcfg, j)).status, 400, String(key));
   }
   assert.equal((await handleRenameEpic({ key: "SELLER-1", summary: "" }, SUPER, rcfg, j)).status, 400);
-  assert.equal(jira.writes().length, 0);
+  assert.equal(jira.writes().length, writesBefore, "chave inválida não chega ao Jira");
   assert.equal((await handleRenameEpic({ key: "SELLER-999", summary: "x" }, SUPER, rcfg, j)).status, 404);
 });
 

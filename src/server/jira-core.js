@@ -269,8 +269,8 @@ async function createJiraEpic(j, projectKey, summary, description, tipo, { typeI
 
 async function getEpicIssue(j, key) {
   const issue = await jiraFetch(j, "GET", `/rest/api/3/issue/${key}?fields=status,issuetype,summary,assignee`);
+  // Qualquer tipo de issue (épico, tarefa, story, bug): o drawer é o mesmo.
   const fields = issue?.fields || {};
-  if (!isEpicType(fields.issuetype)) throw new JiraError(409, `${key} não é um épico no Jira — não vou alterar.`);
   const a = fields.assignee;
   return {
     summary: fields.summary || "",

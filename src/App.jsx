@@ -250,6 +250,8 @@ function DataProvider({ children }) {
   // cancelado) — vale por cima da planilha até ela sincronizar com o Jira.
   const [epicOverrides, setEpicOverrides] = useState({});
   const epicsView = useMemo(() => applyEpicOverrides(epics, epicOverrides), [epics, epicOverrides]);
+  // Renomear/cancelar vale para qualquer issue: o override também cobre as tarefas.
+  const tasksView = useMemo(() => applyEpicOverrides(tasks || [], epicOverrides), [tasks, epicOverrides]);
   // Escrita no Jira ligada? (JIRA_EMAIL/JIRA_API_TOKEN no servidor) — null = ainda não sei.
   const [jiraConfigured, setJiraConfigured] = useState(null);
   const jiraConfiguredRef = useRef(null);
@@ -686,16 +688,16 @@ function DataProvider({ children }) {
     // Issue criada aqui com outro tipo (tarefa, história…) mora em customEpics
     // com epic: false — aparece junto das tarefas até a planilha trazê-la.
     const customVisible = only ? customEpics.filter(keep) : customEpics;
-    const taskKeys = new Set((tasks || []).map((t) => t.key));
+    const taskKeys = new Set(tasksView.map((t) => t.key));
     const customTasks = customVisible.filter((c) => c.epic === false && !taskKeys.has(c.key));
-    const baseTasks = only ? (tasks || []).filter(keep) : (tasks || []);
+    const baseTasks = only ? tasksView.filter(keep) : tasksView;
     return {
       epicsShown: only ? epicsView.filter(keep) : epicsView,
       tasksShown: customTasks.length ? [...customTasks, ...baseTasks] : baseTasks,
       customShown: customVisible.filter((c) => c.epic !== false),
       allProjects: all,
     };
-  }, [epicsView, tasks, customEpics, onlyKey]);
+  }, [epicsView, tasks, tasksView, customEpics, onlyKey]);
 
   const value = useMemo(() => ({
     epics: epicsShown, tasks: tasksShown, allProjects, setEpics, setTasks, syncFromSheet, lastSync, syncStatus, syncError,
@@ -1091,6 +1093,7 @@ function EpicDrawer({ epic, onClose, weeks, onSave, onDelete, canEdit, jiraConfi
 
             <dl style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 8, fontSize: 12.5, fontFamily: "'Inter Tight', sans-serif" }}>
               {[
+                ...(epic.type && !isEpicItem(epic) ? [["Tipo", epic.type]] : []),
                 ["Responsável", epic.assignee],
                 ["Relator", epic.reporter],
                 ["Desenvolvedor", epic.developer],
@@ -1111,7 +1114,7 @@ function EpicDrawer({ epic, onClose, weeks, onSave, onDelete, canEdit, jiraConfi
             <p style={{ marginTop: 20, marginBottom: 6, fontSize: 12, fontWeight: 500, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>Camada</p>
             <select value={lane} onChange={(e) => { setLane(e.target.value); if (isCustom && e.target.value !== PRIORIZACAO_KEY && !project) setProject(e.target.value); }} disabled={!canEdit} style={{ width: "100%", borderRadius: 8, border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink0, fontSize: 13, padding: "7px 8px", fontFamily: "'Inter Tight', sans-serif" }}>
               <option value={PRIORIZACAO_KEY}>Para priorização</option>
-              {PRODUCTS.map((p) => <option key={p} value={p}>{p}</option>)}
+              {[...new Set([...products, ...(epic.project ? [epic.project] : [])])].map((p) => <option key={p} value={p}>{p}</option>)}
             </select>
 
             {lane !== PRIORIZACAO_KEY && (
@@ -2040,9 +2043,8 @@ function RoadmapScreen() {
   const setViewMode = (v) => { setViewModeState(v); try { localStorage.setItem("roadmap-view", v); } catch { /* sem storage: vale só nesta sessão */ } };
   const byAssignee = viewMode === "responsavel";
   const [openKey, setOpenKey] = useState(null);
-  // Tarefa, story ou bug abre um drawer de leitura (o de épico edita no Jira).
-  const [openIssueKey, setOpenIssueKey] = useState(null);
-  const openItem = (e) => (isEpicItem(e) || e.key.startsWith("NOVO-") ? setOpenKey(e.key) : setOpenIssueKey(e.key));
+  // Qualquer card (épico, tarefa, story, bug) abre o mesmo drawer.
+  const openItem = (e) => setOpenKey(e.key);
   const [migrating, setMigrating] = useState(false);
   const [migrationMsg, setMigrationMsg] = useState(null);
   const importInputRef = useRef(null);
@@ -2531,7 +2533,14 @@ function RoadmapScreen() {
     );
   };
 
-  const openEpic = openKey ? enriched.find((e) => e.key === openKey) : null;
+  // Do Gantt ou de fora dele (tarefa ainda não agendada): o item com a posição que tiver.
+  // Ainda fora do Gantt e já concluído: a semana sugerida é a da conclusão.
+  const openEpic = (() => {
+    if (!openKey || !byKey[openKey]) return null;
+    const pos = positions[openKey] || { roadmapLane: null, startWeek: null, durationWeeks: 2 };
+    const suggested = pos.roadmapLane ? null : doneStartWeek(byKey[openKey], pos.durationWeeks || 2);
+    return { ...byKey[openKey], ...pos, ...(suggested !== null ? { startWeek: suggested } : {}) };
+  })();
 
   return (
     <div style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0 }}>
@@ -2846,14 +2855,6 @@ function RoadmapScreen() {
         </div>
       </div>
 
-      {openIssueKey && byKey[openIssueKey] && (
-        <IssueDrawer
-          issue={byKey[openIssueKey]} parent={byKey[byKey[openIssueKey].parent]} position={positions[openIssueKey]}
-          onClose={() => setOpenIssueKey(null)}
-          onAdd={ownsCard(byKey[openIssueKey]) && byKey[openIssueKey].project ? () => addToGantt(openIssueKey) : null}
-          onRemove={ownsCard(byKey[openIssueKey]) ? () => removeFromGantt(openIssueKey) : null}
-        />
-      )}
       <EpicDrawer epic={openEpic} weeks={weeks} onClose={() => setOpenKey(null)} onSave={saveDrawer} onDelete={deleteEpic} canEdit={ownsCard(openEpic)} jiraConfigured={jiraConfigured === true} />
 
       {showAddInitiative && (
@@ -3599,60 +3600,6 @@ const FORMS = {
     ],
   },
 };
-
-/** Drawer de leitura de uma issue que não é épico (tarefa, story, bug): os
-    dados da planilha, o link do Jira e colocar/tirar do Gantt. */
-function IssueDrawer({ issue, parent, position, onClose, onAdd, onRemove }) {
-  const { T, PRODUCT_STYLE } = useTheme();
-  const scheduled = !!(position && position.roadmapLane);
-  const prod = issue.project ? (PRODUCT_STYLE[issue.project] || PRODUCT_STYLE["Backoffice"]) : null;
-  const day = (v) => (v ? String(v).slice(0, 10) : null);
-  const rows = [
-    ["Tipo", issue.type],
-    ["Status", issue.status],
-    ["Responsável", issue.assignee],
-    ["Desenvolvedor", issue.developer],
-    ["Quem testou", issue.tester],
-    ["Reporter", issue.reporter],
-    ["Tipo de entrega", issue.tipo],
-    ["Prioridade", issue.priority],
-    ["Criado em", day(issue.created)],
-    ["Início", day(issue.dataInicio)],
-    ["Concluído em", day(issue.dataConcl)],
-  ].filter(([, v]) => v);
-  return (
-    <SideDrawer title={issue.type || "Issue"} onClose={onClose}>
-      <a href={jiraUrl(issue.key)} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, fontWeight: 500, color: ACCENT, textDecoration: "none" }}>
-        {issue.key} <ExternalLink size={12} />
-      </a>
-      <h3 style={{ margin: "6px 0 10px", fontSize: 17, fontWeight: 700, color: T.ink0, fontFamily: "'Plus Jakarta Sans', sans-serif", lineHeight: 1.3 }}>{issue.summary || "(sem título)"}</h3>
-      <div className="flex items-center" style={{ gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
-        {prod && <Badge bg={prod.subtle} color={prod.text}>{issue.project}</Badge>}
-        {isEpicDone(issue) && issue.dataConcl && <Badge bg={`${DONE_COLOR}1f`} color={DONE_COLOR}>Done em {day(issue.dataConcl)}</Badge>}
-        {scheduled && <Badge bg="rgba(81,102,230,0.12)" color={ACCENT}>No Gantt</Badge>}
-      </div>
-      {parent && (
-        <div style={{ marginBottom: 14, padding: "8px 10px", borderRadius: 8, background: T.bg1, border: `1px solid ${T.border2}` }}>
-          <div style={{ fontSize: 11, color: T.ink2, marginBottom: 2 }}>Épico pai</div>
-          <a href={jiraUrl(parent.key)} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12.5, color: T.ink0, textDecoration: "none" }}>{parent.key} · {parent.summary}</a>
-        </div>
-      )}
-      <div style={{ display: "grid", gridTemplateColumns: "120px 1fr", rowGap: 8, columnGap: 10, fontSize: 12.5 }}>
-        {rows.map(([label, value]) => (
-          <React.Fragment key={label}>
-            <span style={{ color: T.ink2 }}>{label}</span>
-            <span style={{ color: T.ink0 }}>{value}</span>
-          </React.Fragment>
-        ))}
-      </div>
-      <div className="flex items-center" style={{ gap: 8, marginTop: 20 }}>
-        {!scheduled && onAdd && <button onClick={() => { onAdd(); onClose(); }} style={btnStyle(T, true)}><Plus size={13} /> Colocar no Gantt</button>}
-        {scheduled && onRemove && <button onClick={() => { onRemove(); onClose(); }} style={btnStyle(T)}>Tirar do Gantt</button>}
-        <a href={jiraUrl(issue.key)} target="_blank" rel="noopener noreferrer" style={{ ...btnStyle(T), textDecoration: "none" }}><ExternalLink size={13} /> Abrir no Jira</a>
-      </div>
-    </SideDrawer>
-  );
-}
 
 function SideDrawer({ title, onClose, children }) {
   const { T } = useTheme();
