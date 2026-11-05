@@ -1684,6 +1684,11 @@ function PrioCard({ epic, onDragStart, onOpen, onAdd, onMoveToFilaProduto, onMov
           {epic.status}
         </span>
       )}
+      {isEpicDone(epic) && epic.dataConcl && (
+        <span title="Data de conclusão" style={{ display: "inline-block", marginTop: 4, marginLeft: 4, borderRadius: 6, padding: "1px 6px", fontSize: 9.5, fontWeight: 500, background: `${DONE_COLOR}1f`, color: DONE_COLOR, fontFamily: "'Inter Tight', sans-serif", whiteSpace: "nowrap" }}>
+          Done em {String(epic.dataConcl).slice(0, 10)}
+        </span>
+      )}
       <div className="flex items-center justify-between" style={{ marginTop: 5 }}>
         <span className="inline-flex items-center" style={{ gap: 4, fontSize: 10, color: tipo.text, fontFamily: "'Inter Tight', sans-serif" }}>
           <span style={{ width: 5, height: 5, borderRadius: 999, background: tipo.dot, display: "inline-block" }} />{layerOf(epic)}
@@ -2423,7 +2428,7 @@ function RoadmapScreen() {
   const projetosList = (() => {
     if (!browsing) return prioItems.filter(passes(pf));
     // Fora do Gantt e das filas: tarefas, ou o que já foi feito — para agendar.
-    const pool = pf.kind === "epics" ? mergeCustomEpics(EPICS_SEED, customEpics) : (TASKS || []).filter(isTaskItem);
+    const pool = pf.kind === "epics" ? mergeCustomEpics(EPICS_SEED, customEpics) : (TASKS || []).filter(ISSUE_KIND_MATCH[pf.kind]);
     return pool
       .filter(passes(pf))
       .filter((e) => (pf.state === "done") === isEpicDone(e))
@@ -2477,7 +2482,7 @@ function RoadmapScreen() {
           {layer === "projetos" && (
             <>
               <span style={{ width: 1, height: 18, background: T.border2, margin: "0 4px" }} />
-              {toggle("kind", [["epics", "Épicos"], ["tasks", "Tarefas"]])}
+              {toggle("kind", [["epics", "Épicos"], ["tasks", "Tarefas"], ["stories", "Story"], ["bugs", "Bugs"]])}
               {toggle("state", [["open", "Na fila"], ["done", "Done"]])}
             </>
           )}
@@ -2750,7 +2755,7 @@ function RoadmapScreen() {
       {/* Camada 3 — Projetos: priorização por projeto, ou tarefas/feitos para agendar */}
       <div onDragOver={(e) => e.preventDefault()} onDrop={browsing ? undefined : onDropPrio} style={{ padding: "18px 24px 24px" }}>
         {layerHeader("projetos", "Projetos", projetosList.length, browsing
-          ? `${pf.kind === "epics" ? "Épicos" : "Tarefas"} ${pf.state === "done" ? "já feitos" : "em aberto"} fora do Gantt, por projeto. Marque "Gantt" ou arraste para colocar no Roadmap.`
+          ? `${{ epics: "Épicos", tasks: "Tarefas", stories: "Stories", bugs: "Bugs" }[pf.kind]} ${pf.state === "done" ? "já feitos (mais recentes primeiro)" : "em aberto"} fora do Gantt, por projeto. Marque "Gantt" ou arraste para colocar no Roadmap.`
           : 'Épicos para priorizar, por projeto. Marque "Fila Produto" ou "Fila UX", ou arraste para a camada.')}
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           {projetosGroups.length === 0 && <p style={{ fontSize: 12, color: T.ink2, fontFamily: "'Inter Tight', sans-serif" }}>Nada aqui com esse filtro.</p>}
@@ -2944,6 +2949,10 @@ const isEpicDone = (e) => e.status === "Done" || e.stage === "Concluído";
 /** Épico (da planilha ou criado aqui) x tarefa — o painel da fila mostra só esses dois. */
 const isEpicItem = (e) => !!e && e.epic !== false && (e.epic === true || /^(epic|épico)$/i.test(e.type || ""));
 const isTaskItem = (e) => !!e && /^(task|tarefa)$/i.test(e.type || "");
+const isStoryItem = (e) => !!e && /^(story|hist[óo]ria)$/i.test(e.type || "");
+const isBugItem = (e) => !!e && /^bug$/i.test(e.type || "");
+/** Filtro de tipo da camada Projetos (épicos à parte: vêm da lista de épicos). */
+const ISSUE_KIND_MATCH = { tasks: isTaskItem, stories: isStoryItem, bugs: isBugItem };
 function epicBucket(e) {
   if (isEpicDone(e)) return "done";
   if (e.status === "Backlog" || e.stage === "Backlog" || e.status === "Produto") return "todo";
