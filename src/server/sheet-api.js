@@ -70,11 +70,12 @@ export function sheetApiPlugin(env) {
         const misconfigured = mockFile ? null : configError(config);
         if (misconfigured) return sendJson(res, misconfigured);
         const override = await readSheetIdOverride(kvConfig);
-        const workspace = kvConfig.workspace && kvConfig.workspace !== "default" ? (await findWorkspace(kvConfigBase.kv, kvConfig.workspace)) || {} : null;
+        const isDefault = !kvConfig.workspace || kvConfig.workspace === "default";
+        const workspace = kvConfigBase.kv ? await findWorkspace(kvConfigBase.kv, kvConfig.workspace) : null;
         const fetchRows = mockFile
           ? async () => JSON.parse(fs.readFileSync(mockFile, "utf8"))
           : async (sheetId) => (await handleSync(config, sheetId)).body;
-        return sendJson(res, await handleWorkspaceSync(fetchRows, override, workspace));
+        return sendJson(res, await handleWorkspaceSync(fetchRows, override, workspace, isDefault));
       }
       if (route === "/api/sheet/config") {
         const misconfigured = kvConfigError(kvConfigBase);

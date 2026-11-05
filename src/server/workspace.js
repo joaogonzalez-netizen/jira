@@ -52,10 +52,10 @@ export async function readRegistry(kv) {
   }
 }
 
-/** Registro de um workspace (null para o padrão ou id desconhecido). */
+/** Registro de um workspace (null se não houver — o padrão só tem registro
+    depois de editado). */
 export async function findWorkspace(kv, id) {
-  if (!id || id === DEFAULT_WS) return null;
-  return (await readRegistry(kv)).find((w) => w.id === id) || null;
+  return (await readRegistry(kv)).find((w) => w.id === (id || DEFAULT_WS)) || null;
 }
 
 /** Id do workspace pedido no cookie, já validado contra a lista. */

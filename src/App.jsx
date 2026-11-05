@@ -672,17 +672,27 @@ function DataProvider({ children }) {
 
   const clearRoadmapError = useCallback(() => setRoadmapError(null), []);
 
+  // Projetos do Jira do workspace valem na hora, também para o que já estava
+  // carregado (o Atualizar só traz dados novos). Rascunho sem produto fica.
+  const onlyKey = currentWs && currentWs.jiraProjects ? currentWs.jiraProjects.join("|") : "";
+  const { epicsShown, tasksShown, customShown, allProjects } = useMemo(() => {
+    const only = onlyKey ? new Set(onlyKey.split("|").map(normProject)) : null;
+    const keep = (r) => !only || !r.project || only.has(normProject(r.project));
+    const all = [...new Set([...epicsView, ...(tasks || [])].map((r) => r.project).filter(Boolean))].sort();
+    return { epicsShown: only ? epicsView.filter(keep) : epicsView, tasksShown: only ? (tasks || []).filter(keep) : tasks, customShown: only ? customEpics.filter(keep) : customEpics, allProjects: all };
+  }, [epicsView, tasks, customEpics, onlyKey]);
+
   const value = useMemo(() => ({
-    epics: epicsView, tasks, setEpics, setTasks, syncFromSheet, lastSync, syncStatus, syncError,
+    epics: epicsShown, tasks: tasksShown, allProjects, setEpics, setTasks, syncFromSheet, lastSync, syncStatus, syncError,
     jiraConfigured,
-    positions, setPositions, customEpics, setCustomEpics, prioOrder, setPrioOrder,
+    positions, setPositions, customEpics: customShown, setCustomEpics, prioOrder, setPrioOrder,
     filaProdutoOrder, setFilaProdutoOrder, filaUxOrder, setFilaUxOrder,
     roadmapSaving, persistRoadmap, updatePosition, addEpic, deleteEpic, saveDrawer, roadmapWeeks,
     roadmapMode, roadmapError, clearRoadmapError, localSummary, migrateToServer, reassignEpic, notifyRoadmapError,
   }), [
-    epicsView, tasks, syncFromSheet, lastSync, syncStatus, syncError,
+    epicsShown, tasksShown, allProjects, syncFromSheet, lastSync, syncStatus, syncError,
     jiraConfigured,
-    positions, customEpics, prioOrder, filaProdutoOrder, filaUxOrder,
+    positions, customShown, prioOrder, filaProdutoOrder, filaUxOrder,
     roadmapSaving, persistRoadmap, updatePosition, addEpic, deleteEpic, saveDrawer, roadmapWeeks,
     roadmapMode, roadmapError, clearRoadmapError, localSummary, migrateToServer, reassignEpic, notifyRoadmapError,
   ]);
@@ -4678,9 +4688,9 @@ function WorkspaceEditor({ editor, onClose }) {
   const [jiraProjects, setJiraProjects] = useState(base.jiraProjects || []);
   const [modules, setModules] = useState(base.modules && base.modules.length ? base.modules : SIDEBAR_GROUPS.map((g) => g.id));
   const [extra, setExtra] = useState("");
-  // Projetos que a planilha já trouxe neste board, mais Dados (que o padrão esconde).
-  const known = useProducts();
-  const projectOptions = [...new Set([...known, "Dados", ...jiraProjects])];
+  // Todos os projetos que a planilha já trouxe neste board (mesmo os filtrados), mais Dados (que o padrão esconde).
+  const { allProjects } = useData();
+  const projectOptions = [...new Set([...allProjects, "Dados", ...jiraProjects])];
   const hasProject = (p) => jiraProjects.some((x) => normProject(x) === normProject(p));
   const toggleProject = (p) => setJiraProjects((list) => (hasProject(p) ? list.filter((x) => normProject(x) !== normProject(p)) : [...list, p]));
   const addExtra = () => { const v = extra.trim(); if (v && !hasProject(v)) setJiraProjects((list) => [...list, v]); setExtra(""); };

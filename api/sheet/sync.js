@@ -16,9 +16,10 @@ export default async function handler(req, res) {
   try {
     const kvConfig = await scopeConfig(kvConfigBase, req.headers.cookie);
     const override = await readSheetIdOverride(kvConfig);
-    const workspace = kvConfig.workspace && kvConfig.workspace !== "default" ? (await findWorkspace(kvConfigBase.kv, kvConfig.workspace)) || {} : null;
+    const isDefault = !kvConfig.workspace || kvConfig.workspace === "default";
+    const workspace = kvConfigBase.kv ? await findWorkspace(kvConfigBase.kv, kvConfig.workspace) : null;
     const fetchRows = async (sheetId) => (await handleSync(config, sheetId)).body;
-    return sendJson(res, await handleWorkspaceSync(fetchRows, override, workspace));
+    return sendJson(res, await handleWorkspaceSync(fetchRows, override, workspace, isDefault));
   } catch (e) {
     console.error("[sheet/sync]", e);
     return sendJson(res, { status: 500, body: { message: e.message || "Erro interno" } });

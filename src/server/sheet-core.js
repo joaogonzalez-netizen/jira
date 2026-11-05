@@ -127,14 +127,15 @@ export function filterRowsByProject(rows, projects) {
 }
 
 /**
- * Sync de um workspace. `workspace` é o registro do projeto (null = STLFLIX).
- * Projeto com projetos do Jira marcados usa a planilha padrão filtrada por
- * eles; sem filtro e sem planilha própria, é recusado — não cai na planilha
- * do STLFLIX inteira. `fetchRows(sheetIdOrNull)` lê as linhas.
+ * Sync de um workspace. `workspace` é o registro do projeto (pode ser null) e
+ * `isDefault` diz se é o STLFLIX. Projetos do Jira marcados filtram as linhas
+ * (no STLFLIX também). Projeto que não é o padrão, sem filtro e sem planilha
+ * própria, é recusado — não cai na planilha do STLFLIX inteira.
+ * `fetchRows(sheetIdOrNull)` lê as linhas.
  */
-export async function handleWorkspaceSync(fetchRows, override, workspace) {
+export async function handleWorkspaceSync(fetchRows, override, workspace, isDefault) {
   const scoped = workspace && Array.isArray(workspace.jiraProjects) && workspace.jiraProjects.length ? workspace.jiraProjects : null;
-  if (!override && workspace && !scoped) {
+  if (!override && !isDefault && !scoped) {
     return { status: 409, body: { message: "Este projeto ainda não tem planilha: configure em Configurações ou marque os projetos do Jira em Editar projeto" } };
   }
   const rows = await fetchRows(override);

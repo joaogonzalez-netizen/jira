@@ -15,19 +15,24 @@ test("filtro de projeto ignora acento e caixa", () => {
 });
 
 test("STLFLIX (padrão) recebe a planilha inteira", async () => {
-  const r = await handleWorkspaceSync(fetchRows, null, null);
+  const r = await handleWorkspaceSync(fetchRows, null, null, true);
   assert.equal(r.body.length, 4);
 });
 
+test("STLFLIX com projetos marcados também filtra", async () => {
+  const r = await handleWorkspaceSync(fetchRows, null, { id: "default", jiraProjects: ["STLFLIX"] }, true);
+  assert.deepEqual(r.body.map((x) => x.Key), ["FLIX-1"]);
+});
+
 test("projeto com projetos do Jira usa a planilha padrão filtrada", async () => {
-  const r = await handleWorkspaceSync(fetchRows, null, { id: "custom-x", jiraProjects: ["Custom"] });
+  const r = await handleWorkspaceSync(fetchRows, null, { id: "custom-x", jiraProjects: ["Custom"] }, false);
   assert.equal(r.status, 200);
   assert.deepEqual(r.body.map((x) => x.Key), ["CUS-1"]);
 });
 
 test("projeto sem filtro e sem planilha própria é recusado", async () => {
-  const r = await handleWorkspaceSync(fetchRows, null, { id: "vazio-x" });
+  const r = await handleWorkspaceSync(fetchRows, null, { id: "vazio-x" }, false);
   assert.equal(r.status, 409);
-  const own = await handleWorkspaceSync(fetchRows, "outra-planilha", { id: "vazio-x" });
+  const own = await handleWorkspaceSync(fetchRows, "outra-planilha", { id: "vazio-x" }, false);
   assert.equal(own.status, 200);
 });
