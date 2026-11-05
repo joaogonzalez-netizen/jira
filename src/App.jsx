@@ -876,6 +876,74 @@ function Badge({ children, bg, color }) {
   );
 }
 
+const fmtCommentDate = (iso) => new Date(iso).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+const commentAuthor = (email) => (email ? email.split("@")[0].replace(/[._-]+/g, " ") : "—");
+
+/** Registro de decisões do card, no drawer lateral. */
+function CardComments({ cardKey }) {
+  const { T } = useTheme();
+  const { forCard, add, remove, canWrite, canDelete } = useCardComments();
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const list = forCard(cardKey);
+  const submit = async () => {
+    const value = text.trim();
+    if (!value || busy) return;
+    setBusy(true);
+    setError(null);
+    const r = await add(cardKey, value);
+    setBusy(false);
+    if (r.ok) setText(""); else setError(r.message || "Não foi possível registrar");
+  };
+  const del = async (c) => {
+    if (!window.confirm("Apagar este comentário?")) return;
+    const r = await remove("comments", c.id);
+    if (!r.ok) setError(r.message || "Não foi possível apagar");
+  };
+  return (
+    <div style={{ marginTop: 24, paddingTop: 16, borderTop: `1px solid ${T.border2}`, fontFamily: "'Inter Tight', sans-serif" }}>
+      <p style={{ fontSize: 12, fontWeight: 600, color: T.ink0, margin: 0 }}>Decisões e comentários {list.length > 0 && <span style={{ color: T.ink2, fontWeight: 500 }}>· {list.length}</span>}</p>
+      {list.length === 0 && <p style={{ marginTop: 8, fontSize: 12, color: T.ink2 }}>Nenhum registro ainda.</p>}
+      <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+        {list.map((c) => (
+          <div key={c.id} style={{ background: T.bg1, border: `1px solid ${T.border2}`, borderRadius: 8, padding: "8px 10px" }}>
+            <div className="flex items-center justify-between" style={{ gap: 8 }}>
+              <span style={{ fontSize: 11, color: T.ink2, textTransform: "capitalize" }}>{commentAuthor(c.createdBy)} · {fmtCommentDate(c.createdAt)}</span>
+              {canDelete(c) && (
+                <button title="Apagar comentário" aria-label="Apagar comentário" onClick={() => del(c)} style={{ display: "flex", background: "none", border: "none", color: T.ink2, cursor: "pointer", padding: 1 }}><Trash2 size={12} /></button>
+              )}
+            </div>
+            <p style={{ margin: "4px 0 0", fontSize: 12.5, color: T.ink0, lineHeight: 1.45, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{c.name}</p>
+          </div>
+        ))}
+      </div>
+      {canWrite ? (
+        <div style={{ marginTop: 10 }}>
+          <textarea
+            value={text} onChange={(e) => setText(e.target.value)} rows={3} maxLength={2000} disabled={busy}
+            onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submit(); } }}
+            placeholder="Registre uma decisão: o que ficou definido e por quê…"
+            style={{ width: "100%", boxSizing: "border-box", resize: "vertical", background: T.bg1, border: `1px solid ${T.border2}`, borderRadius: 8, padding: "8px 10px", fontSize: 12.5, color: T.ink0, fontFamily: "'Inter Tight', sans-serif" }}
+          />
+          {error && <p role="alert" style={{ marginTop: 6, fontSize: 12, color: "#e08585" }}>{error}</p>}
+          <div className="flex items-center justify-between" style={{ marginTop: 6, gap: 8 }}>
+            <span style={{ fontSize: 11, color: T.ink2 }}>Cmd/Ctrl + Enter registra</span>
+            <button
+              disabled={busy || !text.trim()} onClick={submit}
+              style={{ borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 600, border: "none", background: "#5166e6", color: "#fff", cursor: busy || !text.trim() ? "default" : "pointer", opacity: busy || !text.trim() ? 0.6 : 1, fontFamily: "'Inter Tight', sans-serif" }}
+            >
+              {busy ? "Registrando…" : "Registrar"}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <p className="inline-flex items-center" style={{ marginTop: 10, gap: 6, fontSize: 11.5, color: T.ink2 }}><Lock size={11} /> Somente leitura: seu perfil não registra comentários.</p>
+      )}
+    </div>
+  );
+}
+
 /**
  * `canEdit` só importa na seção de agendamento, que é a única que escreve — e
  * que só o Roadmap monta (`schedulable`). Em Projetos o drawer já é leitura para
@@ -1169,6 +1237,8 @@ function EpicDrawer({ epic, onClose, weeks, onSave, onDelete, canEdit, jiraConfi
             )}
           </>
         )}
+
+        <CardComments cardKey={epic.key} />
       </div>
     </div>
   );
@@ -2046,6 +2116,7 @@ function RoadmapScreen() {
   // só o super o move. Reordenar as listas mexe na ordem de todo mundo: super.
   const { user, canCreateCard, ownsCard, canWriteShared } = useAuth();
   const { initiatives, createInitiative, deleteInitiative, assignEpicToInitiative, updateInitiative, initiativeByEpicKey } = useRoadmapFeatures();
+  const { moveComments } = useCardComments();
   const [weekCount, setWeekCount] = useState(13);
   // "produto" (linhas = produtos, com iniciativas) ou "responsavel" (linhas = pessoas; as barras mantêm a cor do produto).
   const [viewMode, setViewModeState] = useState(() => {
@@ -2134,6 +2205,7 @@ function RoadmapScreen() {
     const init = initiativeByEpicKey[key];
     const r = await saveDrawerShared(key, patch);
     if (!r.ok) return r;
+    if (r.newKey) await moveComments(key, r.newKey);
     if (r.newKey && init) await updateInitiative(init.id, { epicKeys: init.epicKeys.map((k) => (k === key ? r.newKey : k)) });
     setOpenKey(null);
     return r;
@@ -2969,19 +3041,23 @@ function deliveryCardTitle(item) {
   return undefined;
 }
 
-function DeliveryCard({ item, canDrag, onDragStart, onDragEnd }) {
+function DeliveryCard({ item, canDrag, onDragStart, onDragEnd, onOpen }) {
   const { T, PRODUCT_STYLE } = useTheme();
   const prod = PRODUCT_STYLE[item.lane || item.roadmapLane] || PRODUCT_STYLE["Backoffice"];
   const kind = isEpicItem(item) ? "Épico" : item.type || "Issue";
   return (
-    <a
-      href={jiraUrl(item.key)} target="_blank" rel="noopener noreferrer" className="pp-card"
+    <div
+      onClick={() => onOpen(item)} className="pp-card"
       draggable={canDrag} onDragStart={(e) => { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", item.key); onDragStart(item); }} onDragEnd={onDragEnd}
       title={deliveryCardTitle(item)}
       style={{ display: "block", textDecoration: "none", cursor: canDrag ? "grab" : "pointer", background: item.planned ? "transparent" : T.bg1, boxShadow: item.planned ? "none" : T.cardShadow, borderRadius: 10, padding: "8px 10px", border: `1px ${item.planned ? "dashed" : "solid"} ${item.planned ? `${prod.primary}88` : T.border2}`, borderLeft: `3px ${item.planned ? "dashed" : "solid"} ${prod.primary}`, fontFamily: "'Inter Tight', sans-serif" }}
     >
       <div className="flex items-center justify-between" style={{ gap: 6 }}>
-        <span style={{ fontSize: 10.5, fontWeight: 500, color: T.ink1 }}>{item.key}</span>
+        {item.key.startsWith("NOVO-") ? (
+          <span style={{ fontSize: 10.5, fontWeight: 500, color: T.ink1 }}>{item.key}</span>
+        ) : (
+          <a href={jiraUrl(item.key)} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} style={{ fontSize: 10.5, fontWeight: 500, color: T.ink1, textDecoration: "none" }}>{item.key}</a>
+        )}
         <span style={{ fontSize: 9.5, fontWeight: 600, color: prod.text, background: prod.subtle, borderRadius: 999, padding: "1px 7px" }}>{kind}</span>
       </div>
       <p style={{ margin: "4px 0 6px", fontSize: 12, fontWeight: 500, color: T.ink0, lineHeight: 1.35, display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
@@ -3006,7 +3082,7 @@ function DeliveryCard({ item, canDrag, onDragStart, onDragEnd }) {
           </span>
         )}
       </div>
-    </a>
+    </div>
   );
 }
 
@@ -3022,6 +3098,8 @@ function DeliveriesScreen() {
   // semana fica gravada como a da entrega); previsto, da atual em diante.
   const [dragItem, setDragItem] = useState(null);
   const [dropWeek, setDropWeek] = useState(null);
+  // Clicar num card abre o mesmo drawer dos outros cards (detalhes e decisões).
+  const [openKey, setOpenKey] = useState(null);
 
   // Mesmo recorte do Gantt: épicos (planilha + criados aqui) e as tarefas que
   // alguém agendou; entrega = o que está numa raia e foi concluído. Previsto =
@@ -3178,21 +3256,24 @@ function DeliveriesScreen() {
                       style={{ borderBottom: `1px dashed ${prod.primary}66`, borderRight: `1px solid ${T.border1}`, padding: 8, display: "flex", flexDirection: "column", gap: 8, minHeight: 60, background: dropWeek === t ? `${prod.primary}22` : t === thisWeek ? prod.subtle : "transparent", outline: dropWeek === t ? `2px dashed ${prod.primary}` : "none", outlineOffset: -4 }}
                     >
                       {row.items.filter((e) => e.week && e.week.getTime() === t).map((e) => (
-                        <DeliveryCard key={e.key} item={e} canDrag={ownsCard(e)} onDragStart={setDragItem} onDragEnd={endDrag} />
+                        <DeliveryCard key={e.key} item={e} canDrag={ownsCard(e)} onDragStart={setDragItem} onDragEnd={endDrag} onOpen={(it) => setOpenKey(it.key)} />
                       ))}
                     </div>
                   ))}
                   <div style={{ borderBottom: `1px dashed ${prod.primary}66`, borderLeft: `2px solid ${prod.primary}66`, padding: 8, display: "flex", flexDirection: "column", gap: 8, minHeight: 60 }}>
                     {row.items.filter((e) => e.upcoming).map((e) => (
-                      <DeliveryCard key={e.key} item={e} canDrag={ownsCard(e)} onDragStart={setDragItem} onDragEnd={endDrag} />
+                      <DeliveryCard key={e.key} item={e} canDrag={ownsCard(e)} onDragStart={setDragItem} onDragEnd={endDrag} onOpen={(it) => setOpenKey(it.key)} />
                     ))}
                   </div>
                 </React.Fragment>
               ))}
             </div>
           </div>
-          <Muted style={{ marginTop: 10 }}>{deliveryCountLabel(board.items)} em {product}. Cards tracejados são previstos: ainda não concluídos, com a barra do Gantt terminando naquela semana. Arraste um card para outra semana para mover a barra no Gantt (o da fila entra no Gantt); clique para abrir no Jira.</Muted>
+          <Muted style={{ marginTop: 10 }}>{deliveryCountLabel(board.items)} em {product}. Cards tracejados são previstos: ainda não concluídos, com a barra do Gantt terminando naquela semana. Arraste um card para outra semana para mover a barra no Gantt (o da fila entra no Gantt); clique para ver os detalhes e registrar decisões.</Muted>
         </>
+      )}
+      {openKey && delivered.find((e) => e.key === openKey) && (
+        <EpicDrawer epic={delivered.find((e) => e.key === openKey)} onClose={() => setOpenKey(null)} canEdit={false} jiraConfigured={false} />
       )}
     </ScreenShell>
   );
@@ -3350,7 +3431,7 @@ function dueState(item, doneStatus) {
   return d < 0 ? "late" : d <= 7 ? "soon" : null;
 }
 
-const PLANNING_LOAD = ["objectives", "keyResults", "opportunities", "solutions", "experiments", "features"];
+const PLANNING_LOAD = ["objectives", "keyResults", "opportunities", "solutions", "experiments", "features", "comments"];
 
 /** Espelha a regra do servidor: em Features e Key Results um épico fica num só. */
 function releaseLocalEpics(kind, list, item) {
@@ -3391,6 +3472,20 @@ function useRoadmapFeatures() {
     initiatives: features, initiativeByEpicKey: featureByEpicKey,
     createInitiative: createFeature, updateInitiative: updateFeature, deleteInitiative: deleteFeature, assignEpicToInitiative: assignEpicToFeature,
   };
+}
+
+/** Comentários de decisão por card (planning, tipo "comments"). Escrever é de
+    admin/super; apagar, só do autor ou do super (o servidor também confere). */
+function useCardComments() {
+  const { items, create, update, remove } = usePlanning();
+  const { user, role, canCreateCard } = useAuth();
+  const all = items.comments || [];
+  const forCard = useCallback((key) => all.filter((c) => c.cardKey === key).sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt))), [all]);
+  const add = useCallback((cardKey, text) => create("comments", { name: text, cardKey }), [create]);
+  const canDelete = useCallback((c) => role === "super" || (!!user && c.createdBy === user.email), [role, user]);
+  // A chave do card mudou (rascunho criado no Jira): os comentários vão junto.
+  const moveComments = useCallback((oldKey, newKey) => Promise.all(all.filter((c) => c.cardKey === oldKey).map((c) => update("comments", c.id, { cardKey: newKey }))), [all, update]);
+  return { forCard, add, remove, canWrite: !!canCreateCard, canDelete, moveComments };
 }
 
 /** Produtos = projetos que aparecem nos épicos do Jira. Os conhecidos primeiro,
@@ -4832,6 +4927,7 @@ function EpicsScreen() {
   const { canCreateCard, ownsCard } = useAuth();
   const { items: planItems } = usePlanning();
   const features = useRoadmapFeatures();
+  const { moveComments } = useCardComments();
   // Rascunhos criados aqui ou no Roadmap aparecem junto (coluna "Rascunho").
   const epics = useMemo(() => mergeCustomEpics(sheetEpics, customEpics), [sheetEpics, customEpics]);
   const idx = usePlanIndex();
@@ -4864,6 +4960,7 @@ function EpicsScreen() {
     const feat = features.initiativeByEpicKey[key];
     const r = await saveDrawerShared(key, patch);
     if (!r.ok) return r;
+    if (r.newKey) await moveComments(key, r.newKey);
     if (r.newKey && feat) await features.updateInitiative(feat.id, { epicKeys: feat.epicKeys.map((k) => (k === key ? r.newKey : k)) });
     setOpenKey(null);
     return r;

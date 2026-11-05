@@ -128,6 +128,18 @@ export const KINDS = {
       epicKeys: { type: "list" },
     },
   },
+  // Registro de decisões de um card (épico, tarefa, story, bug ou rascunho):
+  // o texto do comentário é o `name`. Só o autor (ou o super) edita o texto ou apaga.
+  comments: {
+    key: "jira:card-comments",
+    prefix: "cmt",
+    label: "Comentário",
+    nameMax: 2000,
+    ownerOnly: true,
+    fields: {
+      cardKey: { type: "ref", required: true },
+    },
+  },
 };
 
 // Quem aponta para cada tipo — apagar um pai com filhos é recusado, para não
@@ -169,6 +181,13 @@ function canWrite(session) {
 function forbidden() {
   return { status: 403, body: { message: "Sem permissão para gerenciar o planejamento" } };
 }
+
+/** Tipo `ownerOnly` (comentários): só quem criou, ou o super, edita o texto ou apaga. */
+function notOwner(kind, item, session) {
+  return !!KINDS[kind].ownerOnly && session.role !== "super" && item.createdBy !== (session.user.email || null);
+}
+
+const ownerForbidden = () => ({ status: 403, body: { message: "Só o autor (ou o superusuário) altera este item" } });
 
 function unknownKind() {
   return { status: 400, body: { message: `kind deve ser um de: ${Object.keys(KINDS).join(", ")}` } };
@@ -262,7 +281,8 @@ function coerce(spec, value) {
     ignorado (nome é obrigatório), assim como um campo obrigatório vazio. */
 export function applyFields(kind, base, patch) {
   const next = { ...base };
-  if (typeof patch.name === "string" && patch.name.trim()) next.name = patch.name.trim();
+  const nameMax = KINDS[kind].nameMax;
+  if (typeof patch.name === "string" && patch.name.trim()) next.name = nameMax ? patch.name.trim().slice(0, nameMax) : patch.name.trim();
   for (const [field, spec] of Object.entries(KINDS[kind].fields)) {
     if (!(field in patch)) continue;
     const value = coerce(spec, patch[field]);
@@ -326,6 +346,8 @@ export async function handleUpdate(kind, id, patch, session, config) {
   const list = await readAll(config, kind);
   const idx = list.findIndex((i) => i.id === id);
   if (idx === -1) return { status: 404, body: { message: `${KINDS[kind].label} não encontrado` } };
+  // Trocar só o card (a chave mudou ao criar no Jira) vale para qualquer admin.
+  if (typeof patch.name === "string" && notOwner(kind, list[idx], session)) return ownerForbidden();
 
   const next = applyFields(kind, list[idx], patch);
   await writeAll(config, kind, releaseEpics(kind, list.filter((_, i) => i !== idx), next, idx));
@@ -338,7 +360,9 @@ export async function handleDelete(kind, id, session, config) {
   if (!id) return { status: 400, body: { message: "id é obrigatório" } };
 
   const list = await readAll(config, kind);
-  if (!list.some((i) => i.id === id)) return { status: 404, body: { message: `${KINDS[kind].label} não encontrado` } };
+  const target = list.find((i) => i.id === id);
+  if (!target) return { status: 404, body: { message: `${KINDS[kind].label} não encontrado` } };
+  if (notOwner(kind, target, session)) return ownerForbidden();
 
   for (const child of CHILDREN[kind] || []) {
     const children = await readAll(config, child.kind);
