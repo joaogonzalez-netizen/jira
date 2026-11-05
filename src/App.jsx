@@ -15,6 +15,9 @@ const STAGES = ["Backlog", "Em design", "Em produto", "Análise técnica", "Pron
 // dos épicos/tarefas da planilha (useProducts) — um projeto novo no Jira, como
 // Custom ou Automações, entra sozinho no fim, com cor automática.
 const PRODUCTS = ["STLFLIX", "STL IA", "STL Seller", "STL Loja", "Backoffice", "STL Academy"];
+// Todos os projetos do Jira (nomes como estão lá) — opções do filtro de um
+// projeto deste app, mesmo antes de a planilha dele ter sido puxada.
+const JIRA_PROJECTS = [...PRODUCTS, "Custom", "Automação", "Dados", "Infra", "Tarefas"];
 
 const EXTRA_PRODUCT_COLORS = ["#0f9fa8", "#c28a00", "#d6409f", "#3e7bfa", "#7c8a14", "#a35bd1"];
 const NAMED_PRODUCT_COLORS = { "Custom": "#0f9fa8", "Automações": "#c28a00", "Automacoes": "#c28a00", "Empresa": "#475467" };
@@ -4822,9 +4825,9 @@ function WorkspaceEditor({ editor, onClose }) {
   const [jiraProjects, setJiraProjects] = useState(base.jiraProjects || []);
   const [modules, setModules] = useState(base.modules && base.modules.length ? base.modules : SIDEBAR_GROUPS.map((g) => g.id));
   const [extra, setExtra] = useState("");
-  // Todos os projetos que a planilha já trouxe neste board (mesmo os filtrados), mais Dados (que o padrão esconde).
+  // Projetos do Jira conhecidos, mais os que a planilha já trouxe e os já marcados.
   const { allProjects } = useData();
-  const projectOptions = [...new Set([...allProjects, "Dados", ...jiraProjects])];
+  const projectOptions = [...new Set([...JIRA_PROJECTS, ...allProjects, ...jiraProjects])].filter((p, i, list) => list.findIndex((x) => normProject(x) === normProject(p)) === i);
   const hasProject = (p) => jiraProjects.some((x) => normProject(x) === normProject(p));
   const toggleProject = (p) => setJiraProjects((list) => (hasProject(p) ? list.filter((x) => normProject(x) !== normProject(p)) : [...list, p]));
   const addExtra = () => { const v = extra.trim(); if (v && !hasProject(v)) setJiraProjects((list) => [...list, v]); setExtra(""); };
