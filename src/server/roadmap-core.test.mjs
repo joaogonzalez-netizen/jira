@@ -70,6 +70,17 @@ test("leitor e anônimo não escrevem", async () => {
   assert.equal((await handlePatch({ positions: { "NOVO-100": pos("STL IA", 3) } }, null, config)).status, 403);
 });
 
+test("posição guarda a semana de entrega escolhida à mão, e só no formato AAAA-MM-DD", async () => {
+  const { config } = await fresh();
+  const ok = await handlePatch({ positions: { "SELLER-1": { ...pos("STL Seller", -2, 1), doneWeek: "2026-10-19" } } }, SUPER, config);
+  assert.equal(ok.status, 200);
+  assert.deepEqual(ok.body.state.positions["SELLER-1"], { roadmapLane: "STL Seller", startWeek: -2, durationWeeks: 1, doneWeek: "2026-10-19" });
+  const bad = await handlePatch({ positions: { "SELLER-1": { ...pos("STL Seller", -2, 1), doneWeek: "19/10/2026" } } }, SUPER, config);
+  assert.equal(bad.status, 400);
+  const cleared = await handlePatch({ positions: { "SELLER-1": pos("STL Seller", 0) } }, SUPER, config);
+  assert.equal("doneWeek" in cleared.body.state.positions["SELLER-1"], false);
+});
+
 test("super muda posição de épico da planilha; admin não", async () => {
   const { config } = await fresh();
   const ok = await handlePatch({ positions: { "SELLER-1": pos("STL Seller", 5) } }, SUPER, config);

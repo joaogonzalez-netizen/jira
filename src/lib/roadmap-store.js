@@ -66,11 +66,13 @@ const eqJson = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 // A tela às vezes monta posição sem durationWeeks (ex.: soltar card sem posição
 // prévia na priorização) — o padrão em todo lugar é 2.
 function normPos(p) {
-  return {
+  const out = {
     roadmapLane: p && p.roadmapLane != null ? p.roadmapLane : null,
     startWeek: p && p.startWeek != null ? p.startWeek : null,
     durationWeeks: p && Number.isInteger(p.durationWeeks) ? p.durationWeeks : 2,
   };
+  if (p && p.doneWeek) out.doneWeek = p.doneWeek;
+  return out;
 }
 
 const EPIC_FIELDS = ["key", "project", "summary", "assignee", "reporter", "status", "tipo", "created", "priority", "resumo", "createdBy"];

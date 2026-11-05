@@ -133,6 +133,17 @@ const DATA_OVERRIDE_KEY = "jira-data-override-v1";
 // nem do sync — sem isso, qualquer dado carregado do storage (override salvo
 // antes do campo existir, ou vindo de um sync novo) apaga o resumo em produção.
 const RESUMO_BY_KEY = Object.fromEntries(EPICS_SEED_INITIAL.filter((e) => e.resumo).map((e) => [e.key, e.resumo]));
+/** Épico concluído sem "Data Concluído" na planilha herda a data da última
+    issue dele (parent) que foi concluída. */
+function withEpicDoneDates(epicsList, issues) {
+  const lastDone = {};
+  issues.forEach((t) => {
+    const d = t.parent && parseBRDate(t.dataConcl);
+    if (d && (!lastDone[t.parent] || d > lastDone[t.parent].date)) lastDone[t.parent] = { date: d, str: t.dataConcl };
+  });
+  return epicsList.map((e) => (e.dataConcl || !isEpicDone(e) || !lastDone[e.key] ? e : { ...e, dataConcl: lastDone[e.key].str, dataConclFromIssues: true }));
+}
+
 function withResumoFallback(epicsList) {
   return epicsList.map((e) => (e.resumo ? e : (RESUMO_BY_KEY[e.key] ? { ...e, resumo: RESUMO_BY_KEY[e.key] } : e)));
 }
@@ -249,7 +260,7 @@ function DataProvider({ children }) {
   // O que o servidor registrou sobre épicos do Jira alterados por aqui (nome novo,
   // cancelado) — vale por cima da planilha até ela sincronizar com o Jira.
   const [epicOverrides, setEpicOverrides] = useState({});
-  const epicsView = useMemo(() => applyEpicOverrides(epics, epicOverrides), [epics, epicOverrides]);
+  const epicsView = useMemo(() => withEpicDoneDates(applyEpicOverrides(epics, epicOverrides), tasks || []), [epics, epicOverrides, tasks]);
   // Renomear/cancelar vale para qualquer issue: o override também cobre as tarefas.
   const tasksView = useMemo(() => applyEpicOverrides(tasks || [], epicOverrides), [tasks, epicOverrides]);
   // Escrita no Jira ligada? (JIRA_EMAIL/JIRA_API_TOKEN no servidor) — null = ainda não sei.
@@ -2377,9 +2388,9 @@ function RoadmapScreen() {
   // Antes da janela visível, encosta na primeira semana mostrada.
   const doneStartWeek = (item, duration) => {
     if (!item || !isEpicDone(item)) return null;
-    const d = parseBRDate(item.dataConcl);
+    const d = doneWeekOf(item, positions[item.key]);
     if (!d) return null;
-    const doneWeek = Math.round((startOfWeek(d) - startOfWeek(NOW_DATE)) / (7 * 86400000));
+    const doneWeek = Math.round((d - startOfWeek(NOW_DATE)) / (7 * 86400000));
     return Math.min(weekCount - duration, Math.max(-PAST_WEEKS, doneWeek - duration + 1));
   };
   const enteringStart = (key, weekIndex, duration) => {
@@ -2388,13 +2399,22 @@ function RoadmapScreen() {
     return doneAt === null ? weekIndex : doneAt;
   };
 
+  // Concluído que já estava no Gantt e foi movido (ou redimensionado): a semana
+  // em que a barra termina passa a ser a da entrega, também na tela Entregas.
+  const movedDonePatch = (key, startWeek, duration) => {
+    const scheduled = positions[key] && positions[key].roadmapLane;
+    if (!scheduled || !byKey[key] || !isEpicDone(byKey[key])) return {};
+    return { doneWeek: mondayISO(addDays(startOfWeek(NOW_DATE), (startWeek + duration - 1) * 7)) };
+  };
+
   const onDropCell = (e, laneKey, weekIndex) => {
     e.preventDefault();
     if (!dragKey) return;
     const cur = positions[dragKey] || { durationWeeks: 2 };
     weekIndex = enteringStart(dragKey, weekIndex, cur.durationWeeks || 2);
+    const donePatch = movedDonePatch(dragKey, weekIndex, cur.durationWeeks || 2);
     if (!byAssignee) {
-      updatePosition(dragKey, { roadmapLane: laneKey, startWeek: weekIndex, durationWeeks: cur.durationWeeks || 2 });
+      updatePosition(dragKey, { roadmapLane: laneKey, startWeek: weekIndex, durationWeeks: cur.durationWeeks || 2, ...donePatch });
       setDragKey(null);
       return;
     }
@@ -2406,7 +2426,7 @@ function RoadmapScreen() {
       setDragKey(null);
       return;
     }
-    updatePosition(dragKey, { roadmapLane: product, startWeek: weekIndex, durationWeeks: cur.durationWeeks || 2 });
+    updatePosition(dragKey, { roadmapLane: product, startWeek: weekIndex, durationWeeks: cur.durationWeeks || 2, ...donePatch });
     const target = laneKey === NO_ASSIGNEE ? null : laneKey;
     if ((epic?.assignee || null) !== target && ownsCard(epic)) reassignEpic(dragKey, target);
     setDragKey(null);
@@ -2428,7 +2448,8 @@ function RoadmapScreen() {
   };
   const resizeEpic = (key, delta) => {
     const cur = positions[key] || { durationWeeks: 2 };
-    updatePosition(key, { durationWeeks: Math.max(1, Math.min(12, (cur.durationWeeks || 2) + delta)) });
+    const duration = Math.max(1, Math.min(12, (cur.durationWeeks || 2) + delta));
+    updatePosition(key, { durationWeeks: duration, ...(cur.startWeek != null ? movedDonePatch(key, cur.startWeek, duration) : {}) });
   };
 
   const removeFromGantt = (key) => {
@@ -2907,11 +2928,20 @@ function RoadmapScreen() {
    mostram o que está previsto para terminar nelas.
    ===================================================================== */
 
-/** Semana da entrega: a da data de conclusão; sem data, a semana em que a
-    barra termina no Gantt (startWeek é relativo à semana atual). */
+/** Segunda-feira da semana em que o item foi entregue: a escolhida à mão
+    (arrastando no Gantt ou em Entregas), senão a da data de conclusão. */
+function doneWeekOf(item, pos) {
+  const manual = (pos && pos.doneWeek) || item.doneWeek;
+  if (manual) return new Date(`${manual}T00:00:00`);
+  const d = parseBRDate(item.dataConcl);
+  return d ? startOfWeek(d) : null;
+}
+
+/** Semana da entrega; sem data nenhuma, a semana em que a barra termina no
+    Gantt (startWeek é relativo à semana atual). */
 function deliveryWeek(item, now) {
-  const done = parseBRDate(item.dataConcl);
-  if (done) return { week: startOfWeek(done), byGantt: false };
+  const done = doneWeekOf(item);
+  if (done) return { week: done, byGantt: false };
   const end = item.startWeek + (item.durationWeeks || 2) - 1;
   return { week: addDays(startOfWeek(now), end * 7), byGantt: true };
 }
@@ -2929,15 +2959,26 @@ function deliveryCountLabel(items) {
   return parts.join(" · ");
 }
 
-function DeliveryCard({ item }) {
+function deliveryCardTitle(item) {
+  if (item.queue) return `${item.queue}: ainda não está no Gantt. Arraste para uma semana para agendar`;
+  if (item.upcoming) return "Previsto para depois das próximas semanas: a barra termina mais à frente no Gantt";
+  if (item.planned) return "Previsto: ainda não concluído, a barra termina nesta semana no Gantt";
+  if (item.doneWeek) return "Semana escolhida à mão (arrastando aqui ou no Gantt)";
+  if (item.byGantt) return "Sem data de conclusão no Jira: semana em que a barra termina no Gantt";
+  if (item.dataConclFromIssues) return "Épico sem data de conclusão: data da última issue dele concluída";
+  return undefined;
+}
+
+function DeliveryCard({ item, canDrag, onDragStart, onDragEnd }) {
   const { T, PRODUCT_STYLE } = useTheme();
-  const prod = PRODUCT_STYLE[item.roadmapLane] || PRODUCT_STYLE["Backoffice"];
+  const prod = PRODUCT_STYLE[item.lane || item.roadmapLane] || PRODUCT_STYLE["Backoffice"];
   const kind = isEpicItem(item) ? "Épico" : item.type || "Issue";
   return (
     <a
       href={jiraUrl(item.key)} target="_blank" rel="noopener noreferrer" className="pp-card"
-      title={item.planned ? "Previsto: ainda não concluído, a barra termina nesta semana no Gantt" : item.byGantt ? "Sem data de conclusão no Jira: semana em que a barra termina no Gantt" : undefined}
-      style={{ display: "block", textDecoration: "none", background: item.planned ? "transparent" : T.bg1, boxShadow: item.planned ? "none" : T.cardShadow, borderRadius: 10, padding: "8px 10px", border: `1px ${item.planned ? "dashed" : "solid"} ${item.planned ? `${prod.primary}88` : T.border2}`, borderLeft: `3px ${item.planned ? "dashed" : "solid"} ${prod.primary}`, fontFamily: "'Inter Tight', sans-serif" }}
+      draggable={canDrag} onDragStart={(e) => { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", item.key); onDragStart(item); }} onDragEnd={onDragEnd}
+      title={deliveryCardTitle(item)}
+      style={{ display: "block", textDecoration: "none", cursor: canDrag ? "grab" : "pointer", background: item.planned ? "transparent" : T.bg1, boxShadow: item.planned ? "none" : T.cardShadow, borderRadius: 10, padding: "8px 10px", border: `1px ${item.planned ? "dashed" : "solid"} ${item.planned ? `${prod.primary}88` : T.border2}`, borderLeft: `3px ${item.planned ? "dashed" : "solid"} ${prod.primary}`, fontFamily: "'Inter Tight', sans-serif" }}
     >
       <div className="flex items-center justify-between" style={{ gap: 6 }}>
         <span style={{ fontSize: 10.5, fontWeight: 500, color: T.ink1 }}>{item.key}</span>
@@ -2957,11 +2998,11 @@ function DeliveryCard({ item }) {
         </span>
         {item.planned ? (
           <span className="flex items-center" style={{ gap: 3, color: T.ink2, flexShrink: 0 }}>
-            <Calendar size={11} /> {item.status || "Previsto"}
+            <Calendar size={11} /> {item.queue || item.status || "Previsto"}
           </span>
         ) : (
           <span className="flex items-center" style={{ gap: 3, color: DONE_COLOR, flexShrink: 0 }}>
-            <Check size={11} /> {item.dataConcl ? item.dataConcl.split(" ")[0].slice(0, 5) : "Gantt"}
+            <Check size={11} /> {item.doneWeek ? "movido" : item.dataConcl ? item.dataConcl.split(" ")[0].slice(0, 5) : "Gantt"}
           </span>
         )}
       </div>
@@ -2973,31 +3014,47 @@ function DeliveriesScreen() {
   const { T, PRODUCT_STYLE } = useTheme();
   const now = useNow();
   const products = useProducts();
-  const { epics, tasks, positions, customEpicsShown } = useData();
+  const { epics, tasks, positions, customEpicsShown, updatePosition, filaProdutoOrder, filaUxOrder } = useData();
+  const { ownsCard } = useAuth();
   const { initiatives, initiativeByEpicKey } = useRoadmapFeatures();
+  // Arrastar um card para outra semana move a barra no Gantt: ela passa a
+  // terminar nessa semana. Concluído só vai para semanas até a atual (e a
+  // semana fica gravada como a da entrega); previsto, da atual em diante.
+  const [dragItem, setDragItem] = useState(null);
+  const [dropWeek, setDropWeek] = useState(null);
 
   // Mesmo recorte do Gantt: épicos (planilha + criados aqui) e as tarefas que
   // alguém agendou; entrega = o que está numa raia e foi concluído. Previsto =
   // o que não foi concluído e tem a barra terminando entre esta semana e as
-  // próximas DELIVERY_AHEAD_WEEKS.
+  // próximas DELIVERY_AHEAD_WEEKS. "Próximas entregas" (week: null) guarda o
+  // que vem depois disso no Gantt e tudo o que está nas filas de Produto e UX.
   const delivered = useMemo(() => {
     const pool = [...mergeCustomEpics(epics, customEpicsShown), ...(tasks || [])];
     const seen = new Set();
+    const queueOf = {};
+    filaProdutoOrder.forEach((k) => { queueOf[k] = "Fila Produto"; });
+    filaUxOrder.forEach((k) => { queueOf[k] = queueOf[k] ? "Fila Produto e UX" : "Fila UX"; });
     return pool
       .filter((e) => !seen.has(e.key) && seen.add(e.key))
       .map((e) => ({ ...e, ...(positions[e.key] || {}) }))
-      .filter((e) => e.roadmapLane && e.startWeek != null)
       .flatMap((e) => {
-        if (isEpicDone(e)) return [{ ...e, ...deliveryWeek(e, now) }];
-        const end = e.startWeek + (e.durationWeeks || 2) - 1;
-        if (end < 0 || end > DELIVERY_AHEAD_WEEKS) return [];
-        return [{ ...e, week: addDays(startOfWeek(now), end * 7), planned: true }];
+        const scheduled = e.roadmapLane && e.startWeek != null;
+        if (scheduled) {
+          if (isEpicDone(e)) return [{ ...e, lane: e.roadmapLane, ...deliveryWeek(e, now) }];
+          const end = e.startWeek + (e.durationWeeks || 2) - 1;
+          if (end < 0) return [];
+          if (end > DELIVERY_AHEAD_WEEKS) return [{ ...e, lane: e.roadmapLane, week: null, planned: true, upcoming: true }];
+          return [{ ...e, lane: e.roadmapLane, week: addDays(startOfWeek(now), end * 7), planned: true }];
+        }
+        // Fora do Gantt, mas numa fila: ainda por vir.
+        if (queueOf[e.key] && e.project && !isEpicDone(e)) return [{ ...e, lane: e.project, week: null, planned: true, upcoming: true, queue: queueOf[e.key] }];
+        return [];
       });
-  }, [epics, tasks, positions, customEpicsShown, now]);
+  }, [epics, tasks, positions, customEpicsShown, filaProdutoOrder, filaUxOrder, now]);
 
   const countByProduct = useMemo(() => {
     const c = {};
-    delivered.forEach((e) => { (c[e.roadmapLane] = c[e.roadmapLane] || []).push(e); });
+    delivered.forEach((e) => { (c[e.lane] = c[e.lane] || []).push(e); });
     return c;
   }, [delivered]);
   const tabs = useMemo(() => [...products.filter((p) => countByProduct[p]), ...Object.keys(countByProduct).filter((p) => !products.includes(p))], [products, countByProduct]);
@@ -3005,11 +3062,11 @@ function DeliveriesScreen() {
   const product = tabs.includes(picked) ? picked : tabs[0];
 
   const board = useMemo(() => {
-    const items = delivered.filter((e) => e.roadmapLane === product);
+    const items = delivered.filter((e) => e.lane === product);
     // Toda semana, da primeira entrega até DELIVERY_AHEAD_WEEKS depois da
     // atual, sem pular as vazias (sempre ao menos a semana anterior).
     const current = startOfWeek(now);
-    const first = items.reduce((min, e) => (e.week < min ? e.week : min), addDays(current, -7));
+    const first = items.reduce((min, e) => (e.week && e.week < min ? e.week : min), addDays(current, -7));
     const weekTimes = [];
     for (let w = first; w <= addDays(current, DELIVERY_AHEAD_WEEKS * 7); w = addDays(w, 7)) weekTimes.push(w.getTime());
     const layers = {};
@@ -3048,13 +3105,22 @@ function DeliveriesScreen() {
   const weekColPx = Math.max(200, Math.floor((boardWidth - FEATURE_COL_PX) / VISIBLE_WEEKS));
   // Abre com a semana atual no centro: a anterior encosta na coluna de features.
   const prevWeekIndex = board.weekTimes.indexOf(addDays(startOfWeek(now), -7).getTime());
+  const canDropOn = (t) => !!dragItem && t !== (dragItem.week ? dragItem.week.getTime() : null) && (dragItem.planned ? t >= thisWeek : t <= thisWeek);
+  const moveToWeek = (item, t) => {
+    const duration = item.durationWeeks || 2;
+    const endIndex = Math.round((t - thisWeek) / (7 * 86400000));
+    const patch = { roadmapLane: item.lane, startWeek: Math.max(-104, endIndex - duration + 1), durationWeeks: duration };
+    if (!item.planned) patch.doneWeek = mondayISO(new Date(t));
+    updatePosition(item.key, patch);
+  };
+  const endDrag = () => { setDragItem(null); setDropWeek(null); };
   useEffect(() => {
     if (scrollRef.current && prevWeekIndex >= 0) scrollRef.current.scrollLeft = prevWeekIndex * weekColPx;
   }, [product, prevWeekIndex, weekColPx]);
 
   return (
     <ScreenShell>
-      <PageTitle title="Entregas" sub={`O que foi concluído no Gantt, semana a semana, e o previsto até ${DELIVERY_AHEAD_WEEKS} semanas à frente. A semana da entrega é a da data de conclusão no Jira.`} />
+      <PageTitle title="Entregas" sub={`O que foi concluído no Gantt, semana a semana, e o previsto até ${DELIVERY_AHEAD_WEEKS} semanas à frente. O que vem depois, e o que está nas filas de Produto e UX, fica em Próximas entregas.`} />
       {tabs.length === 0 ? (
         <Muted>Nenhuma entrega ainda: itens concluídos, ou previstos para as próximas semanas, aparecem aqui quando estão numa raia do Gantt.</Muted>
       ) : (
@@ -3077,12 +3143,12 @@ function DeliveriesScreen() {
           </div>
 
           <div ref={scrollRef} className="pp-scroll" style={{ overflowX: "auto", border: `1px solid ${T.border2}`, borderRadius: 12, background: T.bg0 }}>
-            <div style={{ display: "grid", gridTemplateColumns: `${FEATURE_COL_PX}px repeat(${board.weekTimes.length}, ${weekColPx}px)`, width: FEATURE_COL_PX + board.weekTimes.length * weekColPx }}>
+            <div style={{ display: "grid", gridTemplateColumns: `${FEATURE_COL_PX}px repeat(${board.weekTimes.length + 1}, ${weekColPx}px)`, width: FEATURE_COL_PX + (board.weekTimes.length + 1) * weekColPx }}>
               <div style={{ position: "sticky", left: 0, zIndex: 2, background: T.bg1, borderBottom: `1px solid ${T.border2}`, borderRight: `1px solid ${T.border2}`, padding: "10px 12px", fontSize: 11, fontWeight: 600, color: T.ink2 }}>
                 Feature
               </div>
               {board.weekTimes.map((t) => {
-                const inWeek = board.items.filter((e) => e.week.getTime() === t);
+                const inWeek = board.items.filter((e) => e.week && e.week.getTime() === t);
                 return (
                   <div key={t} style={{ background: T.bg1, borderBottom: `1px solid ${T.border2}`, borderRight: `1px solid ${T.border1}`, padding: "10px 12px", display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 6 }}>
                     <span style={{ fontSize: 12, fontWeight: 600, color: t === thisWeek ? prod.primary : T.ink0 }}>
@@ -3092,6 +3158,10 @@ function DeliveriesScreen() {
                   </div>
                 );
               })}
+              <div style={{ background: T.bg1, borderBottom: `1px solid ${T.border2}`, borderLeft: `2px solid ${prod.primary}66`, padding: "10px 12px", display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 6 }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: T.ink0 }}>Próximas entregas</span>
+                <span style={{ fontSize: 11, color: T.ink2 }}>{deliveryCountLabel(board.items.filter((e) => e.upcoming))}</span>
+              </div>
               {board.rows.map((row) => (
                 <React.Fragment key={row.id}>
                   <div style={{ position: "sticky", left: 0, zIndex: 1, background: T.bg1, borderBottom: `1px dashed ${prod.primary}66`, borderRight: `1px solid ${T.border2}`, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 3 }}>
@@ -3101,15 +3171,27 @@ function DeliveriesScreen() {
                     <span style={{ fontSize: 11, color: T.ink2 }}>{deliveryCountLabel(row.items)}</span>
                   </div>
                   {board.weekTimes.map((t) => (
-                    <div key={t} style={{ borderBottom: `1px dashed ${prod.primary}66`, borderRight: `1px solid ${T.border1}`, padding: 8, display: "flex", flexDirection: "column", gap: 8, background: t === thisWeek ? prod.subtle : "transparent" }}>
-                      {row.items.filter((e) => e.week.getTime() === t).map((e) => <DeliveryCard key={e.key} item={e} />)}
+                    <div
+                      key={t}
+                      onDragOver={(e) => { if (!canDropOn(t)) return; e.preventDefault(); e.dataTransfer.dropEffect = "move"; if (dropWeek !== t) setDropWeek(t); }}
+                      onDrop={(e) => { e.preventDefault(); if (canDropOn(t)) moveToWeek(dragItem, t); endDrag(); }}
+                      style={{ borderBottom: `1px dashed ${prod.primary}66`, borderRight: `1px solid ${T.border1}`, padding: 8, display: "flex", flexDirection: "column", gap: 8, minHeight: 60, background: dropWeek === t ? `${prod.primary}22` : t === thisWeek ? prod.subtle : "transparent", outline: dropWeek === t ? `2px dashed ${prod.primary}` : "none", outlineOffset: -4 }}
+                    >
+                      {row.items.filter((e) => e.week && e.week.getTime() === t).map((e) => (
+                        <DeliveryCard key={e.key} item={e} canDrag={ownsCard(e)} onDragStart={setDragItem} onDragEnd={endDrag} />
+                      ))}
                     </div>
                   ))}
+                  <div style={{ borderBottom: `1px dashed ${prod.primary}66`, borderLeft: `2px solid ${prod.primary}66`, padding: 8, display: "flex", flexDirection: "column", gap: 8, minHeight: 60 }}>
+                    {row.items.filter((e) => e.upcoming).map((e) => (
+                      <DeliveryCard key={e.key} item={e} canDrag={ownsCard(e)} onDragStart={setDragItem} onDragEnd={endDrag} />
+                    ))}
+                  </div>
                 </React.Fragment>
               ))}
             </div>
           </div>
-          <Muted style={{ marginTop: 10 }}>{deliveryCountLabel(board.items)} em {product}. Cards tracejados são previstos: ainda não concluídos, com a barra do Gantt terminando naquela semana. Clique num card para abrir no Jira.</Muted>
+          <Muted style={{ marginTop: 10 }}>{deliveryCountLabel(board.items)} em {product}. Cards tracejados são previstos: ainda não concluídos, com a barra do Gantt terminando naquela semana. Arraste um card para outra semana para mover a barra no Gantt (o da fila entra no Gantt); clique para abrir no Jira.</Muted>
         </>
       )}
     </ScreenShell>
