@@ -2071,14 +2071,15 @@ function RoadmapScreen() {
   const [prioDropInfo, setPrioDropInfo] = useState(null);
   const [filaProdutoDropInfo, setFilaProdutoDropInfo] = useState(null);
   const [filaUxDropInfo, setFilaUxDropInfo] = useState(null);
-  // Parte de baixo do Roadmap: Filtros (produto, tipo, situação, busca) e as
-  // seções Produtos (fila de Produto), UX (fila de UX) e Projetos (o resto, por projeto).
-  const [section, setSection] = useState("produtos");
-  const [filaProduct, setFilaProduct] = useState("all");
-  const [filaKind, setFilaKind] = useState("epics");
-  const [filaState, setFilaState] = useState("open");
-  const [filaSearch, setFilaSearch] = useState("");
-  const [filaLimit, setFilaLimit] = useState(40);
+  // Parte de baixo do Roadmap: três camadas independentes — Produtos (fila de
+  // Produto), UX (fila de UX) e Projetos (priorização por projeto) —, cada uma
+  // com o próprio filtro. Projetos também alterna Épicos/Tarefas e Na fila/Done.
+  const [layerFilters, setLayerFilters] = useState({
+    produtos: { product: "all", search: "" },
+    ux: { product: "all", search: "" },
+    projetos: { product: "all", search: "", kind: "epics", state: "open", limit: 40 },
+  });
+  const setLayerFilter = (layer, patch) => setLayerFilters((prev) => ({ ...prev, [layer]: { ...prev[layer], ...patch } }));
   // Recolher/expandir: quais produtos e iniciativas estão com os épicos
   // escondidos no Gantt. Não persiste entre sessões de propósito — é um
   // estado de visualização, não um dado do board.
@@ -2411,31 +2412,79 @@ function RoadmapScreen() {
     updatePosition(key, { roadmapLane: epic?.project || null, startWeek: 0, durationWeeks: cur.durationWeeks || 2 });
   };
 
-  // Filtros valem para as três seções. Tipo e situação só mudam Projetos: as
-  // filas de Produto e UX são de épicos em aberto, na ordem de trabalho.
-  const filterNeedle = filaSearch.trim().toLowerCase();
-  const passesFilter = (e) => (filaProduct === "all" || e.project === filaProduct)
-    && (!filterNeedle || `${e.key} ${e.summary || ""}`.toLowerCase().includes(filterNeedle));
-  const filaProdutoShown = filaProdutoItems.filter(passesFilter);
-  const filaUxShown = filaUxItems.filter(passesFilter);
-  const browsing = !(filaKind === "epics" && filaState === "open");
+  const passes = (f) => {
+    const needle = f.search.trim().toLowerCase();
+    return (e) => (f.product === "all" || e.project === f.product) && (!needle || `${e.key} ${e.summary || ""}`.toLowerCase().includes(needle));
+  };
+  const filaProdutoShown = filaProdutoItems.filter(passes(layerFilters.produtos));
+  const filaUxShown = filaUxItems.filter(passes(layerFilters.ux));
+  const pf = layerFilters.projetos;
+  const browsing = !(pf.kind === "epics" && pf.state === "open");
   const projetosList = (() => {
-    if (!browsing) return prioItems.filter(passesFilter);
+    if (!browsing) return prioItems.filter(passes(pf));
     // Fora do Gantt e das filas: tarefas, ou o que já foi feito — para agendar.
-    const pool = filaKind === "epics" ? mergeCustomEpics(EPICS_SEED, customEpics) : (TASKS || []).filter(isTaskItem);
+    const pool = pf.kind === "epics" ? mergeCustomEpics(EPICS_SEED, customEpics) : (TASKS || []).filter(isTaskItem);
     return pool
-      .filter((e) => passesFilter(e) && (filaState === "done") === isEpicDone(e))
+      .filter(passes(pf))
+      .filter((e) => (pf.state === "done") === isEpicDone(e))
       .filter((e) => !(positions[e.key] && positions[e.key].roadmapLane) && !filaSet.has(e.key))
       .sort((x, y) => (parseBRDate(y.dataConcl || y.created) || 0) - (parseBRDate(x.dataConcl || x.created) || 0));
   })();
-  const projetosShown = projetosList.slice(0, browsing ? filaLimit : projetosList.length);
+  const projetosShown = projetosList.slice(0, browsing ? pf.limit : projetosList.length);
   const projetosGroups = (() => {
     const names = [...products, ...new Set(projetosShown.map((e) => e.project).filter((p) => p && !products.includes(p)))];
-    const groups = names.map((p) => ({ product: p, items: projetosShown.filter((e) => e.project === p) })).filter((g) => g.items.length || (!browsing && (filaProduct === "all" || filaProduct === g.product)));
+    const groups = names.map((p) => ({ product: p, items: projetosShown.filter((e) => e.project === p) })).filter((g) => g.items.length || (!browsing && (pf.product === "all" || pf.product === g.product)));
     const outros = projetosShown.filter((e) => !e.project);
     if (outros.length) groups.push({ product: "Sem produto", items: outros });
     return groups;
   })();
+
+  // Cabeçalho de cada camada: título, contador, explicação e o filtro dela.
+  const layerHeader = (layer, title, count, help) => {
+    const f = layerFilters[layer];
+    const chip = (p) => {
+      const on = f.product === p;
+      const c = p === "all" ? "#5166e6" : (PRODUCT_STYLE[p] || PRODUCT_STYLE["Backoffice"]).primary;
+      return (
+        <button key={p} onClick={() => setLayerFilter(layer, { product: p, ...(layer === "projetos" ? { limit: 40 } : {}) })}
+          style={{ display: "inline-flex", alignItems: "center", gap: 5, borderRadius: 999, padding: "2px 9px", fontSize: 11, fontWeight: 500, cursor: "pointer", fontFamily: "'Inter Tight', sans-serif", border: `1px solid ${on ? c : T.border2}`, background: on ? `${c}1f` : T.bg0, color: on ? T.ink0 : T.ink1 }}>
+          {p !== "all" && <span style={{ width: 6, height: 6, borderRadius: 999, background: c }} />}{p === "all" ? "Todos" : p}
+        </button>
+      );
+    };
+    const toggle = (field, opts) => (
+      <div className="flex" style={{ border: `1px solid ${T.border2}`, borderRadius: 8, overflow: "hidden" }}>
+        {opts.map(([k, label]) => (
+          <button key={k} onClick={() => setLayerFilter(layer, { [field]: k, limit: 40 })}
+            style={{ padding: "3px 10px", fontSize: 11.5, fontWeight: 500, border: "none", cursor: "pointer", fontFamily: "'Inter Tight', sans-serif", background: f[field] === k ? "rgba(81,102,230,0.12)" : T.bg0, color: f[field] === k ? "#5166e6" : T.ink1 }}>
+            {label}
+          </button>
+        ))}
+      </div>
+    );
+    return (
+      <>
+        <div className="flex items-baseline justify-between" style={{ gap: 12, flexWrap: "wrap" }}>
+          <p style={{ fontSize: 14, fontWeight: 700, color: T.ink0, fontFamily: "'Plus Jakarta Sans', sans-serif" }}>
+            {title} <span style={{ fontSize: 12, fontWeight: 400, color: T.ink2, fontFamily: "'Inter Tight', sans-serif" }}>({count})</span>
+          </p>
+          <input value={f.search} onChange={(e) => setLayerFilter(layer, { search: e.target.value, ...(layer === "projetos" ? { limit: 40 } : {}) })} placeholder="Buscar chave ou título"
+            style={{ width: 220, borderRadius: 8, border: `1px solid ${T.border2}`, background: T.bg0, color: T.ink0, fontSize: 12, padding: "4px 8px", fontFamily: "'Inter Tight', sans-serif" }} />
+        </div>
+        <p style={{ fontSize: 11.5, color: T.ink2, margin: "2px 0 10px", fontFamily: "'Inter Tight', sans-serif" }}>{help}</p>
+        <div className="flex items-center" style={{ gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+          {["all", ...products].map(chip)}
+          {layer === "projetos" && (
+            <>
+              <span style={{ width: 1, height: 18, background: T.border2, margin: "0 4px" }} />
+              {toggle("kind", [["epics", "Épicos"], ["tasks", "Tarefas"]])}
+              {toggle("state", [["open", "Na fila"], ["done", "Done"]])}
+            </>
+          )}
+        </div>
+      </>
+    );
+  };
 
   const openEpic = openKey ? enriched.find((e) => e.key === openKey) : null;
 
@@ -2662,144 +2711,86 @@ function RoadmapScreen() {
         </div>
       </div>
 
-      {/* Filtros: valem para as seções abaixo */}
-      <div style={{ padding: "16px 24px", borderBottom: `1px solid ${T.border1}`, background: T.bg1 }}>
-        <p style={{ fontSize: 12.5, fontWeight: 600, color: T.ink0, marginBottom: 10, fontFamily: "'Plus Jakarta Sans', sans-serif" }}>Filtros</p>
-        <div className="flex items-center" style={{ gap: 4, flexWrap: "wrap", marginBottom: 10 }}>
-          {["all", ...products].map((p) => {
-            const on = filaProduct === p;
-            const c = p === "all" ? "#5166e6" : (PRODUCT_STYLE[p] || PRODUCT_STYLE["Backoffice"]).primary;
-            return (
-              <button key={p} onClick={() => { setFilaProduct(p); setFilaLimit(40); }}
-                style={{ display: "inline-flex", alignItems: "center", gap: 5, borderRadius: 999, padding: "3px 10px", fontSize: 11.5, fontWeight: 500, cursor: "pointer", fontFamily: "'Inter Tight', sans-serif", border: `1px solid ${on ? c : T.border2}`, background: on ? `${c}1f` : T.bg0, color: on ? T.ink0 : T.ink1 }}>
-                {p !== "all" && <span style={{ width: 6, height: 6, borderRadius: 999, background: c }} />}{p === "all" ? "Todos os produtos" : p}
-              </button>
-            );
-          })}
-        </div>
-        <div className="flex items-center" style={{ gap: 8, flexWrap: "wrap" }}>
-          {[[filaKind, setFilaKind, [["epics", "Épicos"], ["tasks", "Tarefas"]]], [filaState, setFilaState, [["open", "Na fila"], ["done", "Done"]]]].map(([value, set, opts], i) => (
-            <div key={i} className="flex" title={section === "projetos" ? undefined : "Tipo e situação valem para Projetos — as filas de Produto e UX são de épicos em aberto"}
-              style={{ border: `1px solid ${T.border2}`, borderRadius: 8, overflow: "hidden", opacity: section === "projetos" ? 1 : 0.5 }}>
-              {opts.map(([k, label]) => (
-                <button key={k} onClick={() => { set(k); setFilaLimit(40); setSection("projetos"); }}
-                  style={{ padding: "4px 10px", fontSize: 11.5, fontWeight: 500, border: "none", cursor: "pointer", fontFamily: "'Inter Tight', sans-serif", background: value === k ? "rgba(81,102,230,0.12)" : T.bg0, color: value === k ? "#5166e6" : T.ink1 }}>
-                  {label}
-                </button>
-              ))}
-            </div>
+      {/* Camada 1 — Produtos: a fila de Produto */}
+      <div onDragOver={(e) => e.preventDefault()} onDrop={onDropFilaProduto} style={{ padding: "18px 24px", borderBottom: `1px solid ${T.border1}` }}>
+        {layerHeader("produtos", "Produtos", filaProdutoShown.length, "Próximas prioridades de Produto, na ordem em que vamos trabalhar. Arraste para reordenar ou para o Gantt.")}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, minHeight: 56, borderRadius: 10, border: `1px dashed ${T.border2}`, padding: 8 }}>
+          {filaProdutoShown.length === 0 && <span style={{ fontSize: 11.5, color: T.ink2, fontFamily: "'Inter Tight', sans-serif" }}>Nada na fila de Produto. Marque "Fila Produto" num card de Projetos ou arraste para cá.</span>}
+          {filaProdutoShown.map((e) => (
+            <PrioCard
+              key={e.key} epic={e} onDragStart={onDragStart} onOpen={() => setOpenKey(e.key)}
+              onAdd={e.project && ownsCard(e) ? addToGantt : undefined}
+              onDragOverCard={onFilaProdutoDragOverCard} onDropOnCard={onFilaProdutoDropOnCard}
+              onDragEndCard={() => setFilaProdutoDropInfo(null)}
+              dropIndicator={filaProdutoDropInfo?.key === e.key ? filaProdutoDropInfo.position : null}
+              canDrag={ownsCard(e)}
+            />
           ))}
-          <input value={filaSearch} onChange={(e) => { setFilaSearch(e.target.value); setFilaLimit(40); }} placeholder="Buscar chave ou título"
-            style={{ flex: 1, minWidth: 160, maxWidth: 320, borderRadius: 8, border: `1px solid ${T.border2}`, background: T.bg0, color: T.ink0, fontSize: 12, padding: "5px 8px", fontFamily: "'Inter Tight', sans-serif" }} />
-          {(filaProduct !== "all" || filaSearch || browsing) && (
-            <button onClick={() => { setFilaProduct("all"); setFilaSearch(""); setFilaKind("epics"); setFilaState("open"); setFilaLimit(40); }}
-              style={{ border: "none", background: "none", color: "#5166e6", fontSize: 12, cursor: "pointer", fontFamily: "'Inter Tight', sans-serif" }}>
-              Limpar filtros
-            </button>
-          )}
         </div>
       </div>
 
-      {/* Seções: Produtos | UX | Projetos — uma por vez; soltar um card numa aba move para ela */}
-      <div style={{ padding: "16px 24px 24px" }}>
-        <div className="flex items-end" style={{ gap: 4, borderBottom: `1px solid ${T.border2}`, marginBottom: 12 }}>
-          {[
-            ["produtos", "Produtos", filaProdutoShown.length, onDropFilaProduto],
-            ["ux", "UX", filaUxShown.length, onDropFilaUx],
-            ["projetos", "Projetos", projetosList.length, onDropPrio],
-          ].map(([key, label, count, onDropTab]) => {
-            const on = section === key;
-            return (
-              <button key={key} onClick={() => setSection(key)}
-                onDragOver={(e) => e.preventDefault()} onDrop={(e) => { onDropTab(e); setSection(key); }}
-                style={{ padding: "8px 14px", marginBottom: -1, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "'Plus Jakarta Sans', sans-serif", background: "none", border: "none", borderBottom: `2px solid ${on ? "#5166e6" : "transparent"}`, color: on ? T.ink0 : T.ink2 }}>
-                {label} <span style={{ fontSize: 11.5, fontWeight: 400, color: T.ink2, fontFamily: "'Inter Tight', sans-serif" }}>({count})</span>
-              </button>
-            );
-          })}
+      {/* Camada 2 — UX: a fila de UX */}
+      <div onDragOver={(e) => e.preventDefault()} onDrop={onDropFilaUx} style={{ padding: "18px 24px", borderBottom: `1px solid ${T.border1}` }}>
+        {layerHeader("ux", "UX", filaUxShown.length, "Próximas prioridades de UX, na ordem em que vamos trabalhar. Arraste para reordenar ou para o Gantt.")}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, minHeight: 56, borderRadius: 10, border: `1px dashed ${T.border2}`, padding: 8 }}>
+          {filaUxShown.length === 0 && <span style={{ fontSize: 11.5, color: T.ink2, fontFamily: "'Inter Tight', sans-serif" }}>Nada na fila de UX. Marque "Fila UX" num card de Projetos ou arraste para cá.</span>}
+          {filaUxShown.map((e) => (
+            <PrioCard
+              key={e.key} epic={e} onDragStart={onDragStart} onOpen={() => setOpenKey(e.key)}
+              onAdd={e.project && ownsCard(e) ? addToGantt : undefined}
+              onDragOverCard={onFilaUxDragOverCard} onDropOnCard={onFilaUxDropOnCard}
+              onDragEndCard={() => setFilaUxDropInfo(null)}
+              dropIndicator={filaUxDropInfo?.key === e.key ? filaUxDropInfo.position : null}
+              canDrag={ownsCard(e)}
+            />
+          ))}
         </div>
-        <p style={{ fontSize: 11.5, color: T.ink2, marginBottom: 10, fontFamily: "'Inter Tight', sans-serif" }}>
-          {section === "produtos" ? "Próximas prioridades de Produto, na ordem em que vamos trabalhar. Arraste para reordenar ou para o Gantt."
-            : section === "ux" ? "Próximas prioridades de UX, na ordem em que vamos trabalhar. Arraste para reordenar ou para o Gantt."
-            : browsing ? `${filaKind === "epics" ? "Épicos" : "Tarefas"} ${filaState === "done" ? "já feitos" : "em aberto"} fora do Gantt, por projeto. Marque "Gantt" ou arraste para colocar no Roadmap.`
-            : 'Épicos para priorizar, por projeto. Marque "Fila Produto" ou "Fila UX", ou arraste para uma aba.'}
-        </p>
+      </div>
 
-        {section === "produtos" && (
-          <div onDragOver={(e) => e.preventDefault()} onDrop={onDropFilaProduto}
-            style={{ display: "flex", flexWrap: "wrap", gap: 8, minHeight: 56, borderRadius: 10, border: `1px dashed ${T.border2}`, padding: 8 }}>
-            {filaProdutoShown.length === 0 && <span style={{ fontSize: 11.5, color: T.ink2, fontFamily: "'Inter Tight', sans-serif" }}>Nada na fila de Produto com esses filtros. Marque "Fila Produto" num card de Projetos.</span>}
-            {filaProdutoShown.map((e) => (
-              <PrioCard
-                key={e.key} epic={e} onDragStart={onDragStart} onOpen={() => setOpenKey(e.key)}
-                onAdd={e.project && ownsCard(e) ? addToGantt : undefined}
-                onDragOverCard={onFilaProdutoDragOverCard} onDropOnCard={onFilaProdutoDropOnCard}
-                onDragEndCard={() => setFilaProdutoDropInfo(null)}
-                dropIndicator={filaProdutoDropInfo?.key === e.key ? filaProdutoDropInfo.position : null}
-                canDrag={ownsCard(e)}
-              />
-            ))}
-          </div>
-        )}
-
-        {section === "ux" && (
-          <div onDragOver={(e) => e.preventDefault()} onDrop={onDropFilaUx}
-            style={{ display: "flex", flexWrap: "wrap", gap: 8, minHeight: 56, borderRadius: 10, border: `1px dashed ${T.border2}`, padding: 8 }}>
-            {filaUxShown.length === 0 && <span style={{ fontSize: 11.5, color: T.ink2, fontFamily: "'Inter Tight', sans-serif" }}>Nada na fila de UX com esses filtros. Marque "Fila UX" num card de Projetos.</span>}
-            {filaUxShown.map((e) => (
-              <PrioCard
-                key={e.key} epic={e} onDragStart={onDragStart} onOpen={() => setOpenKey(e.key)}
-                onAdd={e.project && ownsCard(e) ? addToGantt : undefined}
-                onDragOverCard={onFilaUxDragOverCard} onDropOnCard={onFilaUxDropOnCard}
-                onDragEndCard={() => setFilaUxDropInfo(null)}
-                dropIndicator={filaUxDropInfo?.key === e.key ? filaUxDropInfo.position : null}
-                canDrag={ownsCard(e)}
-              />
-            ))}
-          </div>
-        )}
-
-        {section === "projetos" && (
-          <div onDragOver={(e) => e.preventDefault()} onDrop={browsing ? undefined : onDropPrio} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            {projetosGroups.length === 0 && <p style={{ fontSize: 12, color: T.ink2, fontFamily: "'Inter Tight', sans-serif" }}>Nada aqui com esses filtros.</p>}
-            {projetosGroups.map((group) => (
-              <div key={group.product}>
-                <div className="flex items-center" style={{ gap: 6, marginBottom: 6 }}>
-                  <span style={{ width: 6, height: 6, borderRadius: 999, background: (PRODUCT_STYLE[group.product] || PRODUCT_STYLE["Backoffice"]).primary, display: "inline-block" }} />
-                  <span style={{ fontSize: 11.5, fontWeight: 600, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>{group.product}</span>
-                  <span style={{ fontSize: 11, color: T.ink2, fontFamily: "'Inter Tight', sans-serif" }}>({group.items.length})</span>
-                </div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, minHeight: 40, borderRadius: 10, border: `1px dashed ${T.border2}`, padding: 8 }}>
-                  {group.items.length === 0 && <span style={{ fontSize: 11.5, color: T.ink2, fontFamily: "'Inter Tight', sans-serif" }}>Nenhum épico</span>}
-                  {group.items.map((e) => (browsing ? (
-                    <PrioCard
-                      key={e.key} epic={e} onDragStart={onDragStart}
-                      onOpen={() => { if (isEpicItem(e)) setOpenKey(e.key); else window.open(jiraUrl(e.key), "_blank", "noopener"); }}
-                      onAdd={e.project && ownsCard(e) ? addToGantt : undefined}
-                      canDrag={ownsCard(e)}
-                    />
-                  ) : (
-                    <PrioCard
-                      key={e.key} epic={e} onDragStart={onDragStart} onOpen={() => setOpenKey(e.key)}
-                      onAdd={e.project && ownsCard(e) ? addToGantt : undefined}
-                      onMoveToFilaProduto={ownsCard(e) ? moveToFilaProduto : undefined}
-                      onMoveToFilaUx={ownsCard(e) ? moveToFilaUx : undefined}
-                      onDragOverCard={onPrioDragOverCard} onDropOnCard={onPrioDropOnCard}
-                      onDragEndCard={() => setPrioDropInfo(null)}
-                      dropIndicator={prioDropInfo?.key === e.key ? prioDropInfo.position : null}
-                      canDrag={ownsCard(e)}
-                    />
-                  )))}
-                </div>
+      {/* Camada 3 — Projetos: priorização por projeto, ou tarefas/feitos para agendar */}
+      <div onDragOver={(e) => e.preventDefault()} onDrop={browsing ? undefined : onDropPrio} style={{ padding: "18px 24px 24px" }}>
+        {layerHeader("projetos", "Projetos", projetosList.length, browsing
+          ? `${pf.kind === "epics" ? "Épicos" : "Tarefas"} ${pf.state === "done" ? "já feitos" : "em aberto"} fora do Gantt, por projeto. Marque "Gantt" ou arraste para colocar no Roadmap.`
+          : 'Épicos para priorizar, por projeto. Marque "Fila Produto" ou "Fila UX", ou arraste para a camada.')}
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {projetosGroups.length === 0 && <p style={{ fontSize: 12, color: T.ink2, fontFamily: "'Inter Tight', sans-serif" }}>Nada aqui com esse filtro.</p>}
+          {projetosGroups.map((group) => (
+            <div key={group.product}>
+              <div className="flex items-center" style={{ gap: 6, marginBottom: 6 }}>
+                <span style={{ width: 6, height: 6, borderRadius: 999, background: (PRODUCT_STYLE[group.product] || PRODUCT_STYLE["Backoffice"]).primary, display: "inline-block" }} />
+                <span style={{ fontSize: 11.5, fontWeight: 600, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>{group.product}</span>
+                <span style={{ fontSize: 11, color: T.ink2, fontFamily: "'Inter Tight', sans-serif" }}>({group.items.length})</span>
               </div>
-            ))}
-            {browsing && projetosList.length > projetosShown.length && (
-              <button onClick={() => setFilaLimit((n) => n + 40)} style={{ alignSelf: "flex-start", border: "none", background: "none", color: "#5166e6", fontSize: 12, cursor: "pointer", fontFamily: "'Inter Tight', sans-serif" }}>
-                Mostrar mais {projetosList.length - projetosShown.length}
-              </button>
-            )}
-          </div>
-        )}
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, minHeight: 40, borderRadius: 10, border: `1px dashed ${T.border2}`, padding: 8 }}>
+                {group.items.length === 0 && <span style={{ fontSize: 11.5, color: T.ink2, fontFamily: "'Inter Tight', sans-serif" }}>Nenhum épico</span>}
+                {group.items.map((e) => (browsing ? (
+                  <PrioCard
+                    key={e.key} epic={e} onDragStart={onDragStart}
+                    onOpen={() => { if (isEpicItem(e)) setOpenKey(e.key); else window.open(jiraUrl(e.key), "_blank", "noopener"); }}
+                    onAdd={e.project && ownsCard(e) ? addToGantt : undefined}
+                    canDrag={ownsCard(e)}
+                  />
+                ) : (
+                  <PrioCard
+                    key={e.key} epic={e} onDragStart={onDragStart} onOpen={() => setOpenKey(e.key)}
+                    onAdd={e.project && ownsCard(e) ? addToGantt : undefined}
+                    onMoveToFilaProduto={ownsCard(e) ? moveToFilaProduto : undefined}
+                    onMoveToFilaUx={ownsCard(e) ? moveToFilaUx : undefined}
+                    onDragOverCard={onPrioDragOverCard} onDropOnCard={onPrioDropOnCard}
+                    onDragEndCard={() => setPrioDropInfo(null)}
+                    dropIndicator={prioDropInfo?.key === e.key ? prioDropInfo.position : null}
+                    canDrag={ownsCard(e)}
+                  />
+                )))}
+              </div>
+            </div>
+          ))}
+          {browsing && projetosList.length > projetosShown.length && (
+            <button onClick={() => setLayerFilter("projetos", { limit: pf.limit + 40 })} style={{ alignSelf: "flex-start", border: "none", background: "none", color: "#5166e6", fontSize: 12, cursor: "pointer", fontFamily: "'Inter Tight', sans-serif" }}>
+              Mostrar mais {projetosList.length - projetosShown.length}
+            </button>
+          )}
+        </div>
       </div>
 
       <EpicDrawer epic={openEpic} weeks={weeks} onClose={() => setOpenKey(null)} onSave={saveDrawer} onDelete={deleteEpic} canEdit={ownsCard(openEpic)} jiraConfigured={jiraConfigured === true} />
