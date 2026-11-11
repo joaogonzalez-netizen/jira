@@ -4,6 +4,7 @@ import { BarChart, Bar, LineChart, Line, PieChart, Pie, XAxis, YAxis, CartesianG
 import storage from "./lib/storage";
 import { roadmapStore, diffRoadmap, isEmptyDiff, summarizeRoadmap, emptyRoadmap, applyEpicOverrides, mergeCustomEpics } from "./lib/roadmap-store";
 import { jiraApi } from "./lib/jira-client";
+import { BOARDS, boardOf, byStatusBackToFront, statusRank } from "./lib/status-order";
 import { AuthProvider, useAuth } from "./lib/auth-context";
 import { DEFAULT_WS, currentWorkspaceId, isDefaultWorkspace, switchWorkspace } from "./lib/workspace";
 
@@ -2564,7 +2565,10 @@ function RoadmapScreen() {
       .filter((e) => (pf.state === "done") === isEpicDone(e))
       .filter((e) => !(positions[e.key] && positions[e.key].roadmapLane) && !filaSet.has(e.key))
       .sort((x, y) => {
-        // Done ordena pela data de conclusão; em aberto, pela de criação.
+        // Sempre por status, do mais avançado ao Backlog; no mesmo status,
+        // Done ordena pela data de conclusão e em aberto pela de criação.
+        const rank = statusRank(x) - statusRank(y);
+        if (rank) return rank;
         const at = (e) => (parseBRDate(pf.state === "done" ? e.dataConcl || e.created : e.created) || 0);
         return pf.sort === "asc" ? at(x) - at(y) : at(y) - at(x);
       });
@@ -2903,7 +2907,7 @@ function RoadmapScreen() {
       {/* Camada 3 — Projetos: priorização por projeto, ou tarefas/feitos para agendar */}
       <div onDragOver={(e) => e.preventDefault()} onDrop={browsing ? undefined : onDropPrio} style={{ padding: "18px 24px 24px" }}>
         {layerHeader("projetos", "Projetos", projetosList.length, browsing
-          ? `${{ epics: "Épicos", tasks: "Tarefas", stories: "Stories", bugs: "Bugs" }[pf.kind]} ${pf.state === "done" ? "já feitos" : "em aberto"} fora do Gantt, por projeto, ${pf.sort === "asc" ? "dos mais antigos" : "dos mais recentes"} para ${pf.sort === "asc" ? "os mais recentes" : "os mais antigos"} (data de ${pf.state === "done" ? "conclusão" : "criação"}). Marque "Gantt" ou arraste para colocar no Roadmap.`
+          ? `${{ epics: "Épicos", tasks: "Tarefas", stories: "Stories", bugs: "Bugs" }[pf.kind]} ${pf.state === "done" ? "já feitos" : "em aberto"} fora do Gantt, por projeto, do status mais avançado ao Backlog e, no mesmo status, ${pf.sort === "asc" ? "dos mais antigos" : "dos mais recentes"} para ${pf.sort === "asc" ? "os mais recentes" : "os mais antigos"} (data de ${pf.state === "done" ? "conclusão" : "criação"}). Marque "Gantt" ou arraste para colocar no Roadmap.`
           : 'Épicos para priorizar, por projeto. Marque "Fila Produto" ou "Fila UX", ou arraste para a camada.')}
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           {projetosGroups.length === 0 && <p style={{ fontSize: 12, color: T.ink2, fontFamily: "'Inter Tight', sans-serif" }}>Nada aqui com esse filtro.</p>}
@@ -2916,16 +2920,32 @@ function RoadmapScreen() {
               </div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 8, minHeight: 40, borderRadius: 10, border: `1px dashed ${T.border2}`, padding: 8 }}>
                 {group.items.length === 0 && <span style={{ fontSize: 11.5, color: T.ink2, fontFamily: "'Inter Tight', sans-serif" }}>Nenhum épico</span>}
-                {group.items.map((e) => (browsing ? (
-                  <PrioCard
-                    key={e.key} epic={e} onDragStart={onDragStart}
-                    onOpen={() => openItem(e)}
-                    onAdd={e.project && ownsCard(e) ? addToGantt : undefined}
-                    onMoveToFilaProduto={ownsCard(e) && !isEpicDone(e) ? moveToFilaProduto : undefined}
-                    onMoveToFilaUx={ownsCard(e) && !isEpicDone(e) ? moveToFilaUx : undefined}
-                    canDrag={ownsCard(e)}
-                  />
-                ) : (
+                {browsing && BOARDS.map((board, i) => {
+                  const inBoard = group.items.filter((e) => boardOf(e) === board.id);
+                  if (!inBoard.length) return null;
+                  return (
+                    <div key={board.id} style={{ flex: "1 1 100%", minWidth: 0 }}>
+                      <div className="flex items-center" style={{ gap: 6, marginBottom: 6 }}>
+                        <span style={{ fontSize: 11, fontWeight: 600, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>{board.label}</span>
+                        <span style={{ fontSize: 11, color: T.ink2, fontFamily: "'Inter Tight', sans-serif" }}>({inBoard.length})</span>
+                        <span style={{ flex: 1, borderTop: `1px dashed ${T.border2}` }} />
+                      </div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                        {inBoard.map((e) => (
+                          <PrioCard
+                            key={e.key} epic={e} onDragStart={onDragStart}
+                            onOpen={() => openItem(e)}
+                            onAdd={e.project && ownsCard(e) ? addToGantt : undefined}
+                            onMoveToFilaProduto={ownsCard(e) && !isEpicDone(e) ? moveToFilaProduto : undefined}
+                            onMoveToFilaUx={ownsCard(e) && !isEpicDone(e) ? moveToFilaUx : undefined}
+                            canDrag={ownsCard(e)}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+                {!browsing && group.items.map((e) => (
                   <PrioCard
                     key={e.key} epic={e} onDragStart={onDragStart} onOpen={() => openItem(e)}
                     onAdd={e.project && ownsCard(e) ? addToGantt : undefined}
@@ -2936,7 +2956,7 @@ function RoadmapScreen() {
                     dropIndicator={prioDropInfo?.key === e.key ? prioDropInfo.position : null}
                     canDrag={ownsCard(e)}
                   />
-                )))}
+                ))}
               </div>
             </div>
           ))}
@@ -3019,24 +3039,6 @@ function deliveryWeek(item, now) {
 }
 
 const NO_FEATURE = "__sem_feature__";
-/** Status do Jira de trás pra frente: o que está mais perto de entregue vem
-    primeiro (Concluído, Pronto p/ Deploy, Em testes…) até o Backlog. */
-const STATUS_BACK_TO_FRONT = [
-  "Done", "Em rollout", "Pronto P/ Deploy", "Em testes", "Pronta p/ teste", "Code Review", "Em DEV",
-  "Fila da Sprint", "Fila da sprint UX", "Pronto P/ DEV", "Em refinamento Técnico", "Aguardado suporte",
-  "Handoff", "Em análise", "Refinamento de negócio", "Design ready", "Em design", "Candidato Próximo Trimestre", "Backlog",
-].map((st) => st.toLowerCase());
-const statusRank = (item) => {
-  const i = STATUS_BACK_TO_FRONT.indexOf(String(item.status || "").trim().toLowerCase());
-  return i >= 0 ? i : STATUS_BACK_TO_FRONT.length; // status desconhecido vai para o fim
-};
-/** Mais avançado primeiro; no mesmo status, a entrega mais recente. */
-function byStatusBackToFront(a, b) {
-  const rank = statusRank(a) - statusRank(b);
-  if (rank) return rank;
-  const da = parseBRDate(a.dataConcl), db = parseBRDate(b.dataConcl);
-  return (db ? db.getTime() : 0) - (da ? da.getTime() : 0) || String(a.key).localeCompare(String(b.key), undefined, { numeric: true });
-}
 /** Quantas semanas à frente da atual a tela mostra (com o que está previsto). */
 const DELIVERY_AHEAD_WEEKS = 2;
 /** "2 entregas · 1 prevista" */
