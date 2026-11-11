@@ -3019,6 +3019,24 @@ function deliveryWeek(item, now) {
 }
 
 const NO_FEATURE = "__sem_feature__";
+/** Status do Jira de trás pra frente: o que está mais perto de entregue vem
+    primeiro (Concluído, Pronto p/ Deploy, Em testes…) até o Backlog. */
+const STATUS_BACK_TO_FRONT = [
+  "Done", "Em rollout", "Pronto P/ Deploy", "Em testes", "Pronta p/ teste", "Code Review", "Em DEV",
+  "Fila da Sprint", "Fila da sprint UX", "Pronto P/ DEV", "Em refinamento Técnico", "Aguardado suporte",
+  "Handoff", "Em análise", "Refinamento de negócio", "Design ready", "Em design", "Candidato Próximo Trimestre", "Backlog",
+].map((st) => st.toLowerCase());
+const statusRank = (item) => {
+  const i = STATUS_BACK_TO_FRONT.indexOf(String(item.status || "").trim().toLowerCase());
+  return i >= 0 ? i : STATUS_BACK_TO_FRONT.length; // status desconhecido vai para o fim
+};
+/** Mais avançado primeiro; no mesmo status, a entrega mais recente. */
+function byStatusBackToFront(a, b) {
+  const rank = statusRank(a) - statusRank(b);
+  if (rank) return rank;
+  const da = parseBRDate(a.dataConcl), db = parseBRDate(b.dataConcl);
+  return (db ? db.getTime() : 0) - (da ? da.getTime() : 0) || String(a.key).localeCompare(String(b.key), undefined, { numeric: true });
+}
 /** Quantas semanas à frente da atual a tela mostra (com o que está previsto). */
 const DELIVERY_AHEAD_WEEKS = 2;
 /** "2 entregas · 1 prevista" */
@@ -3140,7 +3158,7 @@ function DeliveriesScreen() {
   const product = tabs.includes(picked) ? picked : tabs[0];
 
   const board = useMemo(() => {
-    const items = delivered.filter((e) => e.lane === product);
+    const items = delivered.filter((e) => e.lane === product).sort(byStatusBackToFront);
     // Toda semana, da primeira entrega até DELIVERY_AHEAD_WEEKS depois da
     // atual, sem pular as vazias (sempre ao menos a semana anterior).
     const current = startOfWeek(now);
