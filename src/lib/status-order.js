@@ -24,7 +24,6 @@ export const STATUS_BACK_TO_FRONT = [
   ["Produto"],
   ["Design ready"],
   ["Em design"],
-  ["Candidato Próximo Trimestre"],
   ["Backlog"],
 ];
 

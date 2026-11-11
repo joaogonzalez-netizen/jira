@@ -24,6 +24,12 @@ test("grafias do quadro do Jira valem o mesmo que as da planilha", () => {
   assert.equal(statusRank(card("A", "  pronto p/ deploy ")), statusRank(card("B", "Pronto para deploy")));
 });
 
+test("Candidato Próximo Trimestre não tem degrau próprio: fica junto do Backlog pela etapa", () => {
+  const candidato = card("A", "Candidato Próximo Trimestre", { stage: "Backlog" });
+  assert.equal(statusRank(candidato), statusRank(card("B", "Backlog")));
+  assert.deepEqual(order([card("C", "Backlog"), candidato, card("D", "Em design")]), ["D", "A", "C"]);
+});
+
 test("status que a lista não conhece entra pela etapa; sem nada, vai para o fim", () => {
   assert.equal(statusRank(card("A", "Status novo", { stage: "Em dev" })), statusRank(card("B", "Em DEV")));
   assert.equal(statusRank(card("A", "Status novo")), STATUS_BACK_TO_FRONT.length);
