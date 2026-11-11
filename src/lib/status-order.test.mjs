@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { STATUS_BACK_TO_FRONT, byStatusBackToFront, statusRank } from "./status-order.js";
+import { BOARDS, STATUS_BACK_TO_FRONT, boardOf, byStatusBackToFront, statusRank } from "./status-order.js";
 
 const card = (key, status, extra = {}) => ({ key, status, ...extra });
 const order = (cards) => [...cards].sort(byStatusBackToFront).map((c) => c.key);
@@ -44,4 +44,23 @@ test("mesmo status: conclusão mais recente primeiro, depois a chave", () => {
     card("S-1", "Em DEV"),
   ]);
   assert.deepEqual(out, ["S-2", "S-10", "S-1", "S-3"]);
+});
+
+test("board de Dev, de UX e o comum de Backlog e refinamento", () => {
+  const board = (status, extra) => boardOf(card("K", status, extra));
+  for (const st of ["Done", "Em rollout", "Pronto P/ Deploy", "Em testes", "Pronta p/ teste", "Code Review", "Em DEV", "Fila da Sprint"]) assert.equal(board(st), "dev", st);
+  for (const st of ["Fila da sprint UX", "Design ready", "Em design"]) assert.equal(board(st), "ux", st);
+  for (const st of ["Pronto P/ DEV", "Em refinamento Técnico", "Aguardado suporte", "Handoff", "Em análise", "Refinamento de negócio", "Produto", "Backlog"]) assert.equal(board(st), "comum", st);
+  assert.equal(board("Status novo"), "comum");
+  assert.equal(board("Status novo", { stage: "Em dev" }), "dev");
+  assert.equal(board("Status novo", { stage: "Em design" }), "ux");
+  assert.deepEqual(BOARDS.map((b) => b.id), ["dev", "ux", "comum"]);
+});
+
+test("dentro de cada board a ordem é de trás pra frente", () => {
+  const sorted = [...STATUS_BACK_TO_FRONT].map((names, i) => card(`K-${i}`, names[0])).reverse().sort(byStatusBackToFront);
+  const of = (id) => sorted.filter((c) => boardOf(c) === id).map((c) => c.status);
+  assert.deepEqual(of("dev"), ["Concluído", "Em rollout", "Pronto P/ Deploy", "Em testes", "Pronta p/ teste", "Code Review", "Em DEV", "Fila da Sprint"]);
+  assert.deepEqual(of("ux"), ["Fila da sprint UX", "Design ready", "Em design"]);
+  assert.deepEqual(of("comum"), ["Pronto P/ DEV", "Em refinamento Técnico", "Aguardado suporte", "Handoff", "Em análise", "Refinamento de negócio", "Produto", "Backlog"]);
 });

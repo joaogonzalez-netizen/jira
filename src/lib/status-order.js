@@ -46,6 +46,24 @@ export function statusRank(item) {
   return stage ? RANK_OF.get(norm(stage)) : STATUS_BACK_TO_FRONT.length;
 }
 
+/** Boards em que a lista de Projetos se divide: o de Dev, o de UX e o que ainda
+    é Backlog/refinamento (comum aos dois). Pela posição do status na ordem. */
+export const BOARDS = [
+  { id: "dev", label: "Dev" },
+  { id: "ux", label: "UX" },
+  { id: "comum", label: "Backlog e refinamento" },
+];
+const UX_STATUSES = ["Fila da sprint UX", "Design ready", "Em design"];
+const DEV_STATUSES = ["Concluído", "Em rollout", "Pronto P/ Deploy", "Em testes", "Pronta p/ teste", "Code Review", "Em DEV", "Fila da Sprint"];
+const BOARD_OF_RANK = STATUS_BACK_TO_FRONT.map((names) => {
+  const n = norm(names[0]);
+  if (UX_STATUSES.some((u) => norm(u) === n)) return "ux";
+  return DEV_STATUSES.some((d) => norm(d) === n) ? "dev" : "comum";
+});
+
+/** "dev", "ux" ou "comum" (Backlog, refinamento e o que não se reconhece). */
+export const boardOf = (item) => BOARD_OF_RANK[statusRank(item)] || "comum";
+
 const doneTime = (item) => {
   const [d, m, y] = String(item.dataConcl || "").trim().split(" ")[0].split("/");
   const t = d && m && y ? new Date(`${y}-${m}-${d}T00:00:00`).getTime() : 0;

@@ -4,7 +4,7 @@ import { BarChart, Bar, LineChart, Line, PieChart, Pie, XAxis, YAxis, CartesianG
 import storage from "./lib/storage";
 import { roadmapStore, diffRoadmap, isEmptyDiff, summarizeRoadmap, emptyRoadmap, applyEpicOverrides, mergeCustomEpics } from "./lib/roadmap-store";
 import { jiraApi } from "./lib/jira-client";
-import { byStatusBackToFront, statusRank } from "./lib/status-order";
+import { BOARDS, boardOf, byStatusBackToFront, statusRank } from "./lib/status-order";
 import { AuthProvider, useAuth } from "./lib/auth-context";
 import { DEFAULT_WS, currentWorkspaceId, isDefaultWorkspace, switchWorkspace } from "./lib/workspace";
 
@@ -2920,16 +2920,32 @@ function RoadmapScreen() {
               </div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 8, minHeight: 40, borderRadius: 10, border: `1px dashed ${T.border2}`, padding: 8 }}>
                 {group.items.length === 0 && <span style={{ fontSize: 11.5, color: T.ink2, fontFamily: "'Inter Tight', sans-serif" }}>Nenhum épico</span>}
-                {group.items.map((e) => (browsing ? (
-                  <PrioCard
-                    key={e.key} epic={e} onDragStart={onDragStart}
-                    onOpen={() => openItem(e)}
-                    onAdd={e.project && ownsCard(e) ? addToGantt : undefined}
-                    onMoveToFilaProduto={ownsCard(e) && !isEpicDone(e) ? moveToFilaProduto : undefined}
-                    onMoveToFilaUx={ownsCard(e) && !isEpicDone(e) ? moveToFilaUx : undefined}
-                    canDrag={ownsCard(e)}
-                  />
-                ) : (
+                {browsing && BOARDS.map((board, i) => {
+                  const inBoard = group.items.filter((e) => boardOf(e) === board.id);
+                  if (!inBoard.length) return null;
+                  return (
+                    <div key={board.id} style={{ flex: "1 1 100%", minWidth: 0 }}>
+                      <div className="flex items-center" style={{ gap: 6, marginBottom: 6 }}>
+                        <span style={{ fontSize: 11, fontWeight: 600, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>{board.label}</span>
+                        <span style={{ fontSize: 11, color: T.ink2, fontFamily: "'Inter Tight', sans-serif" }}>({inBoard.length})</span>
+                        <span style={{ flex: 1, borderTop: `1px dashed ${T.border2}` }} />
+                      </div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                        {inBoard.map((e) => (
+                          <PrioCard
+                            key={e.key} epic={e} onDragStart={onDragStart}
+                            onOpen={() => openItem(e)}
+                            onAdd={e.project && ownsCard(e) ? addToGantt : undefined}
+                            onMoveToFilaProduto={ownsCard(e) && !isEpicDone(e) ? moveToFilaProduto : undefined}
+                            onMoveToFilaUx={ownsCard(e) && !isEpicDone(e) ? moveToFilaUx : undefined}
+                            canDrag={ownsCard(e)}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+                {!browsing && group.items.map((e) => (
                   <PrioCard
                     key={e.key} epic={e} onDragStart={onDragStart} onOpen={() => openItem(e)}
                     onAdd={e.project && ownsCard(e) ? addToGantt : undefined}
@@ -2940,7 +2956,7 @@ function RoadmapScreen() {
                     dropIndicator={prioDropInfo?.key === e.key ? prioDropInfo.position : null}
                     canDrag={ownsCard(e)}
                   />
-                )))}
+                ))}
               </div>
             </div>
           ))}
