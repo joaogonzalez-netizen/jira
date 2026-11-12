@@ -32,6 +32,7 @@ const SNAPSHOT_KEY = "jira:sheet-snapshot";
 const SNAPSHOT_AT_KEY = "jira:sheet-snapshot-at";
 
 const MAX_KEYS = 3000;
+const AUTO_QUEUES = ["produto", "ux", "dev"];
 export const MAX_DESCRIPTION = 10000;
 const MAX_SNAPSHOT_BYTES = 3.5 * 1024 * 1024;
 const MAX_CAS_ATTEMPTS = 6;
@@ -141,10 +142,20 @@ function cleanPosition(p) {
   if (!(Number.isInteger(dw) && dw >= 1 && dw <= 52)) throw new ValidationError("Duração inválida");
   // Semana de entrega escolhida à mão (segunda-feira, AAAA-MM-DD): vale mais que
   // a data de conclusão do Jira. Opcional — sem ela, a posição fica como sempre.
+  const out = { roadmapLane: lane, startWeek: sw, durationWeeks: dw };
   const done = p.doneWeek;
-  if (done == null) return { roadmapLane: lane, startWeek: sw, durationWeeks: dw };
-  if (typeof done !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(done) || Number.isNaN(Date.parse(done))) throw new ValidationError("Semana de entrega inválida");
-  return { roadmapLane: lane, startWeek: sw, durationWeeks: dw, doneWeek: done };
+  if (done != null) {
+    if (typeof done !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(done) || Number.isNaN(Date.parse(done))) throw new ValidationError("Semana de entrega inválida");
+    out.doneWeek = done;
+  }
+  // O que a automação das filas aplicou por último (Produto, UX ou Dev): é o que
+  // separa o movimento automático do manual.
+  const auto = p.autoQueue;
+  if (auto != null) {
+    if (!AUTO_QUEUES.includes(auto)) throw new ValidationError("Marca da automação inválida");
+    out.autoQueue = auto;
+  }
+  return out;
 }
 
 const str = (v, max) => (typeof v === "string" ? v.slice(0, max) : null);
