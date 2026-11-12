@@ -5,6 +5,7 @@ import storage from "./lib/storage";
 import { roadmapStore, diffRoadmap, isEmptyDiff, summarizeRoadmap, emptyRoadmap, applyEpicOverrides, mergeCustomEpics } from "./lib/roadmap-store";
 import { jiraApi } from "./lib/jira-client";
 import { BOARDS, boardOf, byStatusBackToFront, statusRank } from "./lib/status-order";
+import { packRows } from "./lib/delivery-layout";
 import { AuthProvider, useAuth } from "./lib/auth-context";
 import { DEFAULT_WS, currentWorkspaceId, isDefaultWorkspace, switchWorkspace } from "./lib/workspace";
 
@@ -3117,7 +3118,8 @@ function DeliveriesScreen() {
   // terminar nessa semana. Concluído só vai para semanas até a atual (e a
   // semana fica gravada como a da entrega); previsto, da atual em diante.
   const [dragItem, setDragItem] = useState(null);
-  const [dropWeek, setDropWeek] = useState(null);
+  const [dropIdx, setDropIdx] = useState(null); // coluna (semana) em que o card começaria
+  const gridRef = useRef(null);
   // Clicar num card abre o mesmo drawer dos outros cards (detalhes e decisões).
   const [openKey, setOpenKey] = useState(null);
 
@@ -3138,11 +3140,18 @@ function DeliveriesScreen() {
       .flatMap((e) => {
         const scheduled = e.roadmapLane && e.startWeek != null;
         if (scheduled) {
-          if (isEpicDone(e)) return [{ ...e, lane: e.roadmapLane, ...deliveryWeek(e, now) }];
-          const end = e.startWeek + (e.durationWeeks || 2) - 1;
+          // `week` é a semana em que termina (a da entrega) e `start` a em que
+          // começa: o card ocupa todas as semanas entre as duas, como no Gantt.
+          const thisMonday = startOfWeek(now);
+          const duration = e.durationWeeks || 2;
+          if (isEpicDone(e)) {
+            const done = deliveryWeek(e, now);
+            return [{ ...e, lane: e.roadmapLane, ...done, start: addDays(done.week, -(duration - 1) * 7) }];
+          }
+          const end = e.startWeek + duration - 1;
           if (end < 0) return [];
           if (end > DELIVERY_AHEAD_WEEKS) return [{ ...e, lane: e.roadmapLane, week: null, planned: true, upcoming: true }];
-          return [{ ...e, lane: e.roadmapLane, week: addDays(startOfWeek(now), end * 7), planned: true }];
+          return [{ ...e, lane: e.roadmapLane, week: addDays(thisMonday, end * 7), start: addDays(thisMonday, e.startWeek * 7), planned: true }];
         }
         // Fora do Gantt, mas numa fila: ainda por vir.
         if (queueOf[e.key] && e.project && !isEpicDone(e)) return [{ ...e, lane: e.project, week: null, planned: true, upcoming: true, queue: queueOf[e.key] }];
@@ -3164,9 +3173,14 @@ function DeliveriesScreen() {
     // Toda semana, da primeira entrega até DELIVERY_AHEAD_WEEKS depois da
     // atual, sem pular as vazias (sempre ao menos a semana anterior).
     const current = startOfWeek(now);
-    const first = items.reduce((min, e) => (e.week && e.week < min ? e.week : min), addDays(current, -7));
+    const first = items.reduce((min, e) => {
+      const from = e.start || e.week;
+      return from && from < min ? from : min;
+    }, addDays(current, -7));
     const weekTimes = [];
     for (let w = first; w <= addDays(current, DELIVERY_AHEAD_WEEKS * 7); w = addDays(w, 7)) weekTimes.push(w.getTime());
+    const lastIdx = weekTimes.length - 1;
+    const idxOf = (d) => Math.min(lastIdx, Math.max(0, Math.round((startOfWeek(d) - first) / (7 * 86400000))));
     const layers = {};
     items.forEach((e) => {
       const f = initiativeByEpicKey[e.key];
@@ -3180,6 +3194,17 @@ function DeliveriesScreen() {
       if (a.id === NO_FEATURE) return 1;
       if (b.id === NO_FEATURE) return -1;
       return order.indexOf(a.id) - order.indexOf(b.id);
+    });
+    // Cada card ocupa as colunas de `start` a `end`; os que se sobrepõem vão
+    // para sub-linhas diferentes dentro da linha da feature.
+    let nextRow = 2; // a linha 1 é o cabeçalho
+    rows.forEach((row) => {
+      row.cards = row.items.filter((e) => e.week).map((e) => ({ item: e, start: idxOf(e.start || e.week), end: idxOf(e.week) }));
+      const { rowOf, rowCount } = packRows(row.cards.map((c) => ({ key: c.item.key, start: c.start, end: c.end })));
+      row.rowOf = rowOf;
+      row.rowCount = rowCount;
+      row.gridRow = nextRow;
+      nextRow += rowCount;
     });
     return { weekTimes, rows, items };
   }, [delivered, product, initiatives, initiativeByEpicKey, now]);
@@ -3203,15 +3228,30 @@ function DeliveriesScreen() {
   const weekColPx = Math.max(200, Math.floor((boardWidth - FEATURE_COL_PX) / VISIBLE_WEEKS));
   // Abre com a semana atual no centro: a anterior encosta na coluna de features.
   const prevWeekIndex = board.weekTimes.indexOf(addDays(startOfWeek(now), -7).getTime());
-  const canDropOn = (t) => !!dragItem && t !== (dragItem.week ? dragItem.week.getTime() : null) && (dragItem.planned ? t >= thisWeek : t <= thisWeek);
-  const moveToWeek = (item, t) => {
+  // O card ocupa `durationWeeks` semanas a partir da coluna em que é solto, como
+  // no Gantt. Concluído tem de terminar até a semana atual; previsto, terminar
+  // nela ou depois.
+  const dragDuration = dragItem ? dragItem.durationWeeks || 2 : 1;
+  const dropIdxAt = (e) => {
+    if (!gridRef.current) return null;
+    const i = Math.floor((e.clientX - gridRef.current.getBoundingClientRect().left - FEATURE_COL_PX) / weekColPx);
+    return i >= 0 && i < board.weekTimes.length ? i : null;
+  };
+  const canDropAt = (i) => {
+    if (!dragItem || i === null) return false;
+    const startT = board.weekTimes[i];
+    if (dragItem.start && startT === dragItem.start.getTime()) return false;
+    const endT = addDays(new Date(startT), (dragDuration - 1) * 7).getTime();
+    return dragItem.planned ? endT >= thisWeek : endT <= thisWeek;
+  };
+  const moveToWeek = (item, i) => {
     const duration = item.durationWeeks || 2;
-    const endIndex = Math.round((t - thisWeek) / (7 * 86400000));
-    const patch = { roadmapLane: item.lane, startWeek: Math.max(-104, endIndex - duration + 1), durationWeeks: duration };
-    if (!item.planned) patch.doneWeek = mondayISO(new Date(t));
+    const startT = board.weekTimes[i];
+    const patch = { roadmapLane: item.lane, startWeek: Math.max(-104, Math.round((startT - thisWeek) / (7 * 86400000))), durationWeeks: duration };
+    if (!item.planned) patch.doneWeek = mondayISO(addDays(new Date(startT), (duration - 1) * 7));
     updatePosition(item.key, patch);
   };
-  const endDrag = () => { setDragItem(null); setDropWeek(null); };
+  const endDrag = () => { setDragItem(null); setDropIdx(null); };
   useEffect(() => {
     if (scrollRef.current && prevWeekIndex >= 0) scrollRef.current.scrollLeft = prevWeekIndex * weekColPx;
   }, [product, prevWeekIndex, weekColPx]);
@@ -3241,14 +3281,22 @@ function DeliveriesScreen() {
           </div>
 
           <div ref={scrollRef} className="pp-scroll" style={{ overflow: "auto", maxHeight: "calc(100vh - 230px)", border: `1px solid ${T.border2}`, borderRadius: 12, background: T.bg0 }}>
-            <div style={{ display: "grid", gridTemplateColumns: `${FEATURE_COL_PX}px repeat(${board.weekTimes.length + 1}, ${weekColPx}px)`, width: FEATURE_COL_PX + (board.weekTimes.length + 1) * weekColPx }}>
-              <div style={{ position: "sticky", top: 0, left: 0, zIndex: 4, background: T.bg1, borderBottom: `1px solid ${T.border2}`, borderRight: `1px solid ${T.border2}`, padding: "10px 12px", fontSize: 11, fontWeight: 600, color: T.ink2 }}>
+            <div
+              ref={gridRef}
+              onDragOver={(e) => {
+                const i = dropIdxAt(e);
+                if (canDropAt(i)) { e.preventDefault(); e.dataTransfer.dropEffect = "move"; if (dropIdx !== i) setDropIdx(i); } else if (dropIdx !== null) setDropIdx(null);
+              }}
+              onDrop={(e) => { e.preventDefault(); const i = dropIdxAt(e); if (canDropAt(i)) moveToWeek(dragItem, i); endDrag(); }}
+              style={{ display: "grid", gridTemplateColumns: `${FEATURE_COL_PX}px repeat(${board.weekTimes.length + 1}, ${weekColPx}px)`, width: FEATURE_COL_PX + (board.weekTimes.length + 1) * weekColPx }}
+            >
+              <div style={{ gridRow: 1, gridColumn: 1, position: "sticky", top: 0, left: 0, zIndex: 4, background: T.bg1, borderBottom: `1px solid ${T.border2}`, borderRight: `1px solid ${T.border2}`, padding: "10px 12px", fontSize: 11, fontWeight: 600, color: T.ink2 }}>
                 Feature
               </div>
-              {board.weekTimes.map((t) => {
+              {board.weekTimes.map((t, wi) => {
                 const inWeek = board.items.filter((e) => e.week && e.week.getTime() === t);
                 return (
-                  <div key={t} style={{ position: "sticky", top: 0, zIndex: 3, background: T.bg1, borderBottom: `1px solid ${T.border2}`, borderRight: `1px solid ${T.border1}`, padding: "10px 12px", display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 6 }}>
+                  <div key={t} style={{ gridRow: 1, gridColumn: wi + 2, position: "sticky", top: 0, zIndex: 3, background: T.bg1, borderBottom: `1px solid ${T.border2}`, borderRight: `1px solid ${T.border1}`, padding: "10px 12px", display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 6 }}>
                     <span style={{ fontSize: 12, fontWeight: 600, color: t === thisWeek ? prod.primary : T.ink0 }}>
                       Semana de {fmtWeek(new Date(t))}{t === thisWeek ? " · atual" : ""}
                     </span>
@@ -3256,40 +3304,45 @@ function DeliveriesScreen() {
                   </div>
                 );
               })}
-              <div style={{ position: "sticky", top: 0, zIndex: 3, background: T.bg1, borderBottom: `1px solid ${T.border2}`, borderLeft: `2px solid ${prod.primary}66`, padding: "10px 12px", display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 6 }}>
+              <div style={{ gridRow: 1, gridColumn: board.weekTimes.length + 2, position: "sticky", top: 0, zIndex: 3, background: T.bg1, borderBottom: `1px solid ${T.border2}`, borderLeft: `2px solid ${prod.primary}66`, padding: "10px 12px", display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 6 }}>
                 <span style={{ fontSize: 12, fontWeight: 600, color: T.ink0 }}>Próximas entregas</span>
                 <span style={{ fontSize: 11, color: T.ink2 }}>{deliveryCountLabel(board.items.filter((e) => e.upcoming))}</span>
               </div>
-              {board.rows.map((row) => (
-                <React.Fragment key={row.id}>
-                  <div style={{ position: "sticky", left: 0, zIndex: 1, background: T.bg1, borderBottom: `1px dashed ${prod.primary}66`, borderRight: `1px solid ${T.border2}`, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 3 }}>
-                    <span className="flex items-center" style={{ gap: 6, fontSize: 12.5, fontWeight: 600, color: row.id === NO_FEATURE ? T.ink2 : T.ink0 }}>
-                      <Layers size={13} style={{ color: prod.primary, flexShrink: 0 }} /> {row.name}
-                    </span>
-                    <span style={{ fontSize: 11, color: T.ink2 }}>{deliveryCountLabel(row.items)}</span>
-                  </div>
-                  {board.weekTimes.map((t) => (
-                    <div
-                      key={t}
-                      onDragOver={(e) => { if (!canDropOn(t)) return; e.preventDefault(); e.dataTransfer.dropEffect = "move"; if (dropWeek !== t) setDropWeek(t); }}
-                      onDrop={(e) => { e.preventDefault(); if (canDropOn(t)) moveToWeek(dragItem, t); endDrag(); }}
-                      style={{ borderBottom: `1px dashed ${prod.primary}66`, borderRight: `1px solid ${T.border1}`, padding: 8, display: "flex", flexDirection: "column", gap: 8, minHeight: 60, background: dropWeek === t ? `${prod.primary}22` : t === thisWeek ? prod.subtle : "transparent", outline: dropWeek === t ? `2px dashed ${prod.primary}` : "none", outlineOffset: -4 }}
-                    >
-                      {row.items.filter((e) => e.week && e.week.getTime() === t).map((e) => (
+              {board.rows.map((row) => {
+                const span = `${row.gridRow} / span ${row.rowCount}`;
+                return (
+                  <React.Fragment key={row.id}>
+                    <div style={{ gridRow: span, gridColumn: 1, position: "sticky", left: 0, zIndex: 1, background: T.bg1, borderBottom: `1px dashed ${prod.primary}66`, borderRight: `1px solid ${T.border2}`, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 3 }}>
+                      <span className="flex items-center" style={{ gap: 6, fontSize: 12.5, fontWeight: 600, color: row.id === NO_FEATURE ? T.ink2 : T.ink0 }}>
+                        <Layers size={13} style={{ color: prod.primary, flexShrink: 0 }} /> {row.name}
+                      </span>
+                      <span style={{ fontSize: 11, color: T.ink2 }}>{deliveryCountLabel(row.items)}</span>
+                    </div>
+                    {board.weekTimes.map((t, wi) => {
+                      const dropping = dropIdx !== null && wi >= dropIdx && wi < dropIdx + dragDuration;
+                      return (
+                        <div
+                          key={t}
+                          style={{ gridRow: span, gridColumn: wi + 2, borderBottom: `1px dashed ${prod.primary}66`, borderRight: `1px solid ${T.border1}`, minHeight: 76, background: dropping ? `${prod.primary}22` : t === thisWeek ? prod.subtle : "transparent" }}
+                        />
+                      );
+                    })}
+                    {row.cards.map((c) => (
+                      <div key={c.item.key} style={{ gridRow: row.gridRow + row.rowOf[c.item.key], gridColumn: `${c.start + 2} / ${c.end + 3}`, padding: 8, minWidth: 0 }}>
+                        <DeliveryCard item={c.item} canDrag={ownsCard(c.item)} onDragStart={setDragItem} onDragEnd={endDrag} onOpen={(it) => setOpenKey(it.key)} />
+                      </div>
+                    ))}
+                    <div style={{ gridRow: span, gridColumn: board.weekTimes.length + 2, borderBottom: `1px dashed ${prod.primary}66`, borderLeft: `2px solid ${prod.primary}66`, padding: 8, display: "flex", flexDirection: "column", gap: 8, minHeight: 76 }}>
+                      {row.items.filter((e) => e.upcoming).map((e) => (
                         <DeliveryCard key={e.key} item={e} canDrag={ownsCard(e)} onDragStart={setDragItem} onDragEnd={endDrag} onOpen={(it) => setOpenKey(it.key)} />
                       ))}
                     </div>
-                  ))}
-                  <div style={{ borderBottom: `1px dashed ${prod.primary}66`, borderLeft: `2px solid ${prod.primary}66`, padding: 8, display: "flex", flexDirection: "column", gap: 8, minHeight: 60 }}>
-                    {row.items.filter((e) => e.upcoming).map((e) => (
-                      <DeliveryCard key={e.key} item={e} canDrag={ownsCard(e)} onDragStart={setDragItem} onDragEnd={endDrag} onOpen={(it) => setOpenKey(it.key)} />
-                    ))}
-                  </div>
-                </React.Fragment>
-              ))}
+                  </React.Fragment>
+                );
+              })}
             </div>
           </div>
-          <Muted style={{ marginTop: 10 }}>{deliveryCountLabel(board.items)} em {product}. Cards tracejados são previstos: ainda não concluídos, com a barra do Gantt terminando naquela semana. Arraste um card para outra semana para mover a barra no Gantt (o da fila entra no Gantt); clique para ver os detalhes e registrar decisões.</Muted>
+          <Muted style={{ marginTop: 10 }}>{deliveryCountLabel(board.items)} em {product}. Cada card ocupa as semanas do início ao fim da entrega, como a barra do Gantt. Cards tracejados são previstos: ainda não concluídos. Arraste um card para outra semana para mover a barra no Gantt, mantendo a duração (o da fila entra no Gantt); clique para ver os detalhes e registrar decisões.</Muted>
         </>
       )}
       {openKey && delivered.find((e) => e.key === openKey) && (
