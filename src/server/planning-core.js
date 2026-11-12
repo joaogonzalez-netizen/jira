@@ -21,6 +21,7 @@ import { QUARTER_RE, cleanLinks } from "./links.js";
 
 export { resolveSessionFromCookie };
 
+const MAX_LIST = 3000; // itens de uma lista (ex.: chaves de épicos, prioridade)
 const SCORE = { type: "score" }; // 1–10, ou null
 // Acompanhamento semanal: [{ week (segunda-feira, AAAA-MM-DD), value, note }].
 // O último check-in vira o valor corrente do campo `mirror`.
@@ -128,6 +129,18 @@ export const KINDS = {
       epicKeys: { type: "list" },
     },
   },
+  // Prioridade manual dos cards da tela Entregas, uma por produto: a lista de
+  // chaves na ordem escolhida. Só o superusuário grava (a ordem vale para todos).
+  priorities: {
+    key: "jira:priorities",
+    prefix: "prio",
+    label: "Prioridade",
+    superOnly: true,
+    fields: {
+      product: { type: "text", required: true, max: 60 },
+      cardKeys: { type: "list" },
+    },
+  },
   // Registro de decisões de um card (épico, tarefa, story, bug ou rascunho):
   // o texto do comentário é o `name`. Só o autor (ou o super) edita o texto ou apaga.
   comments: {
@@ -176,6 +189,11 @@ async function ensureConnected(config) {
 
 function canWrite(session) {
   return !!session && (session.role === "admin" || session.role === "super");
+}
+
+/** Tipo `superOnly` (prioridades): só o superusuário grava, porque a ordem vale para todo mundo. */
+function canWriteKind(kind, session) {
+  return canWrite(session) && (!KINDS[kind].superOnly || session.role === "super");
 }
 
 function forbidden() {
@@ -271,8 +289,11 @@ function coerce(spec, value) {
       return cleanLinks(value);
     case "quarter":
       return typeof value === "string" && (value === "" || QUARTER_RE.test(value)) ? value : undefined;
-    case "list":
-      return Array.isArray(value) ? [...new Set(value.filter((v) => typeof v === "string" && v))] : undefined;
+    case "list": {
+      if (!Array.isArray(value)) return undefined;
+      const clean = [...new Set(value.filter((v) => typeof v === "string" && v && v.length <= 60))];
+      return clean.slice(0, spec.max || MAX_LIST);
+    }
     default:
       return undefined;
   }
@@ -325,7 +346,7 @@ export async function handleList(kind, config) {
 
 export async function handleCreate(kind, input, session, config) {
   if (!isKind(kind)) return unknownKind();
-  if (!canWrite(session)) return forbidden();
+  if (!canWriteKind(kind, session)) return forbidden();
   const name = typeof input.name === "string" ? input.name.trim() : "";
   if (!name) return { status: 400, body: { message: "Nome é obrigatório" } };
 
@@ -341,7 +362,7 @@ export async function handleCreate(kind, input, session, config) {
 
 export async function handleUpdate(kind, id, patch, session, config) {
   if (!isKind(kind)) return unknownKind();
-  if (!canWrite(session)) return forbidden();
+  if (!canWriteKind(kind, session)) return forbidden();
   if (!id) return { status: 400, body: { message: "id é obrigatório" } };
 
   const list = await readAll(config, kind);
@@ -357,7 +378,7 @@ export async function handleUpdate(kind, id, patch, session, config) {
 
 export async function handleDelete(kind, id, session, config) {
   if (!isKind(kind)) return unknownKind();
-  if (!canWrite(session)) return forbidden();
+  if (!canWriteKind(kind, session)) return forbidden();
   if (!id) return { status: 400, body: { message: "id é obrigatório" } };
 
   const list = await readAll(config, kind);

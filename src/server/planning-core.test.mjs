@@ -54,6 +54,28 @@ test("comentários: texto e card obrigatórios, limite de tamanho, só o autor (
   assert.deepEqual((await handleList("comments", config)).body, []);
 });
 
+test("prioridades: só o superusuário grava; a lista tira repetidos e chaves absurdas", async () => {
+  const config = fakeConfig();
+  const SUPER = { role: "super", user: { id: "9", email: "joao@x.com" } };
+  const input = { name: "STL Seller", product: "STL Seller", cardKeys: ["A-1", "A-2"] };
+  assert.equal((await handleCreate("priorities", input, ADMIN, config)).status, 403);
+  assert.equal((await handleCreate("priorities", input, LEITOR, config)).status, 403);
+
+  const created = await handleCreate("priorities", input, SUPER, config);
+  assert.equal(created.status, 201);
+  assert.deepEqual(created.body.cardKeys, ["A-1", "A-2"]);
+
+  assert.equal((await handleUpdate("priorities", created.body.id, { cardKeys: ["A-2", "A-1"] }, ADMIN, config)).status, 403);
+  const messy = await handleUpdate("priorities", created.body.id, { cardKeys: ["A-2", "A-1", "A-2", "", "K".repeat(500), 7] }, SUPER, config);
+  assert.deepEqual(messy.body.cardKeys, ["A-2", "A-1"]);
+  assert.equal((await handleUpdate("priorities", created.body.id, { cardKeys: [] }, SUPER, config)).body.cardKeys.length, 0);
+
+  assert.equal((await handleDelete("priorities", created.body.id, ADMIN, config)).status, 403);
+  assert.equal((await handleDelete("priorities", created.body.id, SUPER, config)).status, 200);
+  // todo mundo lê
+  assert.equal((await handleList("priorities", config)).status, 200);
+});
+
 test("kind desconhecido ou herdado do protótipo é recusado", async () => {
   const config = fakeConfig();
   for (const kind of ["nope", "constructor", "__proto__", undefined, "releases", "initiatives"]) {

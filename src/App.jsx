@@ -1,11 +1,12 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { ChevronUp, ChevronDown, ChevronRight, ChevronLeft, X, BarChart3, Sun, Moon, Calendar, Plus, Minus, RefreshCw, LogOut, Lock, Layers, Trash2, Users, Settings, Sparkles, Target, LayoutDashboard, Lightbulb, Package, FlaskConical, Check, ExternalLink, Puzzle, PackageCheck } from "lucide-react";
+import { ChevronUp, ChevronDown, ChevronRight, ChevronLeft, X, BarChart3, Sun, Moon, Calendar, Plus, Minus, RefreshCw, LogOut, Lock, Layers, Trash2, Users, Settings, Sparkles, Target, LayoutDashboard, Lightbulb, Package, FlaskConical, Check, ExternalLink, Puzzle, PackageCheck, GripVertical } from "lucide-react";
 import { BarChart, Bar, LineChart, Line, PieChart, Pie, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell, LabelList, ReferenceLine } from "recharts";
 import storage from "./lib/storage";
 import { roadmapStore, diffRoadmap, isEmptyDiff, summarizeRoadmap, emptyRoadmap, applyEpicOverrides, mergeCustomEpics } from "./lib/roadmap-store";
 import { jiraApi } from "./lib/jira-client";
 import { BOARDS, boardOf, byStatusBackToFront, statusRank } from "./lib/status-order";
 import { packRows } from "./lib/delivery-layout";
+import { comparePriority, mergePriority, reorderKeys } from "./lib/delivery-priority";
 import { QUEUE_STATUS_MAP, planQueueAutomation } from "./lib/status-queue";
 import { AuthProvider, useAuth } from "./lib/auth-context";
 import { DEFAULT_WS, currentWorkspaceId, isDefaultWorkspace, switchWorkspace } from "./lib/workspace";
@@ -3082,7 +3083,7 @@ function deliveryCardTitle(item) {
   return undefined;
 }
 
-function DeliveryCard({ item, canDrag, onDragStart, onDragEnd, onOpen }) {
+function DeliveryCard({ item, canDrag, onDragStart, onDragEnd, onOpen, canReorder, onHandleDragStart, onHandleDragEnd, indicator }) {
   const { T, PRODUCT_STYLE } = useTheme();
   const prod = PRODUCT_STYLE[item.lane || item.roadmapLane] || PRODUCT_STYLE["Backoffice"];
   const kind = isEpicItem(item) ? "Épico" : item.type || "Issue";
@@ -3091,14 +3092,27 @@ function DeliveryCard({ item, canDrag, onDragStart, onDragEnd, onOpen }) {
       onClick={() => onOpen(item)} className="pp-card"
       draggable={canDrag} onDragStart={(e) => { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", item.key); onDragStart(item); }} onDragEnd={onDragEnd}
       title={deliveryCardTitle(item)}
-      style={{ display: "block", textDecoration: "none", cursor: canDrag ? "grab" : "pointer", background: item.planned ? "transparent" : T.bg1, boxShadow: item.planned ? "none" : T.cardShadow, borderRadius: 10, padding: "8px 10px", border: `1px ${item.planned ? "dashed" : "solid"} ${item.planned ? `${prod.primary}88` : T.border2}`, borderLeft: `3px ${item.planned ? "dashed" : "solid"} ${prod.primary}`, fontFamily: "'Inter Tight', sans-serif" }}
+      style={{ position: "relative", display: "block", textDecoration: "none", cursor: canDrag ? "grab" : "pointer", background: item.planned ? "transparent" : T.bg1, boxShadow: item.planned ? "none" : T.cardShadow, borderRadius: 10, padding: "8px 10px", border: `1px ${item.planned ? "dashed" : "solid"} ${item.planned ? `${prod.primary}88` : T.border2}`, borderLeft: `3px ${item.planned ? "dashed" : "solid"} ${prod.primary}`, fontFamily: "'Inter Tight', sans-serif" }}
     >
+      {indicator && <span style={{ position: "absolute", left: 0, right: 0, height: 3, borderRadius: 2, background: prod.primary, ...(indicator === "before" ? { top: -6 } : { bottom: -6 }) }} />}
       <div className="flex items-center justify-between" style={{ gap: 6 }}>
-        {item.key.startsWith("NOVO-") ? (
-          <span style={{ fontSize: 10.5, fontWeight: 500, color: T.ink1 }}>{item.key}</span>
-        ) : (
-          <a href={jiraUrl(item.key)} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} style={{ fontSize: 10.5, fontWeight: 500, color: T.ink1, textDecoration: "none" }}>{item.key}</a>
-        )}
+        <span className="flex items-center" style={{ gap: 4, minWidth: 0 }}>
+          {canReorder && (
+            <span
+              draggable title="Arraste para cima ou para baixo para mudar a prioridade"
+              onClick={(e) => e.stopPropagation()}
+              onDragStart={(e) => { e.stopPropagation(); onHandleDragStart(e, item); }} onDragEnd={onHandleDragEnd}
+              style={{ display: "flex", cursor: "grab", color: T.ink2, marginLeft: -4 }}
+            >
+              <GripVertical size={13} />
+            </span>
+          )}
+          {item.key.startsWith("NOVO-") ? (
+            <span style={{ fontSize: 10.5, fontWeight: 500, color: T.ink1 }}>{item.key}</span>
+          ) : (
+            <a href={jiraUrl(item.key)} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} style={{ fontSize: 10.5, fontWeight: 500, color: T.ink1, textDecoration: "none" }}>{item.key}</a>
+          )}
+        </span>
         <span style={{ fontSize: 9.5, fontWeight: 600, color: prod.text, background: prod.subtle, borderRadius: 999, padding: "1px 7px" }}>{kind}</span>
       </div>
       <p style={{ margin: "4px 0 6px", fontSize: 12, fontWeight: 500, color: T.ink0, lineHeight: 1.35, display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
@@ -3132,13 +3146,18 @@ function DeliveriesScreen() {
   const now = useNow();
   const products = useProducts();
   const { epics, tasks, positions, customEpicsShown, updatePosition, filaProdutoOrder, filaUxOrder } = useData();
-  const { ownsCard } = useAuth();
+  const { ownsCard, canWriteShared } = useAuth();
+  const { items: planningItems, create: planCreate, update: planUpdate } = usePlanning();
   const { initiatives, initiativeByEpicKey } = useRoadmapFeatures();
   // Arrastar um card para outra semana move a barra no Gantt: ela passa a
   // terminar nessa semana. Concluído só vai para semanas até a atual (e a
   // semana fica gravada como a da entrega); previsto, da atual em diante.
   const [dragItem, setDragItem] = useState(null);
   const [dropIdx, setDropIdx] = useState(null); // coluna (semana) em que o card começaria
+  // Prioridade: arrastar a alça do card para cima ou para baixo, dentro da mesma feature.
+  const [prioDrag, setPrioDrag] = useState(null); // { key, rowId }
+  const [prioOver, setPrioOver] = useState(null); // { key, position: "before" | "after" }
+  const [prioError, setPrioError] = useState(null);
   const gridRef = useRef(null);
   // Clicar num card abre o mesmo drawer dos outros cards (detalhes e decisões).
   const [openKey, setOpenKey] = useState(null);
@@ -3188,8 +3207,13 @@ function DeliveriesScreen() {
   const [picked, setPicked] = useState(null);
   const product = tabs.includes(picked) ? picked : tabs[0];
 
+  // Prioridade manual do produto (só o superusuário grava): quem está na lista
+  // vem primeiro, na ordem dela; o resto segue a ordem de status.
+  const prioDoc = (planningItems.priorities || []).find((d) => d.product === product);
+  const prioKeys = useMemo(() => (prioDoc ? prioDoc.cardKeys || [] : []), [prioDoc]);
+
   const board = useMemo(() => {
-    const items = delivered.filter((e) => e.lane === product).sort(byStatusBackToFront);
+    const items = delivered.filter((e) => e.lane === product).sort(comparePriority(prioKeys, byStatusBackToFront));
     // Toda semana, da primeira entrega até DELIVERY_AHEAD_WEEKS depois da
     // atual, sem pular as vazias (sempre ao menos a semana anterior).
     const current = startOfWeek(now);
@@ -3221,13 +3245,16 @@ function DeliveriesScreen() {
     rows.forEach((row) => {
       row.cards = row.items.filter((e) => e.week).map((e) => ({ item: e, start: idxOf(e.start || e.week), end: idxOf(e.week) }));
       const { rowOf, rowCount } = packRows(row.cards.map((c) => ({ key: c.item.key, start: c.start, end: c.end })));
+      // Cada card de "Próximas entregas" ocupa a própria linha: uma célula alta
+      // esticaria as sub-linhas e abriria vãos entre os cards da semana.
+      row.upcoming = row.items.filter((e) => e.upcoming);
       row.rowOf = rowOf;
-      row.rowCount = rowCount;
+      row.rowCount = Math.max(rowCount, row.upcoming.length);
       row.gridRow = nextRow;
       nextRow += rowCount;
     });
     return { weekTimes, rows, items };
-  }, [delivered, product, initiatives, initiativeByEpicKey, now]);
+  }, [delivered, product, initiatives, initiativeByEpicKey, now, prioKeys]);
 
   const prod = product ? PRODUCT_STYLE[product] : null;
   const FEATURE_COL_PX = 180;
@@ -3272,6 +3299,40 @@ function DeliveriesScreen() {
     updatePosition(item.key, patch);
   };
   const endDrag = () => { setDragItem(null); setDropIdx(null); };
+  const endPrioDrag = () => { setPrioDrag(null); setPrioOver(null); };
+  const savePriority = async (cardKeys) => {
+    setPrioError(null);
+    const r = prioDoc ? await planUpdate("priorities", prioDoc.id, { cardKeys }) : await planCreate("priorities", { name: product, product, cardKeys });
+    if (!r.ok) setPrioError(r.message || "Não foi possível salvar a prioridade");
+  };
+  const reorder = (draggedKey, targetKey, position) => {
+    const next = reorderKeys(board.items.map((e) => e.key), draggedKey, targetKey, position);
+    savePriority(mergePriority(next, prioKeys));
+  };
+  const onHandleDragStart = (e, item, rowId) => {
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", item.key);
+    const card = e.currentTarget.closest(".pp-card");
+    if (card) e.dataTransfer.setDragImage(card, 16, 16);
+    setDragItem(null);
+    setPrioDrag({ key: item.key, rowId });
+  };
+  // Soltar a alça sobre outro card da mesma feature: antes ou depois, pela metade de cima ou de baixo.
+  const prioDropProps = (item, rowId) => ({
+    onDragOver: (e) => {
+      if (!prioDrag || prioDrag.rowId !== rowId || prioDrag.key === item.key) return;
+      e.preventDefault(); e.stopPropagation();
+      const rect = e.currentTarget.getBoundingClientRect();
+      const position = e.clientY - rect.top < rect.height / 2 ? "before" : "after";
+      if (!prioOver || prioOver.key !== item.key || prioOver.position !== position) setPrioOver({ key: item.key, position });
+    },
+    onDrop: (e) => {
+      if (!prioDrag || prioDrag.rowId !== rowId) return;
+      e.preventDefault(); e.stopPropagation();
+      if (prioDrag.key !== item.key) reorder(prioDrag.key, item.key, prioOver && prioOver.key === item.key ? prioOver.position : "before");
+      endPrioDrag();
+    },
+  });
   useEffect(() => {
     if (scrollRef.current && prevWeekIndex >= 0) scrollRef.current.scrollLeft = prevWeekIndex * weekColPx;
   }, [product, prevWeekIndex, weekColPx]);
@@ -3348,21 +3409,36 @@ function DeliveriesScreen() {
                       );
                     })}
                     {row.cards.map((c) => (
-                      <div key={c.item.key} style={{ gridRow: row.gridRow + row.rowOf[c.item.key], gridColumn: `${c.start + 2} / ${c.end + 3}`, padding: 8, minWidth: 0 }}>
-                        <DeliveryCard item={c.item} canDrag={ownsCard(c.item)} onDragStart={setDragItem} onDragEnd={endDrag} onOpen={(it) => setOpenKey(it.key)} />
+                      <div key={c.item.key} {...prioDropProps(c.item, row.id)} style={{ gridRow: row.gridRow + row.rowOf[c.item.key], gridColumn: `${c.start + 2} / ${c.end + 3}`, padding: 8, minWidth: 0 }}>
+                        <DeliveryCard
+                          item={c.item} canDrag={ownsCard(c.item)} onDragStart={setDragItem} onDragEnd={endDrag} onOpen={(it) => setOpenKey(it.key)}
+                          canReorder={canWriteShared} onHandleDragStart={(e, it) => onHandleDragStart(e, it, row.id)} onHandleDragEnd={endPrioDrag}
+                          indicator={prioOver && prioOver.key === c.item.key ? prioOver.position : null}
+                        />
                       </div>
                     ))}
-                    <div style={{ gridRow: span, gridColumn: board.weekTimes.length + 2, borderBottom: `1px dashed ${prod.primary}66`, borderLeft: `2px solid ${prod.primary}66`, padding: 8, display: "flex", flexDirection: "column", gap: 8, minHeight: 76 }}>
-                      {row.items.filter((e) => e.upcoming).map((e) => (
-                        <DeliveryCard key={e.key} item={e} canDrag={ownsCard(e)} onDragStart={setDragItem} onDragEnd={endDrag} onOpen={(it) => setOpenKey(it.key)} />
-                      ))}
-                    </div>
+                    <div style={{ gridRow: span, gridColumn: board.weekTimes.length + 2, borderBottom: `1px dashed ${prod.primary}66`, borderLeft: `2px solid ${prod.primary}66`, minHeight: 76 }} />
+                    {row.upcoming.map((e, ui) => (
+                      <div key={e.key} {...prioDropProps(e, row.id)} style={{ gridRow: row.gridRow + ui, gridColumn: board.weekTimes.length + 2, padding: 8, minWidth: 0 }}>
+                        <DeliveryCard
+                          item={e} canDrag={ownsCard(e)} onDragStart={setDragItem} onDragEnd={endDrag} onOpen={(it) => setOpenKey(it.key)}
+                          canReorder={canWriteShared} onHandleDragStart={(ev, it) => onHandleDragStart(ev, it, row.id)} onHandleDragEnd={endPrioDrag}
+                          indicator={prioOver && prioOver.key === e.key ? prioOver.position : null}
+                        />
+                      </div>
+                    ))}
                   </React.Fragment>
                 );
               })}
             </div>
           </div>
-          <Muted style={{ marginTop: 10 }}>{deliveryCountLabel(board.items)} em {product}. Cada card ocupa as semanas do início ao fim da entrega, como a barra do Gantt. Cards tracejados são previstos: ainda não concluídos. Arraste um card para outra semana para mover a barra no Gantt, mantendo a duração (o da fila entra no Gantt); clique para ver os detalhes e registrar decisões.</Muted>
+          <Muted style={{ marginTop: 10 }}>{deliveryCountLabel(board.items)} em {product}. Cada card ocupa as semanas do início ao fim da entrega, como a barra do Gantt. Cards tracejados são previstos: ainda não concluídos. Arraste um card para outra semana para mover a barra no Gantt, mantendo a duração (o da fila entra no Gantt); clique para ver os detalhes e registrar decisões. Arraste a alça ⋮⋮ de um card, para cima ou para baixo dentro da feature, para mudar a prioridade.</Muted>
+          {prioError && <p role="alert" style={{ marginTop: 6, fontSize: 12, color: "#e08585" }}>{prioError}</p>}
+          {canWriteShared && prioKeys.length > 0 && (
+            <button onClick={() => savePriority([])} style={{ marginTop: 6, border: "none", background: "none", padding: 0, fontSize: 12, color: "#5166e6", cursor: "pointer", fontFamily: "'Inter Tight', sans-serif" }}>
+              Prioridade manual ativa neste produto. Voltar para a ordem de status
+            </button>
+          )}
         </>
       )}
       {openKey && delivered.find((e) => e.key === openKey) && (
@@ -3524,7 +3600,7 @@ function dueState(item, doneStatus) {
   return d < 0 ? "late" : d <= 7 ? "soon" : null;
 }
 
-const PLANNING_LOAD = ["objectives", "keyResults", "opportunities", "solutions", "experiments", "features", "comments"];
+const PLANNING_LOAD = ["objectives", "keyResults", "opportunities", "solutions", "experiments", "features", "comments", "priorities"];
 
 /** Espelha a regra do servidor: em Features e Key Results um épico fica num só. */
 function releaseLocalEpics(kind, list, item) {
