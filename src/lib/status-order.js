@@ -27,7 +27,7 @@ export const STATUS_BACK_TO_FRONT = [
   ["Backlog"],
 ];
 
-const norm = (v) => String(v || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+export const norm = (v) => String(v || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 
 const RANK_OF = new Map();
 STATUS_BACK_TO_FRONT.forEach((names, rank) => names.forEach((n) => RANK_OF.set(norm(n), rank)));

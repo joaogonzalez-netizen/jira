@@ -6,6 +6,7 @@ import { roadmapStore, diffRoadmap, isEmptyDiff, summarizeRoadmap, emptyRoadmap,
 import { jiraApi } from "./lib/jira-client";
 import { BOARDS, boardOf, byStatusBackToFront, statusRank } from "./lib/status-order";
 import { packRows } from "./lib/delivery-layout";
+import { QUEUE_STATUS_MAP, planQueueAutomation } from "./lib/status-queue";
 import { AuthProvider, useAuth } from "./lib/auth-context";
 import { DEFAULT_WS, currentWorkspaceId, isDefaultWorkspace, switchWorkspace } from "./lib/workspace";
 
@@ -711,6 +712,25 @@ function DataProvider({ children }) {
       allProjects: all,
     };
   }, [epicsView, tasks, tasksView, customEpics, onlyKey]);
+
+  // Automação das filas: o status do Jira põe o card na fila de Produto ou de UX
+  // (ou tira das duas, em Dev). Só o superusuário grava, uma vez por mudança, e o
+  // que alguém moveu à mão não é desfeito (regra em planQueueAutomation). O Gantt
+  // fica de fora: tem a colocação automática dele, acima.
+  const queueAutoSigRef = useRef("");
+  useEffect(() => {
+    if (!roadmapLoaded || roadmapMode !== "server" || !canWriteShared || pendingRef.current > 0) return;
+    const cur = latestRef.current;
+    const plan = planQueueAutomation({ cards: [...epicsShown, ...tasksShown], positions: cur.positions, filaProdutoOrder: cur.filaProdutoOrder, filaUxOrder: cur.filaUxOrder });
+    if (!plan) return;
+    const sig = plan.changes.map((c) => `${c.key}:${c.to}`).join("|");
+    if (sig === queueAutoSigRef.current) return; // já tentei exatamente isto: não repete em laço se o salvamento falhar
+    queueAutoSigRef.current = sig;
+    setPositions(plan.positions);
+    setFilaProdutoOrder(plan.filaProdutoOrder);
+    setFilaUxOrder(plan.filaUxOrder);
+    persistRoadmap(plan.positions, cur.customEpics, cur.prioOrder, plan.filaProdutoOrder, plan.filaUxOrder);
+  }, [epicsShown, tasksShown, positions, filaProdutoOrder, filaUxOrder, roadmapLoaded, roadmapMode, canWriteShared, persistRoadmap]);
 
   const value = useMemo(() => ({
     epics: epicsShown, tasks: tasksShown, allProjects, setEpics, setTasks, syncFromSheet, lastSync, syncStatus, syncError,
@@ -2871,7 +2891,7 @@ function RoadmapScreen() {
 
       {/* Camada 1 — Produtos: a fila de Produto */}
       <div onDragOver={(e) => e.preventDefault()} onDrop={onDropFilaProduto} style={{ padding: "18px 24px", borderBottom: `1px solid ${T.border1}` }}>
-        {layerHeader("produtos", "Produtos", filaProdutoShown.length, "Próximas prioridades de Produto, na ordem em que vamos trabalhar. Arraste para reordenar ou para o Gantt.")}
+        {layerHeader("produtos", "Produtos", filaProdutoShown.length, `Próximas prioridades de Produto, na ordem em que vamos trabalhar. Entram sozinhos os cards em ${QUEUE_STATUS_MAP.produto.join(", ")}; o que você mover à mão não é desfeito. Arraste para reordenar ou para o Gantt.`)}
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, minHeight: 56, borderRadius: 10, border: `1px dashed ${T.border2}`, padding: 8 }}>
           {filaProdutoShown.length === 0 && <span style={{ fontSize: 11.5, color: T.ink2, fontFamily: "'Inter Tight', sans-serif" }}>Nada na fila de Produto. Marque "Fila Produto" num card de Projetos ou arraste para cá.</span>}
           {filaProdutoShown.map((e) => (
@@ -2889,7 +2909,7 @@ function RoadmapScreen() {
 
       {/* Camada 2 — UX: a fila de UX */}
       <div onDragOver={(e) => e.preventDefault()} onDrop={onDropFilaUx} style={{ padding: "18px 24px", borderBottom: `1px solid ${T.border1}` }}>
-        {layerHeader("ux", "UX", filaUxShown.length, "Próximas prioridades de UX, na ordem em que vamos trabalhar. Arraste para reordenar ou para o Gantt.")}
+        {layerHeader("ux", "UX", filaUxShown.length, `Próximas prioridades de UX, na ordem em que vamos trabalhar. Entram sozinhos os cards em ${QUEUE_STATUS_MAP.ux.join(", ")}; o que você mover à mão não é desfeito. Arraste para reordenar ou para o Gantt.`)}
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, minHeight: 56, borderRadius: 10, border: `1px dashed ${T.border2}`, padding: 8 }}>
           {filaUxShown.length === 0 && <span style={{ fontSize: 11.5, color: T.ink2, fontFamily: "'Inter Tight', sans-serif" }}>Nada na fila de UX. Marque "Fila UX" num card de Projetos ou arraste para cá.</span>}
           {filaUxShown.map((e) => (

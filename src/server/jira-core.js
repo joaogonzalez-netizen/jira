@@ -403,10 +403,18 @@ function cleanPosition(p) {
   if (sw !== null && !(Number.isInteger(sw) && sw >= -104 && sw <= 520)) throw new JiraError(400, "Semana inicial inválida");
   const dw = Number.isInteger(p.durationWeeks) ? p.durationWeeks : 2;
   if (dw < 1 || dw > 52) throw new JiraError(400, "Duração inválida");
+  const out = { roadmapLane: lane, startWeek: sw, durationWeeks: dw };
   const done = p.doneWeek ?? null;
-  if (done === null) return { roadmapLane: lane, startWeek: sw, durationWeeks: dw };
-  if (typeof done !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(done) || Number.isNaN(Date.parse(done))) throw new JiraError(400, "Semana de entrega inválida");
-  return { roadmapLane: lane, startWeek: sw, durationWeeks: dw, doneWeek: done };
+  if (done !== null) {
+    if (typeof done !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(done) || Number.isNaN(Date.parse(done))) throw new JiraError(400, "Semana de entrega inválida");
+    out.doneWeek = done;
+  }
+  const auto = p.autoQueue ?? null;
+  if (auto !== null) {
+    if (!["produto", "ux", "dev"].includes(auto)) throw new JiraError(400, "Marca da automação inválida");
+    out.autoQueue = auto;
+  }
+  return out;
 }
 
 const emailOf = (session) => session?.user?.email || null;

@@ -72,6 +72,7 @@ function normPos(p) {
     durationWeeks: p && Number.isInteger(p.durationWeeks) ? p.durationWeeks : 2,
   };
   if (p && p.doneWeek) out.doneWeek = p.doneWeek;
+  if (p && p.autoQueue) out.autoQueue = p.autoQueue;
   return out;
 }
 

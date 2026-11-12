@@ -83,6 +83,17 @@ test("posição guarda a semana de entrega escolhida à mão, e só no formato A
   assert.equal("doneWeek" in cleared.body.state.positions["SELLER-1"], false);
 });
 
+test("posição guarda a marca da automação das filas, só com os valores conhecidos", async () => {
+  const { config } = await fresh();
+  const ok = await handlePatch({ positions: { "SELLER-1": { roadmapLane: null, startWeek: null, durationWeeks: 2, autoQueue: "ux" } } }, SUPER, config);
+  assert.equal(ok.status, 200);
+  assert.equal(ok.body.state.positions["SELLER-1"].autoQueue, "ux");
+  const bad = await handlePatch({ positions: { "SELLER-1": { ...pos("STL Seller", 0), autoQueue: "gantt" } } }, SUPER, config);
+  assert.equal(bad.status, 400);
+  const cleared = await handlePatch({ positions: { "SELLER-1": pos("STL Seller", 0) } }, SUPER, config);
+  assert.equal("autoQueue" in cleared.body.state.positions["SELLER-1"], false);
+});
+
 test("super muda posição de épico da planilha; admin não", async () => {
   const { config } = await fresh();
   const ok = await handlePatch({ positions: { "SELLER-1": pos("STL Seller", 5) } }, SUPER, config);
