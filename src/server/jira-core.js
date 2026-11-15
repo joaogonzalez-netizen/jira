@@ -49,7 +49,7 @@ const MAX_SUMMARY = 255;
 const MAX_CAS_ATTEMPTS = 6;
 const REQUEST_TIMEOUT_MS = 15000;
 
-class JiraError extends Error {
+export class JiraError extends Error {
   constructor(status, message) {
     super(message);
     this.status = status;
@@ -119,7 +119,7 @@ function jiraHttpError(status, data) {
   return new JiraError(502, `O Jira respondeu com erro ${status}${suffix}`);
 }
 
-async function jiraFetch(j, method, path, body) {
+export async function jiraFetch(j, method, path, body) {
   let res;
   try {
     res = await j.fetch(`${j.baseUrl}${path}`, {
@@ -145,7 +145,7 @@ async function jiraFetch(j, method, path, body) {
 }
 
 /** Compara texto ignorando maiúsculas e acentos ("Inovação" == "inovacao"). */
-const norm = (s) => String(s ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase();
+export const norm = (s) => String(s ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase();
 
 const isEpicType = (t) => !!t && (t.hierarchyLevel === 1 || /^(epic|épico)$/i.test(t.name || ""));
 

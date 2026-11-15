@@ -655,7 +655,10 @@ function DataProvider({ children }) {
     setSyncStatus("loading");
     setSyncError(null);
     try {
-      const res = await fetch("/api/sheet/sync");
+      // Fonte principal: API oficial do Jira. 503 = integração sem credencial
+      // neste ambiente: cai na planilha, como antes, até ela ser removida.
+      let res = await fetch("/api/jira/assignees?list=issues", { credentials: "same-origin" });
+      if (res.status === 503) res = await fetch("/api/sheet/sync");
       const rows = await res.json();
       if (!res.ok) throw new Error(rows?.message || `HTTP ${res.status}`);
       const only = jiraProjectsRef.current;
