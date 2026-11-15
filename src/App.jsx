@@ -3660,6 +3660,8 @@ const EXPERIMENT_STATUSES = ["Ideia", "Rodando", "Analisando", "Concluído"];
 const KR_STATUSES = ["Em andamento", "Planejado", "Pausado", "Concluído", "Cancelado"];
 
 const isEpicDone = (e) => e.status === "Done" || e.stage === "Concluído";
+/** Em aberto: nem concluído nem cancelado/arquivado (esses dois a planilha/Jira já escondem, mas o filtro não depende disso). */
+const isEpicOpen = (e) => !isEpicDone(e) && !/^(cancelad[oa]|arquivad[oa]|canceled|cancelled|archived)$/i.test(String(e.status || "").trim());
 /** Épico (da planilha ou criado aqui) x tarefa — o painel da fila mostra só esses dois. */
 const isEpicItem = (e) => !!e && e.epic !== false && (e.epic === true || /^(epic|épico)$/i.test(e.type || ""));
 const isTaskItem = (e) => !!e && /^(task|tarefa)$/i.test(e.type || "");
@@ -4208,11 +4210,11 @@ const FORMS = {
       { key: "baseline", label: "Início", type: "number", third: true },
       { key: "current", label: "Atual", type: "number", third: true },
       { key: "target", label: "Meta", type: "number", third: true },
-      { key: "unit", label: "Unidade", placeholder: "%, R$, usuários…", half: true },
+      { key: "unit", label: "Unidade", type: "unit", half: true },
       { key: "dueDate", label: "Prazo", type: "date", half: true },
       { key: "description", label: "Descrição / como medir", type: "textarea" },
       { key: "links", label: "Links (estudos, dashboards)", type: "links" },
-      { key: "epicKeys", label: "Épicos do Jira que movem este KR", type: "epics", pool: (c) => c.epics },
+      { key: "epicKeys", label: "Épicos do Jira que movem este KR", type: "epics", pool: (c) => c.epics.filter(isEpicOpen) },
       { key: "checkins", label: "Acompanhamento semanal", type: "checkins", mirror: "current" },
     ],
   },
@@ -4292,6 +4294,69 @@ function SideDrawer({ title, onClose, children }) {
   );
 }
 
+const foldText = (v) => String(v ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+const EPIC_PICKER_LIMIT = 40;
+
+/** Busca de épico por chave, nome ou produto; escolher adiciona e limpa a busca. */
+function EpicPicker({ pool, onPick, style }) {
+  const { T } = useTheme();
+  const [q, setQ] = useState("");
+  const [focused, setFocused] = useState(false);
+  const terms = foldText(q).split(/\s+/).filter(Boolean);
+  const matches = terms.length ? pool.filter((e) => { const hay = foldText(`${e.key} ${e.summary} ${e.project || ""}`); return terms.every((t) => hay.includes(t)); }) : pool;
+  const shown = matches.slice(0, EPIC_PICKER_LIMIT);
+  const open = focused || terms.length > 0;
+  const pick = (e) => { onPick(e.key); setQ(""); };
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      <input
+        value={q} placeholder="Buscar épico por chave ou nome…" onChange={(e) => setQ(e.target.value)}
+        onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
+        onKeyDown={(e) => { if (e.key === "Enter" && shown[0]) { e.preventDefault(); pick(shown[0]); } if (e.key === "Escape") { setQ(""); e.currentTarget.blur(); } }}
+        style={style}
+      />
+      {open && (
+        <div style={{ maxHeight: 220, overflowY: "auto", border: `1px solid ${T.border2}`, borderRadius: 8, background: T.bg0 }}>
+          {shown.length === 0 && <div style={{ padding: "8px 10px", fontSize: 12, color: T.ink2 }}>{pool.length ? "Nenhum épico em aberto com essa busca." : "Não há épicos em aberto para vincular."}</div>}
+          {shown.map((e) => (
+            <button key={e.key} type="button" onMouseDown={(ev) => ev.preventDefault()} onClick={() => pick(e)}
+              style={{ display: "flex", alignItems: "baseline", gap: 8, width: "100%", textAlign: "left", padding: "6px 10px", border: "none", background: "transparent", cursor: "pointer", fontSize: 12, color: T.ink0, fontFamily: "'Inter Tight', sans-serif" }}>
+              <span style={{ fontWeight: 600, flexShrink: 0 }}>{e.key}</span>
+              <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.summary}</span>
+              {e.status && <span style={{ fontSize: 10.5, color: T.ink2, flexShrink: 0 }}>{e.status}</span>}
+            </button>
+          ))}
+          {matches.length > shown.length && <div style={{ padding: "6px 10px", fontSize: 11, color: T.ink2 }}>+{matches.length - shown.length} épicos — refine a busca.</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Unidades mais usadas nos Key Results; qualquer outra entra por "Outro…". */
+const UNIT_OPTIONS = ["%", "R$", "R$ mi", "usuários", "assinantes", "downloads", "pedidos", "horas", "dias"];
+const OTHER_UNIT = "__outro__";
+
+/** Lista de unidades com "Outro…": o valor guardado continua sendo só o texto da unidade. */
+function UnitInput({ value, onChange, disabled, style }) {
+  const [other, setOther] = useState(() => !!value && !UNIT_OPTIONS.includes(value));
+  const onPick = (v) => {
+    if (v === OTHER_UNIT) { setOther(true); if (UNIT_OPTIONS.includes(value)) onChange(""); return; }
+    setOther(false);
+    onChange(v);
+  };
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      <select value={other ? OTHER_UNIT : value || ""} disabled={disabled} onChange={(e) => onPick(e.target.value)} style={style}>
+        <option value="">—</option>
+        {UNIT_OPTIONS.map((u) => <option key={u} value={u}>{u}</option>)}
+        <option value={OTHER_UNIT}>Outro…</option>
+      </select>
+      {other && <input value={value || ""} disabled={disabled} placeholder="Qual unidade?" autoFocus={!value} onChange={(e) => onChange(e.target.value)} style={style} />}
+    </div>
+  );
+}
+
 function FormInput({ field: f, value, onChange, ctx, draft, disabled }) {
   const { T } = useTheme();
   const st = { ...fieldStyle(T), width: "100%", boxSizing: "border-box" };
@@ -4305,6 +4370,9 @@ function FormInput({ field: f, value, onChange, ctx, draft, disabled }) {
         {f.options(ctx, draft).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
       </select>
     );
+  }
+  if (f.type === "unit") {
+    return <UnitInput value={value} onChange={onChange} disabled={disabled} style={st} />;
   }
   if (f.type === "score") {
     return (
@@ -4359,10 +4427,7 @@ function FormInput({ field: f, value, onChange, ctx, draft, disabled }) {
         ))}
         {keys.length === 0 && <Muted>Nenhum épico vinculado.</Muted>}
         {!disabled && (
-          <select value="" onChange={(e) => { if (e.target.value) onChange([...keys, e.target.value]); }} style={st}>
-            <option value="">Vincular épico…</option>
-            {pool.map((e) => <option key={e.key} value={e.key}>{e.key} — {e.summary}</option>)}
-          </select>
+          <EpicPicker pool={pool} onPick={(k) => onChange([...keys, k])} style={st} />
         )}
       </div>
     );
