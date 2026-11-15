@@ -4101,7 +4101,7 @@ const FORMS = {
       { key: "baseline", label: "Início", type: "number", third: true },
       { key: "current", label: "Atual", type: "number", third: true },
       { key: "target", label: "Meta", type: "number", third: true },
-      { key: "unit", label: "Unidade", placeholder: "%, R$, usuários…", half: true },
+      { key: "unit", label: "Unidade", type: "unit", half: true },
       { key: "dueDate", label: "Prazo", type: "date", half: true },
       { key: "description", label: "Descrição / como medir", type: "textarea" },
       { key: "links", label: "Links (estudos, dashboards)", type: "links" },
@@ -4185,6 +4185,30 @@ function SideDrawer({ title, onClose, children }) {
   );
 }
 
+/** Unidades mais usadas nos Key Results; qualquer outra entra por "Outro…". */
+const UNIT_OPTIONS = ["%", "R$", "R$ mi", "usuários", "assinantes", "downloads", "pedidos", "horas", "dias"];
+const OTHER_UNIT = "__outro__";
+
+/** Lista de unidades com "Outro…": o valor guardado continua sendo só o texto da unidade. */
+function UnitInput({ value, onChange, disabled, style }) {
+  const [other, setOther] = useState(() => !!value && !UNIT_OPTIONS.includes(value));
+  const onPick = (v) => {
+    if (v === OTHER_UNIT) { setOther(true); if (UNIT_OPTIONS.includes(value)) onChange(""); return; }
+    setOther(false);
+    onChange(v);
+  };
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      <select value={other ? OTHER_UNIT : value || ""} disabled={disabled} onChange={(e) => onPick(e.target.value)} style={style}>
+        <option value="">—</option>
+        {UNIT_OPTIONS.map((u) => <option key={u} value={u}>{u}</option>)}
+        <option value={OTHER_UNIT}>Outro…</option>
+      </select>
+      {other && <input value={value || ""} disabled={disabled} placeholder="Qual unidade?" autoFocus={!value} onChange={(e) => onChange(e.target.value)} style={style} />}
+    </div>
+  );
+}
+
 function FormInput({ field: f, value, onChange, ctx, draft, disabled }) {
   const { T } = useTheme();
   const st = { ...fieldStyle(T), width: "100%", boxSizing: "border-box" };
@@ -4198,6 +4222,9 @@ function FormInput({ field: f, value, onChange, ctx, draft, disabled }) {
         {f.options(ctx, draft).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
       </select>
     );
+  }
+  if (f.type === "unit") {
+    return <UnitInput value={value} onChange={onChange} disabled={disabled} style={st} />;
   }
   if (f.type === "score") {
     return (
