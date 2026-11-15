@@ -168,7 +168,7 @@ test("URL base precisa ser https e a barra final é ignorada; status diz 'config
 });
 
 test("todo produto do Roadmap tem projeto no Jira", () => {
-  assert.deepEqual(Object.keys(PRODUCT_TO_PROJECT).sort(), ["STL IA", "STL Loja", "STL Academy", "STL Seller", "STLFLIX", "Backoffice", "Custom", "Automação", "Dados", "Infra", "Tarefas"].sort());
+  assert.deepEqual(Object.keys(PRODUCT_TO_PROJECT).sort(), ["STL IA", "STL Loja", "STL Academy", "STL Seller", "STLFLIX", "Backoffice", "Custom", "ProductOps", "Automação", "Dados", "Infra", "Tarefas"].sort());
 });
 
 /* --------------------------- tipo de issue e pai --------------------------- */

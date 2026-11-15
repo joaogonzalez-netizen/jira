@@ -134,11 +134,23 @@ test("handleIssues: só admin/super lê", async () => {
   assert.equal(calls.length, 0);
 });
 
-test("handleIssues: padrão lê todos os projetos que a conta enxerga (inclui ProductOps)", async () => {
-  const { j } = fakeJira({ byProject: { FLIX: [issue("FLIX-1", "STLFLIX")], IA: [issue("IA-1", "STL IA")], POD: [issue("POD-1", "ProductOps")] } });
+test("handleIssues: padrão sem marcação lê só os projetos de produto (ProductOps e Custom ficam de fora)", async () => {
+  const { j } = fakeJira({ projects: [...PROJECTS, { key: "CUSTOM", name: "Custom" }], byProject: { FLIX: [issue("FLIX-1", "STLFLIX")], IA: [issue("IA-1", "STL IA")], POD: [issue("POD-1", "ProductOps")], CUSTOM: [issue("CUSTOM-1", "Custom")] } });
   const r = await handleIssues({ isDefault: true }, SUPER, j);
   assert.equal(r.status, 200);
-  assert.deepEqual(r.body.map((x) => x["Project"]).sort(), ["ProductOps", "STL IA", "STLFLIX"]);
+  assert.deepEqual(r.body.map((x) => x["Project"]).sort(), ["STL IA", "STLFLIX"]);
+});
+
+test("handleIssues: workspace ProductOps + Dados lê os dois e nada mais", async () => {
+  const { j } = fakeJira({ projects: [...PROJECTS, { key: "DADOS", name: "Dados" }], byProject: { FLIX: [issue("FLIX-1", "STLFLIX")], POD: [issue("POD-1", "ProductOps")], DADOS: [issue("DADOS-1", "Dados")] } });
+  const r = await handleIssues({ workspace: { jiraProjects: ["ProductOps", "Dados"] }, isDefault: false }, SUPER, j);
+  assert.deepEqual(r.body.map((x) => x["Project"]).sort(), ["Dados", "ProductOps"]);
+});
+
+test("handleIssues: o padrão com projetos marcados (editado pelo super) respeita a marcação", async () => {
+  const { j } = fakeJira({ byProject: { FLIX: [issue("FLIX-1", "STLFLIX")], IA: [issue("IA-1", "STL IA")] } });
+  const r = await handleIssues({ workspace: { jiraProjects: ["STL IA"] }, isDefault: true }, SUPER, j);
+  assert.deepEqual(r.body.map((x) => x["Key"]), ["IA-1"]);
 });
 
 test("handleIssues: workspace filtra pelos projetos marcados (sem acento nem caixa)", async () => {

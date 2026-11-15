@@ -32,6 +32,7 @@ export const PRODUCT_TO_PROJECT = {
   "STL Academy": "ACADEMY",
   "Custom": "CUSTOM",
   "Automação": "AUT",
+  "ProductOps": "POD",
   "Dados": "DADOS",
   "Infra": "INFRA",
   "Tarefas": "TASK",
