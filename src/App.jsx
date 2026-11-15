@@ -21,7 +21,7 @@ const STAGES = ["Backlog", "Em design", "Em produto", "Análise técnica", "Pron
 const PRODUCTS = ["STLFLIX", "STL IA", "STL Seller", "STL Loja", "Backoffice", "STL Academy"];
 // Todos os projetos do Jira (nomes como estão lá) — opções do filtro de um
 // projeto deste app, mesmo antes de a planilha dele ter sido puxada.
-const JIRA_PROJECTS = [...PRODUCTS, "Custom", "Automação", "Dados", "Infra", "Tarefas"];
+const JIRA_PROJECTS = [...PRODUCTS, "Custom", "ProductOps", "Automação", "Dados", "Infra", "Tarefas"];
 
 const EXTRA_PRODUCT_COLORS = ["#0f9fa8", "#c28a00", "#d6409f", "#3e7bfa", "#7c8a14", "#a35bd1"];
 const NAMED_PRODUCT_COLORS = { "Custom": "#0f9fa8", "Automações": "#c28a00", "Automacoes": "#c28a00", "Empresa": "#475467" };
@@ -655,7 +655,10 @@ function DataProvider({ children }) {
     setSyncStatus("loading");
     setSyncError(null);
     try {
-      const res = await fetch("/api/sheet/sync");
+      // Fonte principal: API oficial do Jira. 503 = integração sem credencial
+      // neste ambiente: cai na planilha, como antes, até ela ser removida.
+      let res = await fetch("/api/jira/assignees?list=issues", { credentials: "same-origin" });
+      if (res.status === 503) res = await fetch("/api/sheet/sync");
       const rows = await res.json();
       if (!res.ok) throw new Error(rows?.message || `HTTP ${res.status}`);
       const only = jiraProjectsRef.current;

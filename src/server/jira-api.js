@@ -6,7 +6,8 @@
  */
 import { configError, loadConfig, resolveSessionFromCookie, sharedMemoryKv } from "./roadmap-core.js";
 import { handleCancelEpic, handleCreateEpic, handleListAssignees, handleListIssueTypes, handleStatus, handleUpdateEpic, loadJiraConfig } from "./jira-core.js";
-import { scopeConfig } from "./workspace.js";
+import { handleIssues } from "./jira-read-core.js";
+import { findWorkspace, scopeConfig } from "./workspace.js";
 
 const MAX_BODY_BYTES = 64 * 1024;
 
@@ -66,6 +67,11 @@ export function jiraApiPlugin(env) {
       if (path === "/api/jira/assignees") {
         if (req.method !== "GET") return sendJson(res, { status: 405, body: { message: "Método não permitido" } });
         const params = new URLSearchParams(query || "");
+        if (params.get("list") === "issues") {
+          const isDefault = !rcfg.workspace || rcfg.workspace === "default";
+          const workspace = rcfgBase.kv ? await findWorkspace(rcfgBase.kv, rcfg.workspace) : null;
+          return sendJson(res, await handleIssues({ workspace, isDefault }, session, jira));
+        }
         if (params.get("list") === "issue-types") return sendJson(res, await handleListIssueTypes({ product: params.get("product") }, session, jira));
         return sendJson(res, await handleListAssignees({ key: params.get("key"), product: params.get("product") }, session, jira));
       }
