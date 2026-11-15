@@ -46,7 +46,7 @@ console.log(`\n  Mock mode: open http://localhost:${LOGIN_PORT} to sign in as "T
 // Example workspaces with only the Execução menus, created through the real API.
 const WORKSPACES = [
   { name: "Custom", initials: "C", color: "#0f9fa8", jiraProjects: ["Custom"], modules: ["execucao"] },
-  { name: "ProductOps", initials: "PO", color: "#c28a00", jiraProjects: ["Automação", "Dados"], modules: ["execucao"] },
+  { name: "ProductOps", initials: "PO", color: "#c28a00", jiraProjects: ["ProductOps", "Dados"], modules: ["execucao"] },
 ];
 const api = (method, body) => fetch(`http://localhost:${APP_PORT}/api/workspaces`, {
   method, headers: { Cookie: `auth_token=${token}`, "Content-Type": "application/json" }, body: body && JSON.stringify(body),

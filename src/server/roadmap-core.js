@@ -32,7 +32,7 @@ const SNAPSHOT_KEY = "jira:sheet-snapshot";
 const SNAPSHOT_AT_KEY = "jira:sheet-snapshot-at";
 
 const MAX_KEYS = 3000;
-const AUTO_QUEUES = ["produto", "ux", "dev"];
+const AUTO_QUEUES = ["produto", "ux", "productops", "dev"];
 export const MAX_DESCRIPTION = 10000;
 const MAX_SNAPSHOT_BYTES = 3.5 * 1024 * 1024;
 const MAX_CAS_ATTEMPTS = 6;
@@ -204,7 +204,7 @@ function normalizeDiff(diff) {
     out.customUpsert = upsert.map(cleanEpic);
     out.customRemove = cleanKeyList(remove, "customEpics.remove");
   }
-  for (const name of ["prioOrder", "filaProdutoOrder", "filaUxOrder"]) {
+  for (const name of ["prioOrder", "filaProdutoOrder", "filaUxOrder", "filaOpsOrder"]) {
     if (diff[name] !== undefined) out.orders[name] = normalizeOrderOp(diff[name], name);
   }
   return out;
@@ -224,7 +224,7 @@ function normalizeOrderOp(v, label) {
    --------------------------------------------------------------------- */
 
 function emptyDoc() {
-  return { v: 1, rev: 0, updatedAt: null, updatedBy: null, positions: {}, customEpics: [], epicOverrides: {}, prioOrder: [], filaProdutoOrder: [], filaUxOrder: [] };
+  return { v: 1, rev: 0, updatedAt: null, updatedBy: null, positions: {}, customEpics: [], epicOverrides: {}, prioOrder: [], filaProdutoOrder: [], filaUxOrder: [], filaOpsOrder: [] };
 }
 
 function parseDoc(raw) {
@@ -241,6 +241,7 @@ function parseDoc(raw) {
       prioOrder: Array.isArray(d.prioOrder) ? d.prioOrder : [],
       filaProdutoOrder: Array.isArray(d.filaProdutoOrder) ? d.filaProdutoOrder : [],
       filaUxOrder: Array.isArray(d.filaUxOrder) ? d.filaUxOrder : [],
+      filaOpsOrder: Array.isArray(d.filaOpsOrder) ? d.filaOpsOrder : [],
     };
   } catch {
     return null;
@@ -257,6 +258,7 @@ function view(doc, extra = {}) {
       prioOrder: doc.prioOrder,
       filaProdutoOrder: doc.filaProdutoOrder,
       filaUxOrder: doc.filaUxOrder,
+      filaOpsOrder: doc.filaOpsOrder || [],
     },
     rev: doc.rev,
     updatedAt: doc.updatedAt,
@@ -361,7 +363,8 @@ export function applyDiff(doc, rawDiff, session) {
     !sameJson(next.customEpics, doc.customEpics) ||
     !sameJson(next.prioOrder, doc.prioOrder) ||
     !sameJson(next.filaProdutoOrder, doc.filaProdutoOrder) ||
-    !sameJson(next.filaUxOrder, doc.filaUxOrder);
+    !sameJson(next.filaUxOrder, doc.filaUxOrder) ||
+    !sameJson(next.filaOpsOrder, doc.filaOpsOrder);
   if (!changed) return { doc, changed: false };
 
   return { doc: { ...next, rev: doc.rev + 1, updatedAt: new Date().toISOString(), updatedBy: email }, changed: true };
@@ -428,6 +431,7 @@ export async function handleSeed(body, session, config) {
       prioOrder: cleanKeyList(s.prioOrder ?? [], "prioOrder"),
       filaProdutoOrder: cleanKeyList(s.filaProdutoOrder ?? s.filaOrder ?? [], "filaProdutoOrder"),
       filaUxOrder: cleanKeyList(s.filaUxOrder ?? [], "filaUxOrder"),
+      filaOpsOrder: cleanKeyList(s.filaOpsOrder ?? [], "filaOpsOrder"),
     };
   } catch (e) {
     if (e instanceof ValidationError) return { status: 400, body: { message: e.message } };

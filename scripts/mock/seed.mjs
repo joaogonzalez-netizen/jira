@@ -138,7 +138,7 @@ export function buildSeed(today = new Date()) {
 // the per-workspace Jira project filter in mock mode.
 const EXTRA_PROJECTS = [
   { project: "Custom", prefix: "CUS", epics: ["Pedidos de impressão sob medida", "Orçamento automático de peças", "Portal do cliente Custom"] },
-  { project: "Automação", prefix: "AUT", epics: ["STLResearch PT", "Bot de triagem do Intercom", "Publicação automática de drops"] },
+  { project: "ProductOps", prefix: "POD", epics: ["Painel de métricas de produto", "Rotina de pesquisa com clientes", "Padronizar o ritual de discovery", "Mapa de oportunidades do trimestre", "Playbook de lançamento", "Migrar o backlog antigo"], epicStatuses: ["Backlog", "Em refinamento Técnico", "Produto", "Pronto P/ DEV", "Em DEV", "Backlog"] },
   { project: "Dados", prefix: "DAD", epics: ["Data warehouse de assinaturas", "Dashboard de churn por coorte"] },
 ];
 const PEOPLE = ["Ray Lima", "Jonas Tolentino", "Michel Angelo", "Caroline Araújo da Silva"];
@@ -156,11 +156,11 @@ export function sheetRows(today = new Date()) {
     "Data de início": r.dataInicio || "", "Data Concluído": r.dataConcl || "", Priority: r.priority || "",
   });
   const extra = [];
-  EXTRA_PROJECTS.forEach(({ project, prefix, epics: names }) => {
+  EXTRA_PROJECTS.forEach(({ project, prefix, epics: names, epicStatuses }) => {
     let n = 1;
     names.forEach((summary, i) => {
       const epicKey = `${prefix}-${n++}`;
-      const status = STATUSES[(i * 2) % STATUSES.length];
+      const status = epicStatuses ? epicStatuses[i % epicStatuses.length] : STATUSES[(i * 2) % STATUSES.length];
       extra.push(toRow({ key: epicKey, project, type: "Epic", epic: true, summary, status, tipo: "Inovação", reporter: "João Gonzalez", created: fmt(new Date(today.getTime() - (20 + i * 9) * DAY)) }));
       for (let t = 0; t < 4; t++) {
         const created = new Date(today.getTime() - (t * 3 + i) * DAY);

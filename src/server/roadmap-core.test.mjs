@@ -263,3 +263,31 @@ test("applyDiff é pura: não muta o documento de entrada", () => {
   assert.equal(r.doc.positions["SELLER-1"].startWeek, 3);
   assert.equal(JSON.stringify(doc), snapshot);
 });
+
+test("fila ProductOps: documento antigo (sem filaOpsOrder) lê como vazia e a marca productops é aceita", async () => {
+  const { config } = await fresh();
+  const got = await handleGet(config);
+  assert.deepEqual(got.body.state.filaOpsOrder, []);
+  const ok = await handlePatch({ positions: { "SELLER-1": { roadmapLane: null, startWeek: null, durationWeeks: 2, autoQueue: "productops" } } }, SUPER, config);
+  assert.equal(ok.status, 200);
+  assert.equal(ok.body.state.positions["SELLER-1"].autoQueue, "productops");
+});
+
+test("fila ProductOps: entra/sai por operação, admin só com card próprio, super reordena", async () => {
+  const { config } = await fresh();
+  const add = await handlePatch({ filaOpsOrder: { add: ["NOVO-200"] } }, ANDRE, config);
+  assert.equal(add.status, 200);
+  assert.deepEqual(add.body.state.filaOpsOrder, ["NOVO-200"]);
+  assert.equal((await handlePatch({ filaOpsOrder: { add: ["NOVO-100"] } }, ANDRE, config)).status, 403);
+  assert.equal((await handlePatch({ filaOpsOrder: { set: ["NOVO-200", "POD-1"] } }, ANDRE, config)).status, 403);
+  const set = await handlePatch({ filaOpsOrder: { set: ["POD-2", "POD-1"] } }, SUPER, config);
+  assert.deepEqual(set.body.state.filaOpsOrder, ["POD-2", "POD-1"]);
+  assert.equal((await handlePatch({ filaOpsOrder: ["POD-2", "POD-1"] }, SUPER, config)).body.rev, set.body.rev); // sem mudança, sem nova revisão
+});
+
+test("fila ProductOps: seed e snapshot preservam a fila", async () => {
+  const kv = createMemoryKv();
+  const config = loadConfig({}, kv);
+  const seeded = await handleSeed({ state: { ...SEED.state, filaOpsOrder: ["POD-1"] } }, SUPER, config);
+  assert.deepEqual(seeded.body.state.filaOpsOrder, ["POD-1"]);
+});
