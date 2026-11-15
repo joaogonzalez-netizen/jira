@@ -22,7 +22,7 @@ async function call(method, url, body) {
 }
 
 /** Sempre objeto novo: arrays compartilhados entre usos virariam estado mutável global. */
-export const emptyRoadmap = () => ({ positions: {}, customEpics: [], prioOrder: [], filaProdutoOrder: [], filaUxOrder: [] });
+export const emptyRoadmap = () => ({ positions: {}, customEpics: [], prioOrder: [], filaProdutoOrder: [], filaUxOrder: [], filaOpsOrder: [] });
 
 export const roadmapStore = {
   /** `ok` (tem estado) | `empty` (servidor ainda sem Roadmap) | `unavailable`. */
@@ -110,7 +110,7 @@ export function diffRoadmap(base, next) {
   const remove = [...baseCustom.keys()].filter((k) => !nextCustom.has(k));
   if (upsert.length || remove.length) diff.customEpics = { upsert, remove };
 
-  for (const name of ["prioOrder", "filaProdutoOrder", "filaUxOrder"]) {
+  for (const name of ["prioOrder", "filaProdutoOrder", "filaUxOrder", "filaOpsOrder"]) {
     const op = orderOp(base[name] || [], next[name] || []);
     if (op) diff[name] = op;
   }
