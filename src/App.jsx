@@ -4934,78 +4934,119 @@ function OwnerTag({ name }) {
 
 /** Uma linha de KR: nome, responsável, quarter; o número (se tiver meta) e o
     andamento das issues dos épicos dele. */
-function KrRow({ kr, onOpen }) {
+/** Key Result numa linha que abre para os detalhes: o resumo (número, status, responsável) sempre à vista;
+    links, épicos ligados e a análise das issues aparecem ao expandir. */
+function KrCard({ kr, expanded, onToggle, onOpen }) {
   const { T } = useTheme();
   const idx = usePlanIndex();
   const hasMetric = isNum(kr.target);
+  const order = { doing: 0, todo: 1, done: 2 };
+  const krEpics = idx.epicsOf(kr.epicKeys).sort((a, b) => order[epicBucket(a)] - order[epicBucket(b)]);
   const issues = idx.issuesOf(kr.epicKeys);
+  const nEpics = (kr.epicKeys || []).length;
   return (
-    <div onClick={onOpen} className="pp-card" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(200px, 1fr) auto", gap: 12, alignItems: "center", padding: "8px 10px", borderRadius: 8, border: `1px solid ${T.border2}`, background: T.bg1, cursor: "pointer" }}>
-      <div style={{ minWidth: 0 }}>
+    <div style={{ borderRadius: 8, border: `1px solid ${T.border2}`, background: T.bg1 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "auto minmax(0, 1fr) auto", gap: "6px 10px", alignItems: "center", padding: "8px 10px" }}>
+        <button onClick={onToggle} aria-expanded={expanded} title={expanded ? "Recolher detalhes" : "Ver épicos e análise"} style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 20, height: 20, border: "none", background: "transparent", color: T.ink1, cursor: "pointer", padding: 0 }}>
+          {expanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+        </button>
         <div className="flex items-center" style={{ gap: 6, minWidth: 0 }}>
-          <span style={{ ...ellipsis, fontSize: 13, fontWeight: 500, color: T.ink0 }}>{kr.name}</span>
+          <button onClick={onOpen} title={kr.name} style={{ ...linkBtn, ...ellipsis, color: T.ink0, fontSize: 13, fontWeight: 500 }}>{kr.name}</button>
           {kr.quarter && <Badge bg="rgba(81,102,230,0.12)" color={ACCENT}>{kr.quarter}</Badge>}
         </div>
-        <div className="flex items-center" style={{ gap: 10, marginTop: 3, flexWrap: "wrap" }}>
+        <button onClick={onOpen} style={btnStyle(T)}>Editar</button>
+        <div style={{ gridColumn: "2 / -1", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <StatusBadge tone={statusTone(kr.status)}>{kr.status}</StatusBadge>
+          {hasMetric && <CheckinBadge item={kr} activeStatuses={["Em andamento"]} />}
+          <DueBadge item={kr} doneStatus="Concluído" />
           {kr.owner ? <OwnerTag name={kr.owner} /> : <span style={{ fontSize: 11, color: T.ink2 }}>sem responsável</span>}
-          {kr.product && <ProductBadges products={[kr.product]} />}
-          <span style={{ fontSize: 11, color: T.ink2 }}>{(kr.epicKeys || []).length} {(kr.epicKeys || []).length === 1 ? "épico" : "épicos"}</span>
+          <ProductBadges products={idx.productsOfKr(kr)} />
+          <span style={{ fontSize: 11, color: T.ink2 }}>{nEpics} {nEpics === 1 ? "épico" : "épicos"}</span>
         </div>
+        {(hasMetric || issues.length > 0) && (
+          <div style={{ gridColumn: "2 / -1", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+            {hasMetric && <div className="flex items-center" style={{ gap: 8, flex: "1 1 260px", minWidth: 0 }}><KrProgress kr={kr} /><WeeklySpark checkins={kr.checkins} target={kr.target} /></div>}
+            {issues.length > 0 && <div style={{ flex: "1 1 200px", minWidth: 0 }}><IssueBuckets issues={issues} /></div>}
+          </div>
+        )}
       </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}>
-        {hasMetric && <div className="flex items-center" style={{ gap: 8, minWidth: 0 }}><KrProgress kr={kr} /><WeeklySpark checkins={kr.checkins} target={kr.target} /></div>}
-        {(issues.length > 0 || !hasMetric) && <IssueBuckets issues={issues} />}
-      </div>
-      <span className="flex items-center" style={{ gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
-        <StatusBadge tone={statusTone(kr.status)}>{kr.status}</StatusBadge>
-        {hasMetric && <CheckinBadge item={kr} activeStatuses={["Em andamento"]} />}
-        <DueBadge item={kr} doneStatus="Concluído" />
-      </span>
+      {expanded && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 4, borderTop: `1px solid ${T.border2}`, padding: "10px 12px" }}>
+          {(kr.links || []).length > 0 && <div style={{ marginBottom: 6 }}><LinkChips links={kr.links} /></div>}
+          {krEpics.length > 0 && <div style={{ marginBottom: 4 }}><EpicBuckets epics={krEpics} /></div>}
+          {krEpics.map((e) => <EpicLine key={e.key} epic={e} showAssignee />)}
+          {krEpics.length === 0 && <Muted>Nenhum épico. Vincule em Editar, ou pelo drawer do card no Roadmap.</Muted>}
+          <IssueAnalysis issues={issues} />
+        </div>
+      )}
     </div>
   );
 }
 
 function OkrScreen() {
   const { T } = useTheme();
+  const { epics } = useData();
   const { items, status } = usePlanning();
   const idx = usePlanIndex();
+  const [product, setProduct] = useState("all");
+  const [expanded, setExpanded] = useState(() => new Set());
   const [open, editorNode] = useEditor();
   if (status === "error") return <PlanningLoadError />;
-  const loose = items.keyResults.filter((k) => !idx.objectiveById[k.objectiveId]).length;
+
+  const toggle = (id) => setExpanded((prev) => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
+  const visibleKrs = items.keyResults.filter((k) => product === "all" || idx.productsOfKr(k).includes(product));
+  const groups = items.objectives
+    .map((o) => ({ o, krs: visibleKrs.filter((k) => k.objectiveId === o.id) }))
+    .filter((g) => product === "all" || g.krs.length || g.o.product === product);
+  const orphans = visibleKrs.filter((k) => !idx.objectiveById[k.objectiveId]);
+  const looseEpics = epics.filter((e) => !idx.krByEpic[e.key] && (product === "all" || e.project === product)).length;
+  const allIds = visibleKrs.map((k) => k.id);
+  const allOpen = allIds.length > 0 && allIds.every((id) => expanded.has(id));
+  const krCard = (kr) => <KrCard key={kr.id} kr={kr} expanded={expanded.has(kr.id)} onToggle={() => toggle(kr.id)} onOpen={() => open("keyResults", kr)} />;
 
   return (
     <ScreenShell>
-      <PageTitle title="Objetivos" sub="Cada objetivo tem Key Results: o número que prova o resultado e os épicos que o movem">
+      <PageTitle title="Objetivos e Key Results" sub={`Cada objetivo tem Key Results: o número que prova o resultado e os épicos que o movem · ${looseEpics} ${looseEpics === 1 ? "épico" : "épicos"} sem Key Result`}>
+        <ProductFilter value={product} onChange={setProduct} />
+        {allIds.length > 0 && (
+          <button onClick={() => setExpanded(allOpen ? new Set() : new Set(allIds))} style={btnStyle(T)}>{allOpen ? "Recolher tudo" : "Expandir tudo"}</button>
+        )}
         <NewButton label="Objetivo" onClick={() => open("objectives", null, { status: "Em andamento" })} />
       </PageTitle>
       {status === "idle" && items.objectives.length === 0 && <Muted>Nenhum objetivo ainda. Comece por um, ex.: “Engajamento na Flix”.</Muted>}
 
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-        {items.objectives.map((o) => {
-          const krs = idx.krsOfObjective(o.id);
-          return (
-            <div key={o.id} style={cardStyle(T)}>
-              <div className="flex items-center justify-between" style={{ gap: 10 }}>
-                <div className="flex items-center" style={{ gap: 8, minWidth: 0, flexWrap: "wrap" }}>
-                  <Target size={16} color={ACCENT} />
-                  <button onClick={() => open("objectives", o)} style={{ ...linkBtn, ...ellipsis, color: T.ink0, fontSize: 15, fontWeight: 600, fontFamily: "'Plus Jakarta Sans', sans-serif" }}>{o.name}</button>
-                  {o.product && <ProductBadges products={[o.product]} />}
-                  {fmtPeriod(o) && <Badge bg={T.bg2} color={T.ink1}>{fmtPeriod(o)}</Badge>}
-                  <StatusBadge tone={statusTone(o.status)}>{o.status}</StatusBadge>
-                </div>
-                <NewButton label="Key Result" onClick={() => open("keyResults", null, { objectiveId: o.id, product: o.product || "", status: "Em andamento", epicKeys: [], links: [] })} />
+        {groups.map(({ o, krs }) => (
+          <div key={o.id} style={cardStyle(T)}>
+            <div className="flex items-center justify-between" style={{ gap: 10 }}>
+              <div className="flex items-center" style={{ gap: 8, minWidth: 0, flexWrap: "wrap" }}>
+                <Target size={16} color={ACCENT} />
+                <button onClick={() => open("objectives", o)} style={{ ...linkBtn, ...ellipsis, color: T.ink0, fontSize: 15, fontWeight: 600, fontFamily: "'Plus Jakarta Sans', sans-serif" }}>{o.name}</button>
+                {o.product && <ProductBadges products={[o.product]} />}
+                {fmtPeriod(o) && <Badge bg={T.bg2} color={T.ink1}>{fmtPeriod(o)}</Badge>}
+                <StatusBadge tone={statusTone(o.status)}>{o.status}</StatusBadge>
               </div>
-              {o.goal && <ObjectiveGoal goal={o.goal} />}
-              {o.description && <Muted style={{ marginTop: 6 }}>{o.description}</Muted>}
-              <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
-                {krs.map((kr) => <KrRow key={kr.id} kr={kr} onOpen={() => open("keyResults", kr)} />)}
-                {krs.length === 0 && <Muted>Sem Key Results. Cadastre o primeiro: o número que prova este objetivo e os épicos que o movem.</Muted>}
-              </div>
+              <NewButton label="Key Result" onClick={() => open("keyResults", null, { objectiveId: o.id, product: o.product || "", status: "Em andamento", epicKeys: [], links: [] })} />
             </div>
-          );
-        })}
+            {o.goal && <ObjectiveGoal goal={o.goal} />}
+            {o.description && <Muted style={{ marginTop: 6 }}>{o.description}</Muted>}
+            <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+              {krs.map(krCard)}
+              {krs.length === 0 && <Muted>{product === "all" ? "Sem Key Results. Cadastre o primeiro: o número que prova este objetivo e os épicos que o movem." : "Nenhum Key Result deste objetivo neste produto."}</Muted>}
+            </div>
+          </div>
+        ))}
+        {orphans.length > 0 && (
+          <div style={cardStyle(T)}>
+            <div className="flex items-center" style={{ gap: 8 }}>
+              <Target size={16} color={T.ink2} />
+              <span style={{ fontSize: 15, fontWeight: 600, color: T.ink0, fontFamily: "'Plus Jakarta Sans', sans-serif" }}>Sem objetivo</span>
+              <Muted>Key Results sem objetivo: abra um e escolha o objetivo.</Muted>
+            </div>
+            <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>{orphans.map(krCard)}</div>
+          </div>
+        )}
       </div>
-      {loose > 0 && <Muted style={{ marginTop: 14 }}>{loose} Key Result{loose === 1 ? " está" : "s estão"} sem objetivo. Veja em Key Results.</Muted>}
       {editorNode}
     </ScreenShell>
   );
@@ -5025,86 +5066,6 @@ function AddLink({ label, onClick }) {
   const { canCreateCard } = useAuth();
   if (!canCreateCard) return null;
   return <button onClick={onClick} style={{ ...linkBtn, fontSize: 11.5, display: "inline-flex", alignItems: "center", gap: 3 }}><Plus size={12} /> {label}</button>;
-}
-
-/* ---- Key Results: por objetivo, com os épicos e a análise das issues ---- */
-
-function KeyResultsScreen() {
-  const { T } = useTheme();
-  const { epics } = useData();
-  const { items, status } = usePlanning();
-  const idx = usePlanIndex();
-  const [product, setProduct] = useState("all");
-  const [open, editorNode] = useEditor();
-  if (status === "error") return <PlanningLoadError />;
-
-  const visible = items.keyResults.filter((k) => product === "all" || idx.productsOfKr(k).includes(product));
-  const groups = [
-    ...items.objectives.map((o) => ({ id: o.id, title: o.name, krs: visible.filter((k) => k.objectiveId === o.id) })),
-    { id: "", title: "Sem objetivo", krs: visible.filter((k) => !idx.objectiveById[k.objectiveId]) },
-  ].filter((g) => g.krs.length);
-  const loose = epics.filter((e) => !idx.krByEpic[e.key] && (product === "all" || e.project === product)).length;
-  const order = { doing: 0, todo: 1, done: 2 };
-
-  return (
-    <ScreenShell>
-      <PageTitle title="Key Results (Iniciativas)" sub={`O número que prova cada objetivo e os épicos que o movem · ${loose} ${loose === 1 ? "épico" : "épicos"} sem Key Result`}>
-        <ProductFilter value={product} onChange={setProduct} />
-        <NewButton
-          label="Key Result" disabled={!items.objectives.length} title={items.objectives.length ? "" : "Crie um objetivo antes"}
-          onClick={() => open("keyResults", null, { status: "Em andamento", epicKeys: [], links: [] })}
-        />
-      </PageTitle>
-
-      {groups.map((g) => (
-        <div key={g.id || "none"} style={{ marginBottom: 22 }}>
-          <div className="flex items-center" style={{ gap: 8, marginBottom: 10 }}>
-            <Target size={15} color={g.id ? ACCENT : T.ink2} />
-            <span style={{ fontSize: 13.5, fontWeight: 600, color: T.ink0 }}>{g.title}</span>
-            <span style={{ fontSize: 11.5, color: T.ink2 }}>{g.krs.length} {g.krs.length === 1 ? "Key Result" : "Key Results"}</span>
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            {g.krs.map((kr) => {
-              const krEpics = idx.epicsOf(kr.epicKeys).sort((a, b) => order[epicBucket(a)] - order[epicBucket(b)]);
-              const issues = idx.issuesOf(kr.epicKeys);
-              return (
-                <div key={kr.id} style={cardStyle(T)}>
-                  <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(200px, 300px) auto", gap: 14, alignItems: "center" }}>
-                    <div style={{ minWidth: 0 }}>
-                      <div className="flex items-center" style={{ gap: 8, flexWrap: "wrap" }}>
-                        <button onClick={() => open("keyResults", kr)} style={{ ...linkBtn, ...ellipsis, color: T.ink0, fontSize: 14, fontWeight: 600 }}>{kr.name}</button>
-                        <StatusBadge tone={statusTone(kr.status)}>{kr.status}</StatusBadge>
-                        {kr.quarter && <Badge bg="rgba(81,102,230,0.12)" color={ACCENT}>{kr.quarter}</Badge>}
-                        <DueBadge item={kr} doneStatus="Concluído" />
-                      </div>
-                      <div className="flex items-center" style={{ gap: 10, marginTop: 4, flexWrap: "wrap" }}>
-                        {kr.owner ? <OwnerTag name={kr.owner} /> : <span style={{ fontSize: 11, color: T.ink2 }}>sem responsável</span>}
-                        <ProductBadges products={idx.productsOfKr(kr)} />
-                      </div>
-                      {(kr.links || []).length > 0 && <div style={{ marginTop: 6 }}><LinkChips links={kr.links} /></div>}
-                    </div>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                      {isNum(kr.target) && <div className="flex items-center" style={{ gap: 8 }}><KrProgress kr={kr} /><WeeklySpark checkins={kr.checkins} target={kr.target} /></div>}
-                      <IssueBuckets issues={issues} />
-                      <EpicBuckets epics={krEpics} />
-                    </div>
-                    <button onClick={() => open("keyResults", kr)} style={btnStyle(T)}>Editar</button>
-                  </div>
-                  <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 4, borderTop: `1px solid ${T.border2}`, paddingTop: 10 }}>
-                    {krEpics.map((e) => <EpicLine key={e.key} epic={e} showAssignee />)}
-                    {krEpics.length === 0 && <Muted>Nenhum épico. Vincule em Editar.</Muted>}
-                    <IssueAnalysis issues={issues} />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      ))}
-      {status === "idle" && groups.length === 0 && <Muted>Nenhum Key Result{product !== "all" ? " neste produto" : ""}. Crie um a partir de um objetivo.</Muted>}
-      {editorNode}
-    </ScreenShell>
-  );
 }
 
 /* ---- Oportunidades: árvore (KR → oportunidades → experimentos) e quadro ---- */
@@ -5953,7 +5914,7 @@ function WorkspaceEditor({ editor, onClose }) {
 const SIDEBAR_KEY = "pp-sidebar-collapsed";
 const SIDEBAR_GROUPS = [
   { id: "visao", title: null, label: "Visão geral", items: [["visao", "Visão geral", LayoutDashboard]] },
-  { id: "estrategia", title: "Estratégia", items: [["okrs", "Objetivos", Target], ["krs", "Key Results", Sparkles], ["oportunidades", "Oportunidades", Lightbulb]] },
+  { id: "estrategia", title: "Estratégia", items: [["okrs", "Objetivos e KRs", Target], ["oportunidades", "Oportunidades", Lightbulb]] },
   { id: "execucao", title: "Execução", items: [["epicos", "Épicos", Layers], ["roadmap", "Roadmap", Calendar], ["entregas", "Entregas", PackageCheck]] },
   { id: "produto", title: "Produto", items: [["produtos", "Produtos e features", Package]] },
 ];
@@ -6077,7 +6038,6 @@ function AppShell() {
 
       {menu === "visao" ? <DirectorScreen />
         : menu === "okrs" ? <OkrScreen />
-        : menu === "krs" ? <KeyResultsScreen />
         : menu === "oportunidades" ? <OpportunitiesScreen />
         : menu === "epicos" ? <EpicsScreen />
         : menu === "produtos" ? <ProductsScreen />
