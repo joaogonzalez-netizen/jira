@@ -8,6 +8,7 @@ import { BOARDS, boardOf, byStatusBackToFront, statusRank } from "./lib/status-o
 import { packRows } from "./lib/delivery-layout";
 import { comparePriority, mergePriority, reorderKeys } from "./lib/delivery-priority";
 import { QUEUE_PROJECT_MAP, QUEUE_STATUS_MAP, planQueueAutomation } from "./lib/status-queue";
+import { FUNNEL_STAGES, epicHealth, funnel, krHealth, krProgress, objectiveHealth, quarterTimeline, recentDeliveries, stageOf, withoutKr } from "./lib/director";
 import { NO_LINK, buildOkrLanes, matchesOkrFilter, okrCoverage, okrOf } from "./lib/okr-link";
 import { AuthProvider, useAuth } from "./lib/auth-context";
 import { DEFAULT_WS, currentWorkspaceId, isDefaultWorkspace, switchWorkspace } from "./lib/workspace";
@@ -3798,10 +3799,6 @@ function fmtDay(iso) {
   return `${d}/${m}/${y.slice(2)}`;
 }
 const fmtNum = (v, unit) => (isNum(v) ? `${String(v).replace(".", ",")}${unit ? (unit === "%" ? "%" : ` ${unit}`) : ""}` : "—");
-function krProgress(kr) {
-  if (!isNum(kr.baseline) || !isNum(kr.target) || !isNum(kr.current) || kr.target === kr.baseline) return null;
-  return Math.max(0, Math.min(100, Math.round(((kr.current - kr.baseline) / (kr.target - kr.baseline)) * 100)));
-}
 /** ICE = média de Impacto, Confiança e Facilidade (1–10); null se faltar nota. */
 function iceScore(x) {
   return isNum(x.impact) && isNum(x.confidence) && isNum(x.ease) ? Math.round(((x.impact + x.confidence + x.ease) / 3) * 10) / 10 : null;
@@ -4706,7 +4703,7 @@ function ScreenShell({ children }) {
   return <div className="pp-scroll" style={{ overflowY: "auto", flex: 1, padding: "20px 24px 40px" }}>{children}</div>;
 }
 
-/* ---- Visão geral ---- */
+/* ---- Peças comuns das telas de planejamento ---- */
 
 function Kpi({ label, value, tone }) {
   const { T } = useTheme();
@@ -4719,69 +4716,123 @@ function Kpi({ label, value, tone }) {
   );
 }
 
-function OverviewScreen() {
+/* ---- Diretoria: a visão de leitura para quem decide ---- */
+
+const HEALTH_LABEL = { on_track: ["No prazo", "done"], risk: ["Em risco", "soon"], late: ["Atrasado", "late"], done: ["Atingido", "done"], idle: ["Não avaliado", null] };
+const HEALTH_COLOR = { on_track: DONE_COLOR, risk: SOON_COLOR, late: LATE_COLOR, done: DONE_COLOR, idle: "#8b8b8d", unscheduled: "#8b8b8d" };
+const STAGE_LABEL = Object.fromEntries(FUNNEL_STAGES);
+
+function HealthBadge({ health, reason }) {
+  const [label, tone] = HEALTH_LABEL[health] || HEALTH_LABEL.idle;
+  return <span title={reason || undefined}><StatusBadge tone={tone}>{label}</StatusBadge></span>;
+}
+
+/** Projeto (épico) numa linha: bolinha da saúde, chave (link do Jira), nome e etapa. */
+function DirectorEpicLine({ epic, health, stage }) {
+  const { T } = useTheme();
+  const tip = { on_track: "No prazo", late: "Atrasado: a barra no Gantt já terminou", done: "Concluído", unscheduled: "Sem data no Gantt" }[health];
+  return (
+    <div className="flex items-center" style={{ gap: 8, minWidth: 0, fontSize: 12 }}>
+      <span title={tip} style={{ width: 7, height: 7, borderRadius: 999, background: HEALTH_COLOR[health], flexShrink: 0 }} />
+      <a href={jiraUrl(epic.key)} target="_blank" rel="noopener noreferrer" style={{ color: T.ink1, fontWeight: 500, textDecoration: "none", flexShrink: 0 }}>{epic.key}</a>
+      <span style={{ ...ellipsis, color: T.ink0, flex: 1, minWidth: 0 }}>{epic.summary}</span>
+      {stage && <span style={{ color: T.ink2, fontSize: 11, flexShrink: 0 }}>{STAGE_LABEL[stage]}</span>}
+    </div>
+  );
+}
+
+function DirectorScreen() {
   const { T } = useTheme();
   const { items, status } = usePlanning();
   const idx = usePlanIndex();
+  const { epics, positions, customEpicsShown, filaProdutoOrder, filaUxOrder, filaOpsOrder } = useData();
+  const products = useProducts();
+  const now = useNow();
   const [product, setProduct] = useState("all");
-  const [open, editorNode] = useEditor();
+
+  const queues = useMemo(() => ({ filaProdutoOrder, filaUxOrder, filaOpsOrder }), [filaProdutoOrder, filaUxOrder, filaOpsOrder]);
+  // Projetos = épicos reais do Jira (rascunho ainda não criado não conta).
+  const cards = useMemo(
+    () => mergeCustomEpics(epics, customEpicsShown).filter((e) => !e.key.startsWith("NOVO-") && (product === "all" || e.project === product)),
+    [epics, customEpicsShown, product],
+  );
+  const view = useMemo(() => {
+    const inProduct = (prods) => product === "all" || prods.includes(product);
+    const objectives = items.objectives
+      .filter((o) => o.status !== "Cancelado" && inProduct([o.product, ...idx.krsOfObjective(o.id).flatMap(idx.productsOfKr)].filter(Boolean)))
+      .map((o) => {
+        const krs = idx.krsOfObjective(o.id)
+          .filter((k) => k.status !== "Cancelado" && inProduct(idx.productsOfKr(k)))
+          .map((kr) => ({
+            kr,
+            h: krHealth(kr, { objective: o, now }),
+            epics: idx.epicsOf(kr.epicKeys).filter((e) => isEpicOpen(e) || isEpicDone(e)).map((e) => ({ e, health: epicHealth(e, positions[e.key], now), stage: isEpicDone(e) ? null : stageOf(e, queues) })),
+          }));
+        return { o, krs, health: objectiveHealth(krs.map((x) => x.h.health)) };
+      });
+    const allKrs = objectives.flatMap((x) => x.krs);
+    const count = (h) => allKrs.filter((x) => x.h.health === h).length;
+    const loose = withoutKr(cards, queues, (c) => !!okrOf(c, idx));
+    return {
+      objectives,
+      counts: { on_track: count("on_track"), risk: count("risk"), late: count("late"), done: count("done") },
+      funnel: funnel(cards, queues),
+      timeline: quarterTimeline(cards, positions, { now, products }),
+      recent: recentDeliveries(cards, positions, { now }),
+      loose,
+    };
+  }, [items, idx, cards, positions, queues, now, product, products]);
   if (status === "error") return <PlanningLoadError />;
 
-  const inProduct = (prods) => product === "all" || prods.includes(product);
-  const objectiveProducts = (o) => [o.product, ...idx.krsOfObjective(o.id).flatMap(idx.productsOfKr)].filter(Boolean);
-  const objectives = items.objectives
-    .filter((o) => o.status !== "Cancelado" && inProduct(objectiveProducts(o)))
-    .map((o) => ({ o, krs: idx.krsOfObjective(o.id) }));
-  const activeKrs = items.keyResults
-    .filter((k) => k.status !== "Cancelado" && inProduct(idx.productsOfKr(k)))
-    .sort((a, b) => KR_STATUSES.indexOf(a.status) - KR_STATUSES.indexOf(b.status));
-  const expProducts = (x) => (x.epicKey && idx.epicByKey[x.epicKey] ? [idx.epicByKey[x.epicKey].project] : []);
-  const experiments = items.experiments.filter((x) => product === "all" || expProducts(x).includes(product));
-  const watch = experiments.filter((x) => dueState(x, "Concluído")).sort((a, b) => a.dueDate.localeCompare(b.dueDate));
-  const late = watch.filter((x) => dueState(x, "Concluído") === "late").length;
-  const allKrs = objectives.flatMap((x) => x.krs);
-  const krsDone = allKrs.filter((kr) => krProgress(kr) === 100 || kr.status === "Concluído").length;
-  const pendingCheckins = allKrs.filter((kr) => needsCheckin(kr, ["Em andamento"])).length
-    + experiments.filter((x) => needsCheckin(x, ["Rodando"])).length;
+  const { objectives, counts, funnel: stages, timeline, recent, loose } = view;
+  const maxStage = Math.max(1, ...stages.map((s) => s.count));
+  const fmtDM = (d) => `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}`;
+  const MAX_EPICS_PER_KR = 5;
 
   return (
     <ScreenShell>
-      <PageTitle title="Visão geral" sub="Objetivos, iniciativas e experimentos de growth">
+      <PageTitle title="Diretoria" sub="Objetivos, Key Results e os projetos que os movem: saúde, etapa e prazos">
         <ProductFilter value={product} onChange={setProduct} />
       </PageTitle>
 
       <div className="flex" style={{ gap: 10, flexWrap: "wrap", marginBottom: 20 }}>
         <Kpi label="Objetivos ativos" value={objectives.length} />
-        <Kpi label="Key Results atingidos" value={`${krsDone}/${allKrs.length}`} tone={allKrs.length && krsDone === allKrs.length ? "done" : null} />
-        <Kpi label="Key Results em andamento" value={activeKrs.filter((k) => k.status === "Em andamento").length} />
-        <Kpi label="Experimentos rodando" value={experiments.filter((x) => x.status === "Rodando").length} />
-        <Kpi label="Experimentos atrasados" value={late} tone={late ? "late" : null} />
-        <Kpi label="Check-ins da semana pendentes" value={pendingCheckins} tone={pendingCheckins ? "late" : "done"} />
+        <Kpi label="Key Results no prazo" value={counts.on_track} tone={counts.on_track ? "done" : null} />
+        <Kpi label="Key Results em risco" value={counts.risk} />
+        <Kpi label="Key Results atrasados" value={counts.late} tone={counts.late ? "late" : null} />
+        <Kpi label="Key Results atingidos" value={counts.done} tone={counts.done ? "done" : null} />
+        <Kpi label="Projetos andando sem KR" value={loose.length} tone={loose.length ? "late" : "done"} />
       </div>
 
       <div style={{ marginBottom: 24 }}>
-        <SectionTitleRow title="Progresso dos objetivos" />
-        {objectives.length === 0 && <Muted>Nenhum objetivo{product !== "all" ? " com iniciativas neste produto" : ""}. Cadastre em Objetivos.</Muted>}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(360px, 1fr))", gap: 12 }}>
-          {objectives.map(({ o, krs }) => (
+        <SectionTitleRow title="Objetivos, Key Results e projetos" />
+        {objectives.length === 0 && <Muted>Nenhum objetivo{product !== "all" ? " neste produto" : ""}. Cadastre em Objetivos.</Muted>}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(420px, 1fr))", gap: 12 }}>
+          {objectives.map(({ o, krs, health }) => (
             <div key={o.id} style={cardStyle(T)}>
-              <div className="flex items-center" style={{ gap: 8, marginBottom: 10 }}>
-                <button onClick={() => open("objectives", o)} style={{ ...linkBtn, color: T.ink0, fontSize: 14, fontWeight: 600 }}>{o.name}</button>
+              <div className="flex items-center" style={{ gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 14, fontWeight: 600, color: T.ink0 }}>{o.name}</span>
+                <HealthBadge health={health} />
                 {o.product && <ProductBadges products={[o.product]} />}
                 {fmtPeriod(o) && <Badge bg={T.bg2} color={T.ink1}>{fmtPeriod(o)}</Badge>}
               </div>
-              {o.goal && <div style={{ margin: "-4px 0 10px" }}><ObjectiveGoal goal={o.goal} /></div>}
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                {krs.map((kr) => (
-                  <div key={kr.id} onClick={() => open("keyResults", kr)} style={{ cursor: "pointer" }}>
+              {o.goal && <div style={{ margin: "0 0 10px" }}><ObjectiveGoal goal={o.goal} /></div>}
+              <div style={{ display: "flex", flexDirection: "column", gap: 14, marginTop: 10 }}>
+                {krs.map(({ kr, h, epics: linked }) => (
+                  <div key={kr.id}>
                     <div className="flex items-center justify-between" style={{ gap: 8, marginBottom: 4 }}>
                       <span className="flex items-center" style={{ gap: 8, minWidth: 0 }}>
-                        <span style={{ ...ellipsis, fontSize: 12.5, color: T.ink0 }}>{kr.name}</span>
+                        <span style={{ ...ellipsis, fontSize: 12.5, color: T.ink0, fontWeight: 500 }}>{kr.name}</span>
                         {kr.owner && <OwnerTag name={kr.owner} />}
                       </span>
-                      <span className="flex items-center" style={{ gap: 6 }}><CheckinBadge item={kr} activeStatuses={["Em andamento"]} /><DueBadge item={kr} doneStatus="Concluído" /></span>
+                      <HealthBadge health={h.health} reason={h.reason} />
                     </div>
                     <div className="flex items-center" style={{ gap: 8 }}><div style={{ flex: 1, minWidth: 0 }}><KrProgress kr={kr} /></div><WeeklySpark checkins={kr.checkins} target={kr.target} /></div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 3, marginTop: 6, paddingLeft: 2 }}>
+                      {linked.slice(0, MAX_EPICS_PER_KR).map(({ e, health: eh, stage }) => <DirectorEpicLine key={e.key} epic={e} health={eh} stage={stage} />)}
+                      {linked.length > MAX_EPICS_PER_KR && <Muted>+{linked.length - MAX_EPICS_PER_KR} projetos</Muted>}
+                      {linked.length === 0 && <Muted style={{ fontStyle: "italic" }}>Nenhum projeto ligado a este Key Result.</Muted>}
+                    </div>
                   </div>
                 ))}
                 {krs.length === 0 && <Muted>Sem Key Results.</Muted>}
@@ -4791,41 +4842,85 @@ function OverviewScreen() {
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.5fr) minmax(0, 1fr)", gap: 16, alignItems: "start" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: 16, alignItems: "start", marginBottom: 24 }}>
         <div>
-          <SectionTitleRow title="Key Results e épicos" />
-          <div style={{ ...cardStyle(T), padding: 0 }}>
-            {activeKrs.map((k, n) => (
-              <div key={k.id} onClick={() => open("keyResults", k)} className="pp-card" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.2fr) minmax(0, 1fr) 110px", gap: 12, alignItems: "center", padding: "10px 14px", borderTop: n ? `1px solid ${T.border2}` : "none", cursor: "pointer" }}>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ ...ellipsis, fontSize: 12.5, fontWeight: 500, color: T.ink0 }}>{k.name}</div>
-                  <div style={{ ...ellipsis, fontSize: 11, color: T.ink2 }}>{idx.objectiveById[k.objectiveId] ? idx.objectiveById[k.objectiveId].name : "sem objetivo"}</div>
+          <SectionTitleRow title="Onde estão os projetos" />
+          <div style={{ ...cardStyle(T), display: "flex", flexDirection: "column", gap: 8 }}>
+            {stages.map((s) => (
+              <div key={s.key} className="flex items-center" style={{ gap: 10 }} title={s.items.slice(0, 12).map((c) => `${c.key} ${c.summary}`).join("\n")}>
+                <span style={{ width: 110, fontSize: 12, color: T.ink1, flexShrink: 0 }}>{s.label}</span>
+                <div style={{ flex: 1, height: 14, borderRadius: 4, background: T.bg2, overflow: "hidden" }}>
+                  <div style={{ width: `${(s.count / maxStage) * 100}%`, height: "100%", background: ACCENT, opacity: s.key === "backlog" ? 0.35 : 0.85 }} />
                 </div>
-                <IssueBuckets issues={idx.issuesOf(k.epicKeys)} />
-                <span style={{ justifySelf: "end" }}><StatusBadge tone={statusTone(k.status)}>{k.status}</StatusBadge></span>
+                <span style={{ width: 26, textAlign: "right", fontSize: 12.5, fontWeight: 600, color: T.ink0 }}>{s.count}</span>
               </div>
             ))}
-            {activeKrs.length === 0 && <div style={{ padding: 14 }}><Muted>Nenhum Key Result{product !== "all" ? " neste produto" : ""}.</Muted></div>}
+            <Muted style={{ marginTop: 2 }}>Projetos em aberto por etapa. Passe o mouse na barra para ver quais.</Muted>
           </div>
         </div>
 
         <div>
-          <SectionTitleRow title="Experimentos vencendo ou atrasados" />
+          <SectionTitleRow title="Andando sem Key Result" />
           <div style={{ ...cardStyle(T), padding: 0 }}>
-            {watch.map((x, n) => (
-              <div key={x.id} onClick={() => open("experiments", x)} className="pp-card" style={{ padding: "10px 14px", borderTop: n ? `1px solid ${T.border2}` : "none", cursor: "pointer" }}>
-                <div className="flex items-center justify-between" style={{ gap: 8 }}>
-                  <span style={{ ...ellipsis, fontSize: 12.5, fontWeight: 500, color: T.ink0 }}>{x.name}</span>
-                  <DueBadge item={x} doneStatus="Concluído" />
-                </div>
-                <div style={{ ...ellipsis, fontSize: 11, color: T.ink2, marginTop: 2 }}>{x.status} · {idx.oppById[x.opportunityId] ? idx.oppById[x.opportunityId].name : "—"}</div>
+            {loose.slice(0, 10).map((c, n) => (
+              <div key={c.key} style={{ padding: "8px 14px", borderTop: n ? `1px solid ${T.border2}` : "none" }}>
+                <DirectorEpicLine epic={c} health={epicHealth(c, positions[c.key], now)} stage={stageOf(c, queues)} />
               </div>
             ))}
-            {watch.length === 0 && <div style={{ padding: 14 }}><Muted>Nada vencendo nos próximos 7 dias.</Muted></div>}
+            {loose.length > 10 && <div style={{ padding: "8px 14px", borderTop: `1px solid ${T.border2}` }}><Muted>+{loose.length - 10} projetos</Muted></div>}
+            {loose.length === 0 && <div style={{ padding: 14 }}><Muted>Todo projeto em andamento está ligado a um Key Result.</Muted></div>}
           </div>
         </div>
       </div>
-      {editorNode}
+
+      <div style={{ marginBottom: 24 }}>
+        <SectionTitleRow title="Linha do tempo por trimestre" />
+        <div style={{ ...cardStyle(T), padding: 0, overflowX: "auto" }}>
+          <div style={{ display: "grid", gridTemplateColumns: `140px repeat(${timeline.columns.length}, minmax(190px, 1fr))`, minWidth: 140 + timeline.columns.length * 190 }}>
+            <div style={{ padding: "8px 12px", borderBottom: `1px solid ${T.border2}` }} />
+            {timeline.columns.map((c) => (
+              <div key={c.key} style={{ padding: "8px 12px", fontSize: 12, fontWeight: 600, color: c.isCurrent ? ACCENT : T.ink1, borderBottom: `1px solid ${T.border2}`, borderLeft: `1px solid ${T.border2}`, background: c.isCurrent ? "rgba(81,102,230,0.06)" : "transparent" }}>
+                {c.label}{c.isCurrent && " · atual"}
+              </div>
+            ))}
+            {timeline.rows.map((row) => (
+              <React.Fragment key={row.product}>
+                <div style={{ padding: "10px 12px", fontSize: 12.5, fontWeight: 600, color: T.ink0, borderTop: `1px solid ${T.border2}` }}>{row.product}</div>
+                {timeline.columns.map((c) => {
+                  const list = row.cells[c.key] || [];
+                  return (
+                    <div key={c.key} style={{ padding: "8px 12px", borderTop: `1px solid ${T.border2}`, borderLeft: `1px solid ${T.border2}`, background: c.isCurrent ? "rgba(81,102,230,0.06)" : "transparent", display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}>
+                      {list.slice(0, 4).map((e) => (
+                        <div key={e.key} className="flex items-center" style={{ gap: 6, minWidth: 0, fontSize: 11.5 }} title={`${e.key} · ${e.summary} · ${fmtDM(e.when)}`}>
+                          <span style={{ width: 6, height: 6, borderRadius: 999, background: HEALTH_COLOR[e.health], flexShrink: 0 }} />
+                          <span style={{ ...ellipsis, color: T.ink0 }}>{e.summary}</span>
+                        </div>
+                      ))}
+                      {list.length > 4 && <Muted>+{list.length - 4}</Muted>}
+                    </div>
+                  );
+                })}
+              </React.Fragment>
+            ))}
+          </div>
+          {timeline.rows.length === 0 && <div style={{ padding: 14 }}><Muted>Nenhum projeto com data no Gantt ou entregue nesses trimestres.</Muted></div>}
+        </div>
+        <Muted style={{ marginTop: 6 }}>Cada projeto aparece no trimestre em que a barra termina no Gantt, ou em que foi entregue. Verde: no prazo ou concluído · vermelho: atrasado.</Muted>
+      </div>
+
+      <div>
+        <SectionTitleRow title="Entregas recentes" />
+        <div style={{ ...cardStyle(T), padding: 0 }}>
+          {recent.map(({ card, when }, n) => (
+            <div key={card.key} className="flex items-center" style={{ gap: 10, padding: "8px 14px", borderTop: n ? `1px solid ${T.border2}` : "none" }}>
+              <span style={{ fontSize: 11.5, color: T.ink2, width: 44, flexShrink: 0 }}>{fmtDM(when)}</span>
+              <div style={{ flex: 1, minWidth: 0 }}><DirectorEpicLine epic={card} health="done" stage={null} /></div>
+              {card.project && <ProductBadges products={[card.project]} />}
+            </div>
+          ))}
+          {recent.length === 0 && <div style={{ padding: 14 }}><Muted>Nenhum projeto concluído nas últimas 6 semanas.</Muted></div>}
+        </div>
+      </div>
     </ScreenShell>
   );
 }
@@ -5866,7 +5961,6 @@ const SIDEBAR_GROUPS = [
   { id: "estrategia", title: "Estratégia", items: [["okrs", "Objetivos", Target], ["krs", "Key Results", Sparkles], ["oportunidades", "Oportunidades", Lightbulb]] },
   { id: "execucao", title: "Execução", items: [["epicos", "Épicos", Layers], ["roadmap", "Roadmap", Calendar], ["entregas", "Entregas", PackageCheck]] },
   { id: "produto", title: "Produto", items: [["produtos", "Produtos e features", Package]] },
-  { id: "analises", title: "Análises", items: [["analises", "Análises", BarChart3], ["desenvolvedores", "Desenvolvedores", Users]] },
 ];
 
 function AppShell() {
@@ -5995,7 +6089,7 @@ function AppShell() {
         </div>
       </div>
 
-      {menu === "visao" ? <OverviewScreen />
+      {menu === "visao" ? <DirectorScreen />
         : menu === "okrs" ? <OkrScreen />
         : menu === "krs" ? <KeyResultsScreen />
         : menu === "oportunidades" ? <OpportunitiesScreen />
