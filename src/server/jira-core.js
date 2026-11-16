@@ -706,7 +706,6 @@ export async function handleCancelEpic(input, session, rcfg, j) {
         prioOrder: without(cur.prioOrder, key),
         filaProdutoOrder: without(cur.filaProdutoOrder, key),
         filaUxOrder: without(cur.filaUxOrder, key),
-        filaOpsOrder: without(cur.filaOpsOrder || [], key),
         // esconde também a versão que ainda vem da planilha, até ela sincronizar
         epicOverrides: { ...cur.epicOverrides, [key]: { ...(cur.epicOverrides[key] || {}), removed: true } },
       }, emailOf(session));

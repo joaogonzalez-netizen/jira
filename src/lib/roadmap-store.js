@@ -22,7 +22,7 @@ async function call(method, url, body) {
 }
 
 /** Sempre objeto novo: arrays compartilhados entre usos virariam estado mutável global. */
-export const emptyRoadmap = () => ({ positions: {}, customEpics: [], prioOrder: [], filaProdutoOrder: [], filaUxOrder: [], filaOpsOrder: [] });
+export const emptyRoadmap = () => ({ positions: {}, customEpics: [], prioOrder: [], filaProdutoOrder: [], filaUxOrder: [] });
 
 export const roadmapStore = {
   /** `ok` (tem estado) | `empty` (servidor ainda sem Roadmap) | `unavailable`. */
@@ -72,7 +72,7 @@ function normPos(p) {
     durationWeeks: p && Number.isInteger(p.durationWeeks) ? p.durationWeeks : 2,
   };
   if (p && p.doneWeek) out.doneWeek = p.doneWeek;
-  if (p && p.autoQueue) out.autoQueue = p.autoQueue;
+  if (p && p.autoQueue && p.autoQueue !== "productops") out.autoQueue = p.autoQueue;
   return out;
 }
 
@@ -110,7 +110,7 @@ export function diffRoadmap(base, next) {
   const remove = [...baseCustom.keys()].filter((k) => !nextCustom.has(k));
   if (upsert.length || remove.length) diff.customEpics = { upsert, remove };
 
-  for (const name of ["prioOrder", "filaProdutoOrder", "filaUxOrder", "filaOpsOrder"]) {
+  for (const name of ["prioOrder", "filaProdutoOrder", "filaUxOrder"]) {
     const op = orderOp(base[name] || [], next[name] || []);
     if (op) diff[name] = op;
   }

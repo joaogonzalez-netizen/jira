@@ -265,38 +265,30 @@ test("applyDiff é pura: não muta o documento de entrada", () => {
   assert.equal(JSON.stringify(doc), snapshot);
 });
 
-test("fila ProductOps: documento antigo (sem filaOpsOrder) lê como vazia e a marca productops é aceita", async () => {
-  const { config } = await fresh();
-  const got = await handleGet(config);
-  assert.deepEqual(got.body.state.filaOpsOrder, []);
-  const ok = await handlePatch({ positions: { "SELLER-1": { roadmapLane: null, startWeek: null, durationWeeks: 2, autoQueue: "productops" } } }, SUPER, config);
-  assert.equal(ok.status, 200);
-  assert.equal(ok.body.state.positions["SELLER-1"].autoQueue, "productops");
-});
-
-test("fila ProductOps: entra/sai por operação, admin só com card próprio, super reordena", async () => {
-  const { config } = await fresh();
-  const add = await handlePatch({ filaOpsOrder: { add: ["NOVO-200"] } }, ANDRE, config);
-  assert.equal(add.status, 200);
-  assert.deepEqual(add.body.state.filaOpsOrder, ["NOVO-200"]);
-  assert.equal((await handlePatch({ filaOpsOrder: { add: ["NOVO-100"] } }, ANDRE, config)).status, 403);
-  assert.equal((await handlePatch({ filaOpsOrder: { set: ["NOVO-200", "POD-1"] } }, ANDRE, config)).status, 403);
-  const set = await handlePatch({ filaOpsOrder: { set: ["POD-2", "POD-1"] } }, SUPER, config);
-  assert.deepEqual(set.body.state.filaOpsOrder, ["POD-2", "POD-1"]);
-  assert.equal((await handlePatch({ filaOpsOrder: ["POD-2", "POD-1"] }, SUPER, config)).body.rev, set.body.rev); // sem mudança, sem nova revisão
-});
-
-test("fila ProductOps: seed e snapshot preservam a fila", async () => {
-  const kv = createMemoryKv();
-  const config = loadConfig({}, kv);
-  const seeded = await handleSeed({ state: { ...SEED.state, filaOpsOrder: ["POD-1"] } }, SUPER, config);
-  assert.deepEqual(seeded.body.state.filaOpsOrder, ["POD-1"]);
-});
-
 test("pruneOverrides: o override de status some quando a planilha alcança o Jira ou passa de 24 h", () => {
   const doc = { epicOverrides: { A: { status: "Em rollout", at: new Date().toISOString() }, B: { status: "Em rollout", at: new Date().toISOString() }, C: { status: "Em rollout", at: "2020-01-01T00:00:00.000Z" } } };
   const epics = [{ key: "A", status: "Em DEV" }, { key: "B", status: "em rollout" }, { key: "C", status: "Em DEV" }];
   const pruned = pruneOverrides(doc, epics);
   assert.deepEqual(Object.keys(pruned.epicOverrides), ["A"]); // B já alcançou; C expirou
   assert.equal(pruneOverrides({ epicOverrides: { A: doc.epicOverrides.A } }, [{ key: "A", status: "Em DEV" }]), null); // nada a podar
+});
+
+test("fila ProductOps removida: dado antigo é limpo na leitura e a marca antiga não é recusada", async () => {
+  const kv = createMemoryKv();
+  const config = loadConfig({}, kv);
+  await handleSeed(SEED, SUPER, config);
+  // documento como ficou salvo quando a fila ProductOps existia
+  const raw = JSON.parse(await kv.get("jira:roadmap"));
+  raw.filaOpsOrder = ["POD-1", "POD-2"];
+  raw.positions["SELLER-1"] = { ...raw.positions["SELLER-1"], autoQueue: "productops" };
+  await kv.set("jira:roadmap", JSON.stringify(raw));
+  const got = (await handleGet(config)).body.state;
+  assert.equal("filaOpsOrder" in got, false);
+  assert.equal("autoQueue" in got.positions["SELLER-1"], false);
+  // um cliente antigo ainda manda a marca: ignorada, sem 400
+  const r = await handlePatch({ positions: { "SELLER-1": { roadmapLane: null, startWeek: null, durationWeeks: 2, autoQueue: "productops" } } }, SUPER, config);
+  assert.equal(r.status, 200);
+  assert.equal("autoQueue" in r.body.state.positions["SELLER-1"], false);
+  // marca que nunca existiu continua recusada
+  assert.equal((await handlePatch({ positions: { "SELLER-1": { roadmapLane: null, startWeek: null, durationWeeks: 2, autoQueue: "gantt" } } }, SUPER, config)).status, 400);
 });

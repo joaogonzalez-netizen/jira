@@ -92,13 +92,12 @@ test("epicHealth: concluído, atrasado, no prazo e sem data", () => {
 });
 
 test("stageOf: fila posta à mão vale mais que o status; depois status e projeto", () => {
-  const q = { filaProdutoOrder: ["P"], filaUxOrder: ["U"], filaOpsOrder: ["O"] };
+  const q = { filaProdutoOrder: ["P"], filaUxOrder: ["U"] };
   assert.equal(stageOf({ key: "P", status: "Em DEV", project: "STLFLIX" }, q), "produto");
   assert.equal(stageOf({ key: "U", status: "Backlog", project: "STLFLIX" }, q), "ux");
-  assert.equal(stageOf({ key: "O", status: "Backlog", project: "ProductOps" }, q), "productops");
+  assert.equal(stageOf({ key: "O", status: "Backlog", project: "ProductOps" }, q), "backlog"); // ProductOps não tem fila própria
   assert.equal(stageOf({ key: "x", status: "Em análise", project: "STL Seller" }, q), "produto");
   assert.equal(stageOf({ key: "x", status: "[UX] Em andamento", project: "STLFLIX" }, q), "ux");
-  assert.equal(stageOf({ key: "x", status: "Em refinamento Técnico", project: "ProductOps" }, q), "productops");
   assert.equal(stageOf({ key: "x", status: "Em refinamento Técnico", project: "STL IA" }, q), "tech");
   assert.equal(stageOf({ key: "x", status: "Pronto P/ DEV", project: "STL IA" }, q), "ready");
   assert.equal(stageOf({ key: "x", status: "Em DEV", project: "STL IA" }, q), "dev");
@@ -117,8 +116,8 @@ test("funnel: conta só o que está em aberto, na ordem do funil, com os itens",
     { key: "5", status: "Em análise", project: "STL IA" },
   ];
   const f = funnel(cards, {});
-  assert.deepEqual(f.map((s) => s.key), ["backlog", "produto", "ux", "productops", "tech", "ready", "dev", "rollout"]);
-  assert.deepEqual(Object.fromEntries(f.map((s) => [s.key, s.count])), { backlog: 2, produto: 1, ux: 0, productops: 0, tech: 0, ready: 0, dev: 1, rollout: 0 });
+  assert.deepEqual(f.map((s) => s.key), ["backlog", "produto", "ux", "tech", "ready", "dev", "rollout"]);
+  assert.deepEqual(Object.fromEntries(f.map((s) => [s.key, s.count])), { backlog: 2, produto: 1, ux: 0, tech: 0, ready: 0, dev: 1, rollout: 0 });
   assert.deepEqual(f[0].items.map((c) => c.key), ["1", "2"]);
 });
 

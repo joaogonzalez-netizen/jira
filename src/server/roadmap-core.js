@@ -32,7 +32,7 @@ const SNAPSHOT_KEY = "jira:sheet-snapshot";
 const SNAPSHOT_AT_KEY = "jira:sheet-snapshot-at";
 
 const MAX_KEYS = 3000;
-const AUTO_QUEUES = ["produto", "ux", "productops", "dev"];
+const AUTO_QUEUES = ["produto", "ux", "dev"];
 export const MAX_DESCRIPTION = 10000;
 const MAX_SNAPSHOT_BYTES = 3.5 * 1024 * 1024;
 const MAX_CAS_ATTEMPTS = 6;
@@ -151,7 +151,8 @@ function cleanPosition(p) {
   // O que a automação das filas aplicou por último (Produto, UX ou Dev): é o que
   // separa o movimento automático do manual.
   const auto = p.autoQueue;
-  if (auto != null) {
+  // "productops" é marca da fila que deixou de existir: quem ainda a manda é ignorado, não recusado.
+  if (auto != null && auto !== "productops") {
     if (!AUTO_QUEUES.includes(auto)) throw new ValidationError("Marca da automação inválida");
     out.autoQueue = auto;
   }
@@ -204,7 +205,7 @@ function normalizeDiff(diff) {
     out.customUpsert = upsert.map(cleanEpic);
     out.customRemove = cleanKeyList(remove, "customEpics.remove");
   }
-  for (const name of ["prioOrder", "filaProdutoOrder", "filaUxOrder", "filaOpsOrder"]) {
+  for (const name of ["prioOrder", "filaProdutoOrder", "filaUxOrder"]) {
     if (diff[name] !== undefined) out.orders[name] = normalizeOrderOp(diff[name], name);
   }
   return out;
@@ -224,7 +225,15 @@ function normalizeOrderOp(v, label) {
    --------------------------------------------------------------------- */
 
 function emptyDoc() {
-  return { v: 1, rev: 0, updatedAt: null, updatedBy: null, positions: {}, customEpics: [], epicOverrides: {}, prioOrder: [], filaProdutoOrder: [], filaUxOrder: [], filaOpsOrder: [] };
+  return { v: 1, rev: 0, updatedAt: null, updatedBy: null, positions: {}, customEpics: [], epicOverrides: {}, prioOrder: [], filaProdutoOrder: [], filaUxOrder: [] };
+}
+
+function dropLegacyMarks(positions) {
+  const out = {};
+  for (const [key, pos] of Object.entries(positions)) {
+    if (isPlainObject(pos) && pos.autoQueue === "productops") { const { autoQueue: _drop, ...rest } = pos; out[key] = rest; } else out[key] = pos;
+  }
+  return out;
 }
 
 function parseDoc(raw) {
@@ -232,16 +241,17 @@ function parseDoc(raw) {
   try {
     const d = JSON.parse(raw);
     if (!isPlainObject(d)) return null;
+    // A fila ProductOps foi removida: tira o que ficou salvo dela (a fila e as marcas da automação).
+    const { filaOpsOrder: _legacyQueue, ...rest } = d;
     return {
       ...emptyDoc(),
-      ...d,
-      positions: isPlainObject(d.positions) ? d.positions : {},
+      ...rest,
+      positions: isPlainObject(d.positions) ? dropLegacyMarks(d.positions) : {},
       customEpics: Array.isArray(d.customEpics) ? d.customEpics : [],
       epicOverrides: isPlainObject(d.epicOverrides) ? d.epicOverrides : {},
       prioOrder: Array.isArray(d.prioOrder) ? d.prioOrder : [],
       filaProdutoOrder: Array.isArray(d.filaProdutoOrder) ? d.filaProdutoOrder : [],
       filaUxOrder: Array.isArray(d.filaUxOrder) ? d.filaUxOrder : [],
-      filaOpsOrder: Array.isArray(d.filaOpsOrder) ? d.filaOpsOrder : [],
     };
   } catch {
     return null;
@@ -258,7 +268,6 @@ function view(doc, extra = {}) {
       prioOrder: doc.prioOrder,
       filaProdutoOrder: doc.filaProdutoOrder,
       filaUxOrder: doc.filaUxOrder,
-      filaOpsOrder: doc.filaOpsOrder || [],
     },
     rev: doc.rev,
     updatedAt: doc.updatedAt,
@@ -363,8 +372,7 @@ export function applyDiff(doc, rawDiff, session) {
     !sameJson(next.customEpics, doc.customEpics) ||
     !sameJson(next.prioOrder, doc.prioOrder) ||
     !sameJson(next.filaProdutoOrder, doc.filaProdutoOrder) ||
-    !sameJson(next.filaUxOrder, doc.filaUxOrder) ||
-    !sameJson(next.filaOpsOrder, doc.filaOpsOrder);
+    !sameJson(next.filaUxOrder, doc.filaUxOrder);
   if (!changed) return { doc, changed: false };
 
   return { doc: { ...next, rev: doc.rev + 1, updatedAt: new Date().toISOString(), updatedBy: email }, changed: true };
@@ -431,7 +439,6 @@ export async function handleSeed(body, session, config) {
       prioOrder: cleanKeyList(s.prioOrder ?? [], "prioOrder"),
       filaProdutoOrder: cleanKeyList(s.filaProdutoOrder ?? s.filaOrder ?? [], "filaProdutoOrder"),
       filaUxOrder: cleanKeyList(s.filaUxOrder ?? [], "filaUxOrder"),
-      filaOpsOrder: cleanKeyList(s.filaOpsOrder ?? [], "filaOpsOrder"),
     };
   } catch (e) {
     if (e instanceof ValidationError) return { status: 400, body: { message: e.message } };
