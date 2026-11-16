@@ -31,7 +31,7 @@ export const jiraApi = {
     return r.ok ? !!r.data.configured : null;
   },
   /** `issueTypeId` vazio = épico; `parentKey` = épico pai (só para o que não é épico). */
-  createEpic: async ({ key, summary, product, description, tipo, assignee, position, issueTypeId, parentKey }) => result(await call("POST", "/api/jira/epics", { key, summary, product, description, tipo, assignee, position, issueTypeId: issueTypeId || undefined, parentKey: parentKey || undefined })),
+  createEpic: async ({ key, summary, product, description, tipo, assignee, position, issueTypeId, parentKey, header }) => result(await call("POST", "/api/jira/epics", { key, summary, product, description, tipo, assignee, position, header: header || undefined, issueTypeId: issueTypeId || undefined, parentKey: parentKey || undefined })),
   /** Tipos de issue que dá para criar no projeto do produto: [{ id, name, epic }]. */
   async issueTypes(product) {
     const r = await call("GET", `/api/jira/assignees?list=issue-types&product=${encodeURIComponent(product || "")}`);
@@ -39,9 +39,11 @@ export const jiraApi = {
   },
   renameEpic: async ({ key, summary }) => result(await call("PATCH", "/api/jira/epics", { key, summary })),
   /** Nome, responsável e/ou status: `assignee` = { displayName, accountId? } atribui, `null` remove,
-      ausente não mexe; `status` = nome do status de destino (transição do workflow do Jira). */
-  updateEpic: async ({ key, summary, assignee, status }) => {
+      ausente não mexe; `status` = nome do status de destino (transição do workflow do Jira);
+      `header` = dados do cabeçalho de contexto (ver src/lib/epic-header.js). */
+  updateEpic: async ({ key, summary, assignee, status, header }) => {
     const body = { key };
+    if (header !== undefined) body.header = header; // cabeçalho de contexto: troca só esse bloco da descrição
     if (summary !== undefined) body.summary = summary;
     if (assignee !== undefined) body.assignee = assignee;
     if (status !== undefined) body.status = status;
