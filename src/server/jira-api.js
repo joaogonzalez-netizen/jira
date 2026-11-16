@@ -6,7 +6,8 @@
  */
 import { configError, loadConfig, resolveSessionFromCookie, sharedMemoryKv } from "./roadmap-core.js";
 import { handleCancelEpic, handleCreateEpic, handleListAssignees, handleListIssueTypes, handleStatus, handleUpdateEpic, loadJiraConfig } from "./jira-core.js";
-import { handleIssues } from "./jira-read-core.js";
+import fs from "node:fs";
+import { handleIssues, handleMockIssues } from "./jira-read-core.js";
 import { findWorkspace, scopeConfig } from "./workspace.js";
 
 const MAX_BODY_BYTES = 64 * 1024;
@@ -70,6 +71,8 @@ export function jiraApiPlugin(env) {
         if (params.get("list") === "issues") {
           const isDefault = !rcfg.workspace || rcfg.workspace === "default";
           const workspace = rcfgBase.kv ? await findWorkspace(rcfgBase.kv, rcfg.workspace) : null;
+          // Modo de teste local (npm run dev:mock): linhas de exemplo no lugar do Jira.
+          if (env.MOCK_JIRA_ROWS) return sendJson(res, handleMockIssues(JSON.parse(fs.readFileSync(env.MOCK_JIRA_ROWS, "utf8")), { workspace, isDefault }, session));
           return sendJson(res, await handleIssues({ workspace, isDefault }, session, jira));
         }
         if (params.get("list") === "issue-types") return sendJson(res, await handleListIssueTypes({ product: params.get("product") }, session, jira));

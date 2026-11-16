@@ -145,7 +145,7 @@ const PEOPLE = ["Ray Lima", "Jonas Tolentino", "Michel Angelo", "Caroline Araúj
 const STATUSES = ["Backlog", "Em design", "Em DEV", "Em rollout", "Done"];
 
 /** The embedded seed plus the extra projects, in the sheet's own row format
-    (what /api/sheet/sync returns), dated up to today. */
+    (what /api/jira/assignees?list=issues returns), dated up to today. */
 export function sheetRows(today = new Date()) {
   const { epics, tasks } = sheetSnapshot(today);
   const fmt = (d) => `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} 10:00:00`;

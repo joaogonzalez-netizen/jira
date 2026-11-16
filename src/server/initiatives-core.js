@@ -6,12 +6,12 @@
  * precisa de uma chave por iniciativa.
  *
  * Roda em dois lugares e por isso não conhece nem `req` nem `res`, igual a
- * `auth-core.js` e `sheet-core.js`: o plugin do Vite (`initiatives-api.js`,
+ * `auth-core.js`: o plugin do Vite (`initiatives-api.js`,
  * dev e preview) e a função da Vercel (`api/initiatives.js`, produção).
  *
  * Leitura é pública (mesma exposição que o board já tem hoje). Escrita exige
  * sessão válida com papel `admin` ou `super` — reaproveita `resolveSession`
- * de `auth-core.js` — porque aqui, ao contrário do sync da planilha, existe
+ * de `auth-core.js` — porque aqui, ao contrário da leitura do Jira, existe
  * escrita real: o gate não pode viver só no cliente.
  *
  * Usa `redis` (node-redis v4), conectando direto por `REDIS_URL` — a
