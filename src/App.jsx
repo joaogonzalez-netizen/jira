@@ -5957,7 +5957,7 @@ function WorkspaceEditor({ editor, onClose }) {
 
 const SIDEBAR_KEY = "pp-sidebar-collapsed";
 const SIDEBAR_GROUPS = [
-  { id: "visao", title: null, label: "Diretoria", items: [["visao", "Diretoria", LayoutDashboard]] },
+  { id: "visao", title: null, label: "Visão geral", items: [["visao", "Visão geral", LayoutDashboard]] },
   { id: "estrategia", title: "Estratégia", items: [["okrs", "Objetivos", Target], ["krs", "Key Results", Sparkles], ["oportunidades", "Oportunidades", Lightbulb]] },
   { id: "execucao", title: "Execução", items: [["epicos", "Épicos", Layers], ["roadmap", "Roadmap", Calendar], ["entregas", "Entregas", PackageCheck]] },
   { id: "produto", title: "Produto", items: [["produtos", "Produtos e features", Package]] },
