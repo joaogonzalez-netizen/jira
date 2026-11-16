@@ -2,7 +2,7 @@
  * Adaptador do Vite para as iniciativas: serve `/api/initiatives` no dev
  * server e no preview. A lógica toda vive em `initiatives-core.js`,
  * compartilhada com a função da Vercel (`api/initiatives.js`) — aqui só se
- * traduz `req`/`res` do Node, igual a `auth-api.js` e `sheet-api.js`.
+ * traduz `req`/`res` do Node, igual a `auth-api.js`.
  */
 import {
   configError,

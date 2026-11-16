@@ -126,11 +126,9 @@ const ThemeCtx = createContext(null);
 function useTheme() { return useContext(ThemeCtx); }
 
 /* =====================================================================
-   DADOS — contexto com epics/tasks ao vivo + sincronização com o Sheets
+   DADOS — contexto com epics/tasks ao vivo + sincronização com o Jira
    ===================================================================== */
 
-const SHEET_ID = "1HteBrBkY4XCkmXGMTJIuA2EXAraZsDKw_xjZu0xoUgw";
-const SHEET_GID = "0";
 const JIRA_BASE_URL = "https://joaogonzalezstlflix.atlassian.net";
 function jiraUrl(key) { return `${JIRA_BASE_URL}/browse/${key}`; }
 const DATA_OVERRIDE_KEY = "jira-data-override-v1";
@@ -185,7 +183,7 @@ const normProject = (s) => String(s || "").normalize("NFD").replace(/[\u0300-\u0
 /** `only`: projetos do Jira que o workspace puxa (Set de nomes normalizados).
     Quando definido, vale só ele — inclusive para projetos que o padrão exclui,
     como Dados. */
-function transformSheetRow(r, only = null) {
+function transformIssueRow(r, only = null) {
   const proj = (r["Project"] || "").trim();
   const status = (r["Status"] || "").trim();
   if (only ? !only.has(normProject(proj)) : EXCLUDE_PROJECTS_JS.has(proj)) return null;
@@ -655,21 +653,18 @@ function DataProvider({ children }) {
     return Array.from({ length: weekCount + ROADMAP_PAST_WEEKS }, (_, i) => ({ index: i - ROADMAP_PAST_WEEKS, start: addDays(start, i * 7) }));
   }, []);
 
-  const syncFromSheet = useCallback(async () => {
+  const syncFromJira = useCallback(async () => {
     // O botão já é só do super; o gate aqui é o que vale — a função vive no
     // contexto e qualquer tela nova poderia chamá-la.
     if (!canWriteShared) return { ok: false, reason: "forbidden" };
     setSyncStatus("loading");
     setSyncError(null);
     try {
-      // Fonte principal: API oficial do Jira. 503 = integração sem credencial
-      // neste ambiente: cai na planilha, como antes, até ela ser removida.
-      let res = await fetch("/api/jira/assignees?list=issues", { credentials: "same-origin" });
-      if (res.status === 503) res = await fetch("/api/sheet/sync");
+      const res = await fetch("/api/jira/assignees?list=issues", { credentials: "same-origin" });
       const rows = await res.json();
       if (!res.ok) throw new Error(rows?.message || `HTTP ${res.status}`);
       const only = jiraProjectsRef.current;
-      const transformed = rows.map((r) => transformSheetRow(r, only)).filter(Boolean);
+      const transformed = rows.map((r) => transformIssueRow(r, only)).filter(Boolean);
       const nextEpics = withResumoFallback(transformed.filter((r) => r.epic));
       const nextTasks = transformed.filter((r) => !r.epic);
       // A planilha sempre teve dezenas de épicos; se a resposta vier com linhas
@@ -679,7 +674,7 @@ function DataProvider({ children }) {
       // exibir, mesmo continuando salvas no navegador).
       // Projeto filtrado (ex.: só Custom) pode não ter épico nenhum: lá a checagem não vale.
       if (!only && rows.length > 0 && nextEpics.length === 0) {
-        throw new Error("A planilha voltou sem nenhum épico — mantendo os dados anteriores.");
+        throw new Error("O Jira voltou sem nenhum épico — mantendo os dados anteriores.");
       }
       const syncedAt = new Date().toISOString();
       setEpics(nextEpics);
@@ -745,7 +740,7 @@ function DataProvider({ children }) {
   }, [epicsShown, tasksShown, positions, filaProdutoOrder, filaUxOrder, filaOpsOrder, roadmapLoaded, roadmapMode, canWriteShared, persistRoadmap]);
 
   const value = useMemo(() => ({
-    epics: epicsShown, tasks: tasksShown, allProjects, setEpics, setTasks, syncFromSheet, lastSync, syncStatus, syncError,
+    epics: epicsShown, tasks: tasksShown, allProjects, setEpics, setTasks, syncFromJira, lastSync, syncStatus, syncError,
     jiraConfigured,
     // customEpics = lista completa (é ela que se salva: o servidor trata o que
     // falta como apagado); customEpicsShown = filtrada, só para exibir.
@@ -754,7 +749,7 @@ function DataProvider({ children }) {
     roadmapSaving, persistRoadmap, updatePosition, addEpic, deleteEpic, saveDrawer, roadmapWeeks,
     roadmapMode, roadmapError, clearRoadmapError, localSummary, migrateToServer, reassignEpic, notifyRoadmapError,
   }), [
-    epicsShown, tasksShown, allProjects, syncFromSheet, lastSync, syncStatus, syncError,
+    epicsShown, tasksShown, allProjects, syncFromJira, lastSync, syncStatus, syncError,
     jiraConfigured,
     positions, customEpics, customShown, prioOrder, filaProdutoOrder, filaUxOrder, filaOpsOrder,
     roadmapSaving, persistRoadmap, updatePosition, addEpic, deleteEpic, saveDrawer, roadmapWeeks,
@@ -5558,7 +5553,7 @@ function EpicsScreen() {
 
   return (
     <ScreenShell>
-      <PageTitle title="Épicos" sub={`${rows.length} de ${epics.length} épicos do Jira${lastSync ? ` · planilha de ${fmtSyncTime(lastSync)}` : ""}`}>
+      <PageTitle title="Épicos" sub={`${rows.length} de ${epics.length} épicos do Jira${lastSync ? ` · Jira de ${fmtSyncTime(lastSync)}` : ""}`}>
         {canCreateCard && <button onClick={newEpic} style={btnStyle(T, true)}><Plus size={13} /> Novo épico</button>}
         {viewBtn("board", "Quadro")}
         {viewBtn("table", "Tabela")}
@@ -5944,7 +5939,7 @@ function WorkspaceEditor({ editor, onClose }) {
             })}
           </div>
         </div>
-        {!editing && <Muted>O projeto começa vazio. Depois de criar, clique em Atualizar para puxar a planilha (só os projetos do Jira marcados).</Muted>}
+        {!editing && <Muted>O projeto começa vazio. Depois de criar, clique em Atualizar para puxar os dados do Jira (só os projetos marcados).</Muted>}
       </div>
       {error && <p style={{ marginTop: 12, fontSize: 12, color: LATE_COLOR }}>{error}</p>}
       <div className="flex items-center justify-end" style={{ gap: 8, marginTop: 20 }}>
@@ -5965,7 +5960,7 @@ const SIDEBAR_GROUPS = [
 
 function AppShell() {
   const { T, theme, toggleTheme } = useTheme();
-  const { syncFromSheet, lastSync, syncStatus, syncError } = useData();
+  const { syncFromJira, lastSync, syncStatus, syncError } = useData();
   const { user, role, logout, canWriteShared } = useAuth();
   const { current: currentWs } = useWorkspaces();
   const [picked, setPicked] = useState("visao");
@@ -5979,7 +5974,6 @@ function AppShell() {
   const [collapsed, setCollapsed] = useState(() => { try { return localStorage.getItem(SIDEBAR_KEY) === "1"; } catch (e) { return false; } });
   const toggleSidebar = () => setCollapsed((c) => { try { localStorage.setItem(SIDEBAR_KEY, c ? "0" : "1"); } catch (e) {} return !c; });
   const sidebarWidth = collapsed ? 64 : 224;
-  const [showSheetConfig, setShowSheetConfig] = useState(false);
 
   return (
     <div style={{ minHeight: "100vh", background: T.bg0, color: T.ink0, fontFamily: "'Inter Tight', sans-serif", display: "flex", overflowX: "hidden" }}>
@@ -6043,22 +6037,14 @@ function AppShell() {
               Atualizado {fmtSyncTime(lastSync)}
             </span>
           )}
-          {/* Puxar a planilha reescreve o board de todo mundo: só o super. */}
+          {/* Puxar os dados do Jira reescreve o board de todo mundo: só o super. */}
           {canWriteShared && (
             <button
-              onClick={syncFromSheet} disabled={syncStatus === "loading"} title="Atualizar dados da planilha"
+              onClick={syncFromJira} disabled={syncStatus === "loading"} title="Atualizar dados do Jira"
               style={{ display: "flex", alignItems: "center", gap: 6, borderRadius: 8, padding: "6px 10px", border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink1, fontSize: 12, fontWeight: 500, cursor: syncStatus === "loading" ? "default" : "pointer", fontFamily: "'Inter Tight', sans-serif", opacity: syncStatus === "loading" ? 0.6 : 1 }}
             >
               <RefreshCw size={13} className={syncStatus === "loading" ? "pp-spin" : ""} />
               {syncStatus === "loading" ? "Atualizando…" : "Atualizar"}
-            </button>
-          )}
-          {canWriteShared && (
-            <button
-              onClick={() => setShowSheetConfig(true)} title="Configurar qual planilha alimenta este board"
-              style={{ display: "flex", alignItems: "center", gap: 6, borderRadius: 8, padding: "6px 10px", border: `1px solid ${T.border2}`, background: T.bg1, color: T.ink1, fontSize: 12, fontWeight: 500, cursor: "pointer", fontFamily: "'Inter Tight', sans-serif" }}
-            >
-              <Settings size={13} /> Configurações
             </button>
           )}
           <button
@@ -6100,118 +6086,6 @@ function AppShell() {
         : menu === "entregas" ? <DeliveriesScreen />
         : <RoadmapScreen />}
 
-      {showSheetConfig && <SheetConfigModal onClose={() => setShowSheetConfig(false)} />}
-      </div>
-    </div>
-  );
-}
-
-/* =====================================================================
-   CONFIGURAÇÕES — qual planilha alimenta este board (pra reusar o projeto
-   em outro desenvolvimento sem precisar de redeploy)
-   ===================================================================== */
-
-function SheetConfigModal({ onClose }) {
-  const { T } = useTheme();
-  const { syncFromSheet } = useData();
-  const [loading, setLoading] = useState(true);
-  const [sheetId, setSheetId] = useState(null);
-  const [serviceAccountEmail, setServiceAccountEmail] = useState(null);
-  const [input, setInput] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState(null);
-  const [savedMsg, setSavedMsg] = useState(null);
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const res = await fetch("/api/sheet/config", { credentials: "same-origin" });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
-        setSheetId(data.sheetId || null);
-        setServiceAccountEmail(data.serviceAccountEmail || null);
-        setInput(data.sheetId || "");
-      } catch (e) {
-        setError(e.message || "Não foi possível carregar a configuração atual.");
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, []);
-
-  const onSave = async () => {
-    const value = input.trim();
-    if (!value) { setError("Cole o ID ou o link da planilha."); return; }
-    if (!window.confirm("Trocar a planilha muda os dados que TODOS os usuários veem (épicos, tarefas e Análises) assim que a sincronização terminar.\n\nA planilha nova precisa estar no mesmo formato de colunas e compartilhada com a conta de serviço. Continuar?")) return;
-    setSaving(true);
-    setError(null);
-    setSavedMsg(null);
-    try {
-      const res = await fetch("/api/sheet/config", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        credentials: "same-origin",
-        body: JSON.stringify({ sheetId: value }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
-      setSheetId(data.sheetId);
-      setInput(data.sheetId);
-      setSavedMsg("Planilha salva — testando sincronização…");
-      const r = await syncFromSheet();
-      setSavedMsg(r.ok ? "Planilha salva e sincronizada com sucesso." : `Planilha salva, mas a sincronização falhou: ${r.reason || ""}`);
-    } catch (e) {
-      setError(e.message || "Não foi possível salvar.");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50 }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: T.bg1, border: `1px solid ${T.border2}`, borderRadius: 12, padding: 20, width: 420, boxShadow: T.cardShadow }}>
-        <h3 style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", fontWeight: 700, fontSize: 15, color: T.ink0, marginBottom: 4 }}>Planilha de dados</h3>
-        <p style={{ fontSize: 12, color: T.ink1, marginBottom: 14, fontFamily: "'Inter Tight', sans-serif" }}>
-          Troque a planilha que este board sincroniza — útil pra reaproveitar o projeto em outro desenvolvimento, sem precisar mexer em código.
-        </p>
-
-        {loading ? (
-          <p style={{ fontSize: 12.5, color: T.ink2, fontFamily: "'Inter Tight', sans-serif" }}>Carregando…</p>
-        ) : (
-          <>
-            <p style={{ fontSize: 12, fontWeight: 500, color: T.ink1, marginBottom: 6, fontFamily: "'Inter Tight', sans-serif" }}>ID ou link da planilha</p>
-            <input
-              autoFocus value={input} onChange={(e) => setInput(e.target.value)}
-              placeholder="https://docs.google.com/spreadsheets/d/..."
-              style={{ width: "100%", borderRadius: 8, border: `1px solid ${T.border2}`, background: T.bg0, color: T.ink0, fontSize: 13, padding: "8px 10px", fontFamily: "'Inter Tight', sans-serif" }}
-            />
-            <p style={{ marginTop: 6, fontSize: 11, color: T.ink2, fontFamily: "'Inter Tight', sans-serif", wordBreak: "break-all" }}>
-              {sheetId ? `Em uso hoje: ${sheetId}` : "Em uso hoje: a planilha padrão configurada no servidor."}
-            </p>
-
-            <div style={{ marginTop: 14, borderRadius: 8, border: `1px solid ${T.border2}`, background: T.bg0, padding: "10px 12px" }}>
-              <p style={{ fontSize: 11.5, color: T.ink1, fontFamily: "'Inter Tight', sans-serif", lineHeight: 1.5 }}>
-                Antes de salvar, compartilhe a planilha (botão "Compartilhar") com este e-mail como <b>Leitor</b>:
-              </p>
-              <p style={{ marginTop: 4, fontSize: 11.5, fontWeight: 600, color: T.ink0, fontFamily: "'Inter Tight', sans-serif", wordBreak: "break-all" }}>
-                {serviceAccountEmail || "— (GOOGLE_SERVICE_ACCOUNT_JSON não configurado)"}
-              </p>
-            </div>
-
-            {error && <p style={{ marginTop: 10, fontSize: 12, color: "#e08585", fontFamily: "'Inter Tight', sans-serif" }}>{error}</p>}
-            {savedMsg && !error && <p style={{ marginTop: 10, fontSize: 12, color: "#00aa6c", fontFamily: "'Inter Tight', sans-serif" }}>{savedMsg}</p>}
-
-            <div className="flex items-center justify-between" style={{ marginTop: 20 }}>
-              <button onClick={onClose} style={{ fontSize: 12, color: T.ink1, background: "none", border: "none", cursor: "pointer", fontFamily: "'Inter Tight', sans-serif" }}>Fechar</button>
-              <button
-                onClick={onSave} disabled={saving}
-                style={{ borderRadius: 8, padding: "7px 14px", fontSize: 12.5, fontWeight: 600, border: "none", cursor: saving ? "default" : "pointer", background: "#5166e6", color: "#fff", fontFamily: "'Inter Tight', sans-serif", opacity: saving ? 0.7 : 1 }}
-              >
-                {saving ? "Salvando…" : "Salvar e sincronizar"}
-              </button>
-            </div>
-          </>
-        )}
       </div>
     </div>
   );
