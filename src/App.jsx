@@ -2681,7 +2681,29 @@ function RoadmapScreen() {
     return { doneWeek: mondayISO(addDays(startOfWeek(NOW_DATE), (startWeek + duration - 1) * 7)) };
   };
 
-  const onDropCell = (e, laneKey, weekIndex) => {
+  // Visão por OKR: soltar o card na linha de outro Key Result troca o vínculo (a pessoa confirma antes);
+  // "Sem vínculo" desfaz. Devolve false se a troca foi cancelada ou recusada — aí nada se move.
+  const relinkByLane = async (key, laneKey) => {
+    const card = byKey[key];
+    const link = okrOf(card, planIdx);
+    const targetId = laneKey === NO_LINK ? null : String(laneKey).replace(/^kr:/, "");
+    if ((link ? link.kr.id : null) === targetId) return true;
+    if (!canCreateCard) { notifyRoadmapError("Sem permissão para vincular Key Results."); return false; }
+    if (!targetId && !krLink.krOfKey[key]) {
+      notifyRoadmapError(`${key} herda o Key Result do épico pai: desvincule o épico para tirá-lo desta linha.`);
+      return false;
+    }
+    const target = targetId ? planItems.keyResults.find((k) => k.id === targetId) : null;
+    if (targetId && !target) return false;
+    const message = target
+      ? `Vincular ${key} ao Key Result "${target.name}"?${link ? `\n\nHoje ele está em "${link.kr.name}".` : ""}`
+      : `Desvincular ${key} do Key Result "${link.kr.name}"?`;
+    if (!window.confirm(message)) return false;
+    const r = await krLink.assignToKr(key, targetId);
+    if (!r.ok) { notifyRoadmapError(r.message || "Não foi possível alterar o Key Result."); return false; }
+    return true;
+  };
+  const onDropCell = async (e, laneKey, weekIndex) => {
     e.preventDefault();
     if (!dragKey) return;
     const cur = positions[dragKey] || { durationWeeks: 2 };
@@ -2700,8 +2722,11 @@ function RoadmapScreen() {
       setDragKey(null);
       return;
     }
+    if (byOkr && !(await relinkByLane(dragKey, laneKey))) {
+      setDragKey(null);
+      return;
+    }
     updatePosition(dragKey, { roadmapLane: product, startWeek: weekIndex, durationWeeks: cur.durationWeeks || 2, ...donePatch });
-    // Na visão por OKR a linha é só leitura: arrastar muda a semana, nunca o vínculo com o KR.
     const target = laneKey === NO_ASSIGNEE ? null : laneKey;
     if (byAssignee && (epic?.assignee || null) !== target && ownsCard(epic)) reassignEpic(dragKey, target);
     setDragKey(null);
@@ -2954,6 +2979,7 @@ function RoadmapScreen() {
               <span style={{ width: 8, height: 8, borderRadius: 999, background: PRODUCT_STYLE[p].primary }} />{p}
             </span>
           ))}
+          {byOkr && <span style={{ marginLeft: "auto", color: T.ink2 }}>Arraste um card para a linha de outro Key Result para vincular (pede confirmação).</span>}
         </div>
       )}
       <div className="flex" style={{ padding: "16px 24px", borderBottom: `1px solid ${T.border1}` }}>
