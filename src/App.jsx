@@ -162,6 +162,8 @@ const STAGE_MAP_JS = {
   "Em rollout": "Em rollout", "Done": "Concluído",
 };
 const EXCLUDE_STATUS_JS = new Set(["Cancelado", "Arquivado"]);
+/** Etapa do Roadmap para um status do Jira (null se o status não tem etapa). */
+const stageOfStatus = (status) => STAGE_MAP_JS[status] || null;
 const EXCLUDE_PROJECTS_JS = new Set(["Infra", "Dados"]);
 
 // Normaliza pra "DD/MM/AAAA HH:MM:SS" — o Apps Script pode mandar a data já
@@ -265,9 +267,9 @@ function DataProvider({ children }) {
   // O que o servidor registrou sobre épicos do Jira alterados por aqui (nome novo,
   // cancelado) — vale por cima da planilha até ela sincronizar com o Jira.
   const [epicOverrides, setEpicOverrides] = useState({});
-  const epicsView = useMemo(() => withEpicDoneDates(applyEpicOverrides(epics, epicOverrides), tasks || []), [epics, epicOverrides, tasks]);
+  const epicsView = useMemo(() => withEpicDoneDates(applyEpicOverrides(epics, epicOverrides, Date.now(), stageOfStatus), tasks || []), [epics, epicOverrides, tasks]);
   // Renomear/cancelar vale para qualquer issue: o override também cobre as tarefas.
-  const tasksView = useMemo(() => applyEpicOverrides(tasks || [], epicOverrides), [tasks, epicOverrides]);
+  const tasksView = useMemo(() => applyEpicOverrides(tasks || [], epicOverrides, Date.now(), stageOfStatus), [tasks, epicOverrides]);
   // Escrita no Jira ligada? (JIRA_EMAIL/JIRA_API_TOKEN no servidor) — null = ainda não sei.
   const [jiraConfigured, setJiraConfigured] = useState(null);
   const jiraConfiguredRef = useRef(null);
@@ -642,6 +644,21 @@ function DataProvider({ children }) {
     applyServerDoc(r);
     return { ok: true };
   }, [ownsCard, byKeyWithCustom, customEpics, positions, prioOrder, filaProdutoOrder, filaUxOrder, persistRoadmap, applyServerDoc]);
+  // Move o épico de status no Jira (transição do workflow). Quem vê é todo mundo: o servidor
+  // guarda o status novo como override até a leitura do Jira alcançar.
+  const moveEpicStatus = useCallback(async (key, status) => {
+    const cur = byKeyWithCustom[key];
+    if (!cur || !ownsCard(cur)) { setRoadmapError("Esse card não é seu."); return { ok: false }; }
+    if (normProject(cur.status) === normProject(status)) return { ok: true };
+    const fail = (message) => { setRoadmapError(message); return { ok: false, message }; };
+    if (key.startsWith("NOVO-")) return fail("Rascunho ainda não existe no Jira: crie o épico antes de mudar o status.");
+    if (jiraConfiguredRef.current !== true) return fail("A integração com o Jira não está configurada — não dá pra mudar o status daqui.");
+    if (roadmapModeRef.current !== "server") return fail("O Roadmap precisa estar no servidor pra mexer no Jira.");
+    const r = await jiraApi.updateEpic({ key, status });
+    if (!r.ok) return fail(r.message);
+    applyServerDoc(r);
+    return { ok: true };
+  }, [ownsCard, byKeyWithCustom, applyServerDoc]);
   const notifyRoadmapError = useCallback((message) => setRoadmapError(message), []);
 
   // Janela fixa de semanas pra popular o seletor "Semana inicial" do drawer
@@ -747,13 +764,13 @@ function DataProvider({ children }) {
     positions, setPositions, customEpics, customEpicsShown: customShown, setCustomEpics, prioOrder, setPrioOrder,
     filaProdutoOrder, setFilaProdutoOrder, filaUxOrder, setFilaUxOrder, filaOpsOrder, setFilaOpsOrder,
     roadmapSaving, persistRoadmap, updatePosition, addEpic, deleteEpic, saveDrawer, roadmapWeeks,
-    roadmapMode, roadmapError, clearRoadmapError, localSummary, migrateToServer, reassignEpic, notifyRoadmapError,
+    roadmapMode, roadmapError, clearRoadmapError, localSummary, migrateToServer, reassignEpic, moveEpicStatus, notifyRoadmapError,
   }), [
     epicsShown, tasksShown, allProjects, syncFromJira, lastSync, syncStatus, syncError,
     jiraConfigured,
     positions, customEpics, customShown, prioOrder, filaProdutoOrder, filaUxOrder, filaOpsOrder,
     roadmapSaving, persistRoadmap, updatePosition, addEpic, deleteEpic, saveDrawer, roadmapWeeks,
-    roadmapMode, roadmapError, clearRoadmapError, localSummary, migrateToServer, reassignEpic, notifyRoadmapError,
+    roadmapMode, roadmapError, clearRoadmapError, localSummary, migrateToServer, reassignEpic, moveEpicStatus, notifyRoadmapError,
   ]);
   return <DataCtx.Provider value={value}>{children}</DataCtx.Provider>;
 }
@@ -5440,13 +5457,15 @@ function OpportunitiesScreen() {
 /* ---- Épicos: o que vem do Jira, com a iniciativa, o KR e a feature ---- */
 
 // Ordem do fluxo no Jira; status novos entram no fim, em ordem alfabética.
-const EPIC_STATUS_ORDER = ["Rascunho", "Backlog", "Produto", "Em design", "Em refinamento Técnico", "Pronto P/ DEV", "Em DEV", "Em rollout", "Done"];
+const EPIC_STATUS_ORDER = ["Rascunho", "Backlog", "Produto", "Em design", "[UX] Em andamento", "Em refinamento Técnico", "Pronto P/ DEV", "Em DEV", "Em rollout", "Done"];
+/** Status do workflow de épico do Jira para onde dá para arrastar (cancelar e arquivar ficam em Excluir). */
+const EPIC_FLOW_STATUSES = ["Backlog", "Produto", "[UX] Em andamento", "Em refinamento Técnico", "Pronto P/ DEV", "Em DEV", "Em rollout", "Done"];
 
 function EpicsScreen() {
   const { T, PRODUCT_STYLE } = useTheme();
   const {
     epics: sheetEpics, lastSync, customEpicsShown: customEpics, positions, roadmapWeeks, jiraConfigured,
-    addEpic, saveDrawer: saveDrawerShared, deleteEpic: deleteEpicShared,
+    addEpic, saveDrawer: saveDrawerShared, deleteEpic: deleteEpicShared, moveEpicStatus,
   } = useData();
   const { canCreateCard, ownsCard } = useAuth();
   const { items: planItems } = usePlanning();
@@ -5462,6 +5481,11 @@ function EpicsScreen() {
   const [initiative, setInitiative] = useState("all");
   const [openKey, setOpenKey] = useState(null);
   const [view, setView] = useState("board"); // board | table
+  // Arrastar o card entre colunas muda o status no Jira (a transição do workflow).
+  const [dragKey, setDragKey] = useState(null);
+  const [overStatus, setOverStatus] = useState(null);
+  const [movingKey, setMovingKey] = useState(null);
+  const [moveError, setMoveError] = useState(null);
 
   const statuses = useMemo(() => [...new Set(epics.map((e) => e.status).filter(Boolean))].sort(), [epics]);
   const rows = useMemo(() => {
@@ -5504,10 +5528,26 @@ function EpicsScreen() {
     return r;
   };
   const cols = "90px minmax(200px, 1fr) 105px 140px 120px 180px 130px";
+  const canMoveAny = canCreateCard && jiraConfigured === true;
   const columns = useMemo(() => {
     const present = [...new Set(rows.map((e) => e.status || "Sem status"))];
-    return [...EPIC_STATUS_ORDER.filter((s) => present.includes(s)), ...present.filter((s) => !EPIC_STATUS_ORDER.includes(s)).sort()];
-  }, [rows]);
+    // Com permissão, o quadro mostra todo o fluxo (também as colunas vazias) para dar onde soltar.
+    const shown = canMoveAny && status === "all" ? [...new Set([...present, ...EPIC_FLOW_STATUSES])] : present;
+    return [...EPIC_STATUS_ORDER.filter((s) => shown.includes(s)), ...shown.filter((s) => !EPIC_STATUS_ORDER.includes(s)).sort()];
+  }, [rows, canMoveAny, status]);
+  const canMove = (e) => canMoveAny && ownsCard(e) && !e.key.startsWith("NOVO-");
+  const isDropTarget = (s) => s !== "Rascunho" && s !== "Sem status";
+  const dropOn = async (s) => {
+    const key = dragKey;
+    setDragKey(null);
+    setOverStatus(null);
+    if (!key || !isDropTarget(s)) return;
+    setMoveError(null);
+    setMovingKey(key);
+    const r = await moveEpicStatus(key, s);
+    setMovingKey(null);
+    if (!r.ok && r.message) setMoveError(r.message);
+  };
   const viewBtn = (key, label) => (
     <button key={key} onClick={() => setView(key)} style={{ ...btnStyle(T), background: view === key ? "rgba(81,102,230,0.12)" : T.bg1, color: view === key ? ACCENT : T.ink1, borderColor: view === key ? "transparent" : T.border2 }}>{label}</button>
   );
@@ -5531,6 +5571,12 @@ function EpicsScreen() {
         </select>
       </PageTitle>
 
+      {moveError && (
+        <p role="alert" style={{ margin: "0 0 10px", fontSize: 12, color: LATE_COLOR }}>
+          {moveError}{" "}
+          <button onClick={() => setMoveError(null)} style={{ ...linkBtn, color: T.ink1, fontSize: 12 }}>fechar</button>
+        </p>
+      )}
       {view === "board" ? (
         <div className="pp-scroll" style={{ display: "flex", gap: 10, overflowX: "auto", alignItems: "flex-start", paddingBottom: 8 }}>
           {columns.map((s) => {
@@ -5538,7 +5584,13 @@ function EpicsScreen() {
             const sample = col[0];
             const dot = sample && isEpicDone(sample) ? DONE_COLOR : sample && epicBucket(sample) === "doing" ? ACCENT : T.borderStrong;
             return (
-              <div key={s} style={{ flex: "0 0 264px", background: T.bg1, borderRadius: 10, padding: 10 }}>
+              <div
+                key={s}
+                onDragOver={(ev) => { if (dragKey && isDropTarget(s)) { ev.preventDefault(); if (overStatus !== s) setOverStatus(s); } }}
+                onDragLeave={() => setOverStatus((cur) => (cur === s ? null : cur))}
+                onDrop={(ev) => { ev.preventDefault(); dropOn(s); }}
+                style={{ flex: "0 0 264px", background: T.bg1, borderRadius: 10, padding: 10, outline: overStatus === s ? `2px dashed ${ACCENT}` : "none", outlineOffset: -2 }}
+              >
                 <div className="flex items-center justify-between" style={{ marginBottom: 8, padding: "0 2px" }}>
                   <span className="flex items-center" style={{ gap: 6, fontSize: 12.5, fontWeight: 600, color: T.ink0 }}>
                     <span style={{ width: 8, height: 8, borderRadius: 999, background: dot }} />{s}
@@ -5551,7 +5603,14 @@ function EpicsScreen() {
                     const init = idx.krByEpic[e.key];
                     const feats = idx.featuresByEpic[e.key];
                     return (
-                      <div key={e.key} onClick={() => setOpenKey(e.key)} className="pp-card" style={{ ...cardStyle(T), padding: 10, cursor: "pointer" }}>
+                      <div
+                        key={e.key} onClick={() => setOpenKey(e.key)} className="pp-card"
+                        draggable={canMove(e) && movingKey !== e.key}
+                        onDragStart={(ev) => { setDragKey(e.key); ev.dataTransfer.effectAllowed = "move"; }}
+                        onDragEnd={() => { setDragKey(null); setOverStatus(null); }}
+                        title={canMove(e) ? "Arraste para outra coluna para mudar o status no Jira" : undefined}
+                        style={{ ...cardStyle(T), padding: 10, cursor: canMove(e) ? "grab" : "pointer", opacity: movingKey === e.key ? 0.5 : 1 }}
+                      >
                         <div className="flex items-center justify-between" style={{ gap: 6, marginBottom: 4 }}>
                           <a href={`${JIRA_BROWSE}${e.key}`} target="_blank" rel="noreferrer" onClick={(ev) => ev.stopPropagation()} title="Abrir no Jira" style={{ color: ACCENT, textDecoration: "none", fontWeight: 500, fontSize: 12 }}>{e.key}</a>
                           {style ? <Badge bg={style.subtle} color={style.text}>{e.project}</Badge> : <span style={{ fontSize: 11, color: T.ink2 }}>{e.project || ""}</span>}
