@@ -209,3 +209,13 @@ test("handleMockIssues: mesmas regras de permissão e de projeto, sobre linhas d
   // workspace que não é o padrão e sem projeto marcado: recusado
   assert.equal(handleMockIssues(MOCK_ROWS, { workspace: { jiraProjects: [] }, isDefault: false }, SUPER).status, 409);
 });
+
+test("handleIssues: projeto marcado que o Jira não tem é avisado, sem ler nada", async () => {
+  const { j, calls } = fakeJira({ byProject: { POD: [issue("POD-1", "ProductOps")] } });
+  const r = await handleIssues({ workspace: { jiraProjects: ["ProductOps", "Automação"] }, isDefault: false }, SUPER, j);
+  assert.equal(r.status, 409);
+  assert.match(r.body.message, /"Automação"/);
+  assert.ok(!calls.some((c) => c.path === "/rest/api/3/search/jql")); // não leu nada
+  // o padrão sem marcação nunca é barrado por isso
+  assert.equal((await handleIssues({ isDefault: true }, SUPER, j)).status, 200);
+});

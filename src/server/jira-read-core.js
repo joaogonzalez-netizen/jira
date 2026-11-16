@@ -175,7 +175,15 @@ export async function handleIssues(input, session, j) {
   const scoped = scopeOf(input);
   if (!scoped) return NO_SCOPE;
   try {
-    const projects = await jiraFetch(j, "GET", "/rest/api/3/project");
+    const projects = (await jiraFetch(j, "GET", "/rest/api/3/project")) || [];
+    // Projeto marcado no workspace que o Jira não tem (nome errado, ou a conta não o enxerga):
+    // avisa em vez de trazer só uma parte e deixar o board vazio sem explicação.
+    const known = new Set((Array.isArray(projects) ? projects : []).map((p) => norm(p && p.name)));
+    const marked = (input && input.workspace && Array.isArray(input.workspace.jiraProjects) ? input.workspace.jiraProjects : []).filter(Boolean);
+    const missing = marked.filter((name) => !known.has(norm(name)));
+    if (missing.length) {
+      return { status: 409, body: { message: `O Jira não tem ${missing.length > 1 ? "os projetos" : "o projeto"} ${missing.map((n) => `"${n}"`).join(", ")} (ou a conta não o enxerga). Corrija em Editar projeto, na lista de Projetos do Jira.` } };
+    }
     const keys = (Array.isArray(projects) ? projects : [])
       .filter((p) => p && typeof p.key === "string" && /^[A-Z][A-Z0-9_]*$/.test(p.key) && scoped.has(norm(p.name)))
       .map((p) => p.key);
