@@ -131,11 +131,11 @@ export function summarizeRoadmap(state) {
    Épicos que vêm do Jira (planilha) + o que foi feito aqui
    --------------------------------------------------------------------- */
 
-/** Aplica o que o servidor registrou (nome novo / cancelado) por cima dos épicos
+/** Aplica o que o servidor registrou (nome novo / responsável / status / cancelado) por cima dos épicos
     da planilha — vale até a planilha sincronizar de novo com o Jira. */
 const OVERRIDE_TTL_MS = 24 * 60 * 60 * 1000;
 
-export function applyEpicOverrides(epics, overrides, now = Date.now()) {
+export function applyEpicOverrides(epics, overrides, now = Date.now(), stageOf = null) {
   const o = overrides || {};
   if (!Object.keys(o).length) return epics;
   const out = [];
@@ -147,6 +147,7 @@ export function applyEpicOverrides(epics, overrides, now = Date.now()) {
     const expired = !!ov.at && now - Date.parse(ov.at) > OVERRIDE_TTL_MS;
     let next = e;
     if (!expired && ov.summary && ov.summary !== e.summary) next = { ...next, summary: ov.summary };
+    if (!expired && ov.status && ov.status !== e.status) next = { ...next, status: ov.status, ...(stageOf ? { stage: stageOf(ov.status) } : {}) };
     if (!expired && Object.prototype.hasOwnProperty.call(ov, "assignee") && (ov.assignee || null) !== (e.assignee || null)) {
       next = { ...next, assignee: ov.assignee || null };
     }

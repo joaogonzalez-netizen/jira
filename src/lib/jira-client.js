@@ -38,11 +38,13 @@ export const jiraApi = {
     return r.ok ? { ok: true, types: r.data.types || [] } : { ok: false, message: r.data?.message || `Erro ${r.status}` };
   },
   renameEpic: async ({ key, summary }) => result(await call("PATCH", "/api/jira/epics", { key, summary })),
-  /** Nome e/ou responsável: `assignee` = { displayName, accountId? } atribui, `null` remove, ausente não mexe. */
-  updateEpic: async ({ key, summary, assignee }) => {
+  /** Nome, responsável e/ou status: `assignee` = { displayName, accountId? } atribui, `null` remove,
+      ausente não mexe; `status` = nome do status de destino (transição do workflow do Jira). */
+  updateEpic: async ({ key, summary, assignee, status }) => {
     const body = { key };
     if (summary !== undefined) body.summary = summary;
     if (assignee !== undefined) body.assignee = assignee;
+    if (status !== undefined) body.status = status;
     return result(await call("PATCH", "/api/jira/epics", body));
   },
   /** Pessoas que podem ser responsáveis: por projeto (rascunho) ou por épico do Jira. */
