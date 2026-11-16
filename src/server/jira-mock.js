@@ -1,6 +1,6 @@
 /**
  * Jira de mentira para o modo de teste local (`npm run dev:mock`): entende só o
- * necessário para mudar o status e o nome de um épico, sem rede e sem credencial
+ * necessário para criar um épico e mudar o status e o nome dele, sem rede e sem credencial
  * de verdade. Guarda o estado na memória do servidor de desenvolvimento.
  * Qualquer outra rota responde 501, em vez de fingir que funcionou.
  */
@@ -12,6 +12,7 @@ const reply = (status, body) => ({ ok: status >= 200 && status < 300, status, te
 
 /** `rows` = as linhas de exemplo ("Key", "Summary", "Status"…); devolve um `fetch` compatível com o jiraFetch. */
 export function createMockJiraFetch(rows) {
+  const nextNumber = {};
   const issues = new Map(rows.map((r) => [r["Key"], { summary: r["Summary"] || "", status: r["Status"] || "Backlog", type: r["Issue Type"] || "Epic" }]));
   return async (url, init = {}) => {
     const u = new URL(url);
@@ -41,6 +42,17 @@ export function createMockJiraFetch(rows) {
       if (!issue) return reply(404, { errorMessages: ["Issue does not exist"] });
       if (body?.fields?.summary) issue.summary = body.fields.summary;
       return reply(204);
+    }
+    if (method === "GET" && (m = u.pathname.match(/^\/rest\/api\/3\/project\/([A-Z][A-Z0-9]*)$/))) {
+      return reply(200, { issueTypes: [{ id: "10000", name: "Epic", hierarchyLevel: 1, subtask: false }, { id: "10001", name: "Story", hierarchyLevel: 0, subtask: false }] });
+    }
+    if (method === "GET" && /^\/rest\/api\/3\/issue\/createmeta\//.test(u.pathname)) return reply(404, { errorMessages: ["createmeta indisponível no Jira de teste"] });
+    if (method === "POST" && u.pathname === "/rest/api/3/issue") {
+      const project = body?.fields?.project?.key;
+      if (!project) return reply(400, { errorMessages: ["project é obrigatório"] });
+      const key = `${project}-${nextNumber[project] = (nextNumber[project] || 900) + 1}`;
+      issues.set(key, { summary: body.fields.summary || "", status: "Backlog", type: "Epic" });
+      return reply(201, { id: String(issues.size + 10000), key });
     }
     return reply(501, { errorMessages: [`O Jira de teste não implementa ${method} ${u.pathname}`] });
   };

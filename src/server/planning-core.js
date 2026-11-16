@@ -90,6 +90,7 @@ export const KINDS = {
     fields: {
       opportunityId: { type: "ref", required: true },
       description: { type: "text" },
+      epicKey: { type: "ref" }, // épico do Jira em que a solução virou
       status: { type: "enum", options: ["Ideia", "Priorizada", "Em teste", "Validada", "Descartada"], default: "Ideia" },
     },
   },

@@ -34,7 +34,19 @@ test("Jira de teste: a transição muda o status e o nome pode ser trocado", asy
 test("Jira de teste: issue que não existe é 404 e rota que não conhece é 501", async () => {
   const f = createMockJiraFetch(ROWS);
   assert.equal((await call(f, "GET", "/rest/api/3/issue/FLIX-99")).status, 404);
-  assert.equal((await call(f, "POST", "/rest/api/3/issue", { fields: {} })).status, 501);
+  assert.equal((await call(f, "DELETE", "/rest/api/3/issue/FLIX-1")).status, 501);
+});
+
+test("Jira de teste: cria épico com chave nova, numeração por projeto, e o épico passa a existir", async () => {
+  const f = createMockJiraFetch(ROWS);
+  assert.equal((await call(f, "GET", "/rest/api/3/project/FLIX")).body.issueTypes[0].name, "Epic");
+  const a = await call(f, "POST", "/rest/api/3/issue", { fields: { project: { key: "FLIX" }, summary: "Novo A" } });
+  const b = await call(f, "POST", "/rest/api/3/issue", { fields: { project: { key: "FLIX" }, summary: "Novo B" } });
+  const c = await call(f, "POST", "/rest/api/3/issue", { fields: { project: { key: "IA" }, summary: "Novo C" } });
+  assert.equal(a.status, 201);
+  assert.deepEqual([a.body.key, b.body.key, c.body.key], ["FLIX-901", "FLIX-902", "IA-901"]);
+  assert.equal((await call(f, "GET", `/rest/api/3/issue/${a.body.key}?fields=status`)).body.fields.status.name, "Backlog");
+  assert.equal((await call(f, "POST", "/rest/api/3/issue", { fields: { summary: "sem projeto" } })).status, 400);
 });
 
 test("Jira de teste: o servidor real de mover status funciona de ponta a ponta sobre ele", async () => {
