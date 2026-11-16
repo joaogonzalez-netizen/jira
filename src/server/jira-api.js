@@ -8,6 +8,7 @@ import { configError, loadConfig, resolveSessionFromCookie, sharedMemoryKv } fro
 import { handleCancelEpic, handleCreateEpic, handleListAssignees, handleListIssueTypes, handleStatus, handleUpdateEpic, loadJiraConfig } from "./jira-core.js";
 import fs from "node:fs";
 import { handleIssues, handleMockIssues } from "./jira-read-core.js";
+import { createMockJiraFetch } from "./jira-mock.js";
 import { findWorkspace, scopeConfig } from "./workspace.js";
 
 const MAX_BODY_BYTES = 64 * 1024;
@@ -48,7 +49,11 @@ function readJsonBody(req) {
 export function jiraApiPlugin(env) {
   // mesmo KV do roadmap-api.js: o documento é um só
   const rcfgBase = loadConfig(env, env.FILA_DEV_FAKE_KV === "1" ? sharedMemoryKv() : undefined);
-  const jira = loadJiraConfig(env);
+  // Modo de teste local: o Jira é de mentira (sem rede, sem credencial) e conhece só mudar status e nome.
+  const mockRows = env.MOCK_JIRA_ROWS ? JSON.parse(fs.readFileSync(env.MOCK_JIRA_ROWS, "utf8")) : null;
+  const jira = mockRows
+    ? loadJiraConfig({ JIRA_EMAIL: "mock@local.test", JIRA_API_TOKEN: "mock-token", JIRA_BASE_URL: "https://mock.atlassian.net" }, createMockJiraFetch(mockRows))
+    : loadJiraConfig(env);
 
   const handler = async (req, res, next) => {
     if (!req.url || !req.url.startsWith("/api/jira")) return next();
@@ -72,7 +77,7 @@ export function jiraApiPlugin(env) {
           const isDefault = !rcfg.workspace || rcfg.workspace === "default";
           const workspace = rcfgBase.kv ? await findWorkspace(rcfgBase.kv, rcfg.workspace) : null;
           // Modo de teste local (npm run dev:mock): linhas de exemplo no lugar do Jira.
-          if (env.MOCK_JIRA_ROWS) return sendJson(res, handleMockIssues(JSON.parse(fs.readFileSync(env.MOCK_JIRA_ROWS, "utf8")), { workspace, isDefault }, session));
+          if (mockRows) return sendJson(res, handleMockIssues(mockRows, { workspace, isDefault }, session));
           return sendJson(res, await handleIssues({ workspace, isDefault }, session, jira));
         }
         if (params.get("list") === "issue-types") return sendJson(res, await handleListIssueTypes({ product: params.get("product") }, session, jira));
