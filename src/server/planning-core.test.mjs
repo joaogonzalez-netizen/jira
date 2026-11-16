@@ -277,3 +277,13 @@ test("solução fica entre oportunidade e experimento; não apaga com experiment
   await handleDelete("experiments", x.id, ADMIN, config);
   assert.equal((await handleDelete("solutions", sol.id, ADMIN, config)).status, 200);
 });
+
+test("solução guarda o épico do Jira em que virou e o apaga ao desvincular", async () => {
+  const config = fakeConfig();
+  const { opp } = await tree(config);
+  const sol = (await handleCreate("solutions", { name: "Sol", opportunityId: opp.id, status: "Priorizada" }, ADMIN, config)).body;
+  assert.equal(sol.epicKey ?? "", "");
+  const linked = await handleUpdate("solutions", sol.id, { epicKey: "FLIX-123" }, ADMIN, config);
+  assert.equal(linked.body.epicKey, "FLIX-123");
+  assert.equal((await handleUpdate("solutions", sol.id, { epicKey: "" }, ADMIN, config)).body.epicKey, "");
+});
