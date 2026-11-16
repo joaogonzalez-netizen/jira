@@ -19,6 +19,7 @@
  * o status Cancelado (reversível) e o esconde do Roadmap.
  */
 import { readDoc, writeDoc, touchDoc, viewDoc, canWriteSession, MAX_DESCRIPTION } from "./roadmap-core.js";
+import { cleanHeader, headerNodes, withHeader } from "./epic-header.js";
 
 const DEFAULT_BASE_URL = "https://joaogonzalezstlflix.atlassian.net";
 
@@ -205,7 +206,7 @@ function resolveTipoEntrega(fields, tipo) {
 
 /** Cria a issue (épico por padrão, ou o tipo escolhido, com épico pai opcional);
     projetos com "Epic Name" obrigatório respondem 400 apontando o campo. */
-async function createJiraEpic(j, projectKey, summary, description, tipo, { typeId: chosenTypeId = null, parentKey = null } = {}) {
+async function createJiraEpic(j, projectKey, summary, description, tipo, { typeId: chosenTypeId = null, parentKey = null, header = null } = {}) {
   const typeId = chosenTypeId || await epicTypeId(j, projectKey);
   let fields = { project: { key: projectKey }, issuetype: { id: typeId }, summary, ...(parentKey ? { parent: { key: parentKey } } : {}) };
 
@@ -228,8 +229,11 @@ async function createJiraEpic(j, projectKey, summary, description, tipo, { typeI
   }
 
   let withDescription = false;
-  if (description) {
-    fields = { ...fields, description: descriptionToAdf(description) };
+  // Cabeçalho de contexto (se houver) vem antes do texto livre da descrição.
+  const bodyNodes = description ? descriptionToAdf(description).content : [];
+  const descriptionNodes = header ? [...headerNodes(header), ...bodyNodes] : bodyNodes;
+  if (descriptionNodes.length) {
+    fields = { ...fields, description: { type: "doc", version: 1, content: descriptionNodes } };
     withDescription = true;
   }
   const post = (f) => jiraFetch(j, "POST", "/rest/api/3/issue", { fields: f });
@@ -240,7 +244,7 @@ async function createJiraEpic(j, projectKey, summary, description, tipo, { typeI
   for (let attempt = 0; attempt < 6; attempt++) {
     try {
       const created = await post(fields);
-      return { created, descriptionDropped: !!description && !withDescription };
+      return { created, descriptionDropped: descriptionNodes.length > 0 && !withDescription };
     } catch (e) {
       if (!(e instanceof JiraError) || e.status !== 400) throw e;
       if (e.epicNameField && !(e.epicNameField in fields)) { fields = { ...fields, [e.epicNameField]: summary }; continue; }
@@ -490,6 +494,12 @@ export async function handleCreateEpic(input, session, rcfg, j) {
     const tipo = cleanTipo(input?.tipo);
     const assignee = cleanAssigneeInput(input?.assignee);
     const position = cleanPosition(input?.position);
+    let header = null;
+    if (input?.header !== undefined && input?.header !== null) {
+      const h = cleanHeader(input.header);
+      if (!h.ok) return bad(h.message);
+      header = h.header;
+    }
     if (position && position.roadmapLane !== null && position.roadmapLane !== product) {
       return bad("A camada do épico precisa ser o produto escolhido");
     }
@@ -515,7 +525,7 @@ export async function handleCreateEpic(input, session, rcfg, j) {
     if (!draft) return { status: 404, body: { message: "Esse épico não existe mais (ou já foi criado no Jira)" } };
     if (!mayTouchEpic(session, doc, oldKey)) return forbidden("Esse épico é de outra pessoa");
 
-    const { created, descriptionDropped } = await createJiraEpic(j, projectKey, summary, description, tipo, { typeId: issueType && !issueType.epic ? issueType.id : null, parentKey });
+    const { created, descriptionDropped } = await createJiraEpic(j, projectKey, summary, description, tipo, { typeId: issueType && !issueType.epic ? issueType.id : null, parentKey, header });
     const newKey = created?.key;
     if (typeof newKey !== "string" || !JIRA_KEY_RE.test(newKey)) throw new JiraError(502, "O Jira não devolveu a chave do épico criado");
 
@@ -605,7 +615,14 @@ export async function handleUpdateEpic(input, session, rcfg, j) {
     const wantedStatus = hasStatus && typeof input.status === "string" ? input.status.trim() : "";
     if (hasStatus && (!wantedStatus || wantedStatus.length > 80)) return bad("Status inválido");
     if (hasStatus && isClosingStatus(wantedStatus)) return bad("Para cancelar ou arquivar, use Excluir no card do épico");
-    if (!hasSummary && assignee === undefined && !hasStatus) return bad("Nada para alterar");
+    const hasHeader = input?.header !== undefined;
+    let header = null;
+    if (hasHeader) {
+      const h = cleanHeader(input.header);
+      if (!h.ok) return bad(h.message);
+      header = h.header;
+    }
+    if (!hasSummary && assignee === undefined && !hasStatus && !hasHeader) return bad("Nada para alterar");
 
     const { doc } = await readDoc(rcfg);
     if (!doc) return { status: 409, body: { code: "not-initialized", message: "O Roadmap ainda não foi migrado para o servidor" } };
@@ -627,6 +644,9 @@ export async function handleUpdateEpic(input, session, rcfg, j) {
       patch.assignee = assignee ? assignee.displayName : null;
     }
     if (hasStatus) patch.status = await moveInJira(j, key, current.status, wantedStatus);
+    if (hasHeader) await setHeaderInJira(j, key, header);
+    // Só o cabeçalho mudou: o Roadmap não guarda nada disso, então não há o que gravar nele.
+    if (!Object.keys(patch).length) return { status: 200, body: { ...viewDoc(doc), key } };
 
     const at = new Date().toISOString();
     const result = await mutateDoc(rcfg, (cur) => touchDoc({
@@ -676,6 +696,13 @@ async function moveInJira(j, key, currentStatus, wanted) {
   }
   await jiraFetch(j, "POST", `/rest/api/3/issue/${key}/transitions`, { transition: { id: pick.id } });
   return String(pick.to.name);
+}
+
+/** Troca só o bloco de cabeçalho da descrição do épico (o resto do texto fica como está). */
+async function setHeaderInJira(j, key, header) {
+  const issue = await jiraFetch(j, "GET", `/rest/api/3/issue/${key}?fields=description`);
+  const next = withHeader(issue?.fields?.description || null, headerNodes(header));
+  await jiraFetch(j, "PUT", `/rest/api/3/issue/${key}`, { fields: { description: next } });
 }
 
 /** Cancelar e arquivar têm caminho próprio (excluir); mover de status não passa por eles. */
