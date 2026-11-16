@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { fetchIssueRows, formatDate, formatDateTime, handleIssues, issueToRow } from "./jira-read-core.js";
+import { fetchIssueRows, formatDate, formatDateTime, handleIssues, handleMockIssues, issueToRow } from "./jira-read-core.js";
 import { loadJiraConfig } from "./jira-core.js";
 
 const SUPER = { role: "super", user: { id: "1", email: "joao@x.com" } };
@@ -193,4 +193,19 @@ test("handleIssues: manda a autenticação Basic e só lê (nenhuma escrita)", a
   assert.ok(calls.every((c) => c.auth === `Basic ${Buffer.from(`bot@stl.com:${TOKEN}`).toString("base64")}`));
   assert.ok(calls.every((c) => c.method === "GET" || c.path === "/rest/api/3/search/jql")); // POST do search é leitura
   assert.ok(!calls.some((c) => ["PUT", "DELETE", "PATCH"].includes(c.method)));
+});
+
+const ROW = (key, project) => ({ "Key": key, "Project": project });
+const MOCK_ROWS = [ROW("FLIX-1", "STLFLIX"), ROW("POD-1", "ProductOps"), ROW("CUS-1", "Custom"), ROW("DAD-1", "Dados")];
+
+test("handleMockIssues: mesmas regras de permissão e de projeto, sobre linhas de exemplo", () => {
+  assert.equal(handleMockIssues(MOCK_ROWS, { isDefault: true }, LEITOR).status, 403);
+  assert.equal(handleMockIssues(MOCK_ROWS, { isDefault: true }, null).status, 403);
+  // padrão sem marcação: só os projetos de produto
+  assert.deepEqual(handleMockIssues(MOCK_ROWS, { isDefault: true }, SUPER).body.map((r) => r["Key"]), ["FLIX-1"]);
+  // workspace marcado: os marcados, sem acento nem caixa
+  const ops = handleMockIssues(MOCK_ROWS, { workspace: { jiraProjects: ["productops", "Dados"] }, isDefault: false }, SUPER);
+  assert.deepEqual(ops.body.map((r) => r["Key"]), ["POD-1", "DAD-1"]);
+  // workspace que não é o padrão e sem projeto marcado: recusado
+  assert.equal(handleMockIssues(MOCK_ROWS, { workspace: { jiraProjects: [] }, isDefault: false }, SUPER).status, 409);
 });

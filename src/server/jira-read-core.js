@@ -149,29 +149,50 @@ export async function fetchIssueRows(j, projectKeys) {
 }
 
 /**
- * Sync de um workspace, no mesmo contrato de `handleWorkspaceSync` (planilha):
- * os projetos do Jira marcados no workspace filtram a leitura (por nome do
- * projeto); o padrão (dev), sem marcação, lê só os projetos de produto.
- * Workspace que não é o padrão e não marcou projeto é recusado — não cai em
- * "tudo". Só admin/super dispara (cada leitura custa dezenas de chamadas).
+ * Quais projetos do Jira o workspace lê, como conjunto de nomes sem acento nem
+ * caixa: os marcados nele; sem marcação, o padrão (dev) lê só os de produto.
+ * `null` = workspace que não é o padrão e não marcou projeto (recusado).
  */
-export async function handleIssues({ workspace = null, isDefault = true } = {}, session, j) {
+function scopeOf({ workspace = null, isDefault = true } = {}) {
+  const marked = workspace && Array.isArray(workspace.jiraProjects) && workspace.jiraProjects.length ? workspace.jiraProjects : null;
+  if (marked) return new Set(marked.map(norm));
+  return isDefault ? new Set(DEFAULT_PROJECT_NAMES.map(norm)) : null;
+}
+
+const NO_SCOPE = { status: 409, body: { message: "Este projeto ainda não tem projetos do Jira: marque-os em Editar projeto" } };
+const NO_READ_PERMISSION = { status: 403, body: { message: "Sem permissão para ler o Jira por aqui" } };
+
+/**
+ * Sync de um workspace: os projetos do Jira marcados nele filtram a leitura
+ * (por nome do projeto); o padrão (dev), sem marcação, lê só os projetos de
+ * produto. Workspace que não é o padrão e não marcou projeto é recusado — não
+ * cai em "tudo". Só admin/super dispara (cada leitura custa dezenas de chamadas).
+ */
+export async function handleIssues(input, session, j) {
   const cfgErr = jiraConfigError(j);
   if (cfgErr) return cfgErr;
-  if (!canWriteSession(session)) return { status: 403, body: { message: "Sem permissão para ler o Jira por aqui" } };
-  const marked = workspace && Array.isArray(workspace.jiraProjects) && workspace.jiraProjects.length ? workspace.jiraProjects : null;
-  const scoped = marked ? new Set(marked.map(norm)) : isDefault ? new Set(DEFAULT_PROJECT_NAMES.map(norm)) : null;
-  if (!scoped) {
-    return { status: 409, body: { message: "Este projeto ainda não tem projetos do Jira: marque-os em Editar projeto" } };
-  }
+  if (!canWriteSession(session)) return NO_READ_PERMISSION;
+  const scoped = scopeOf(input);
+  if (!scoped) return NO_SCOPE;
   try {
     const projects = await jiraFetch(j, "GET", "/rest/api/3/project");
     const keys = (Array.isArray(projects) ? projects : [])
-      .filter((p) => p && typeof p.key === "string" && /^[A-Z][A-Z0-9_]*$/.test(p.key) && (!scoped || scoped.has(norm(p.name))))
+      .filter((p) => p && typeof p.key === "string" && /^[A-Z][A-Z0-9_]*$/.test(p.key) && scoped.has(norm(p.name)))
       .map((p) => p.key);
     return { status: 200, body: await fetchIssueRows(j, keys) };
   } catch (e) {
     if (e instanceof JiraError) return { status: e.status, body: { message: e.message } };
     throw e;
   }
+}
+
+/**
+ * Modo de teste local (`npm run dev:mock`): as mesmas regras de permissão e de
+ * projeto, mas sobre linhas de exemplo em vez de chamar o Jira.
+ */
+export function handleMockIssues(rows, input, session) {
+  if (!canWriteSession(session)) return NO_READ_PERMISSION;
+  const scoped = scopeOf(input);
+  if (!scoped) return NO_SCOPE;
+  return { status: 200, body: rows.filter((r) => scoped.has(norm(r["Project"]))) };
 }

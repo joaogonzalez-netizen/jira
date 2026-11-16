@@ -18,8 +18,8 @@ const REDIS_PORT = 6390;
 const SECRET = "local-mock-only-secret";
 
 await startFakeRedis(REDIS_PORT, buildSeed());
-// "Atualizar" reads these rows instead of the Google Sheet.
-const rowsFile = path.join(os.tmpdir(), "fila-dev-mock-sheet.json");
+// "Atualizar" reads these rows instead of calling Jira.
+const rowsFile = path.join(os.tmpdir(), "fila-dev-mock-issues.json");
 fs.writeFileSync(rowsFile, JSON.stringify(sheetRows()));
 
 const token = await new SignJWT({ email: "mock@local.test", name: "Teste Local", is_super: true })
@@ -39,7 +39,7 @@ http.createServer((req, res) => {
 
 const vite = spawn("npx", ["vite", "--port", String(APP_PORT), "--strictPort"], {
   stdio: "inherit",
-  env: { ...process.env, REDIS_URL: `redis://127.0.0.1:${REDIS_PORT}`, JWT_SECRET: SECRET, MOCK_SHEET_ROWS: rowsFile, JIRA_API_TOKEN: "", JIRA_EMAIL: "", JIRA_BASE_URL: "" }, // never write to the real Jira
+  env: { ...process.env, REDIS_URL: `redis://127.0.0.1:${REDIS_PORT}`, JWT_SECRET: SECRET, MOCK_JIRA_ROWS: rowsFile, JIRA_API_TOKEN: "", JIRA_EMAIL: "", JIRA_BASE_URL: "" }, // never write to the real Jira
 });
 console.log(`\n  Mock mode: open http://localhost:${LOGIN_PORT} to sign in as "Teste Local"\n`);
 
