@@ -988,7 +988,11 @@ function EpicDrawer({ epic, onClose, weeks, onSave, onDelete, canEdit, jiraConfi
   // "Iniciativa" aqui é a Feature do épico (as camadas do Roadmap).
   const { initiatives, initiativeByEpicKey, assignEpicToInitiative } = useRoadmapFeatures();
   const planIdx = usePlanIndex();
+  const { items: planItems } = usePlanning();
+  const krLink = useEpicKrLink();
   const epicOkr = epic ? okrOf(epic, planIdx) : null;
+  // Tarefa sem vínculo próprio que herda o KR do épico pai.
+  const inheritedOkr = epic && !krLink.krOfKey[epic.key] ? epicOkr : null;
   const initiativeLabel = (i) => i.name;
   const schedulable = !!(weeks && onSave);
   const [summary, setSummary] = useState(epic?.summary || "");
@@ -1206,9 +1210,25 @@ function EpicDrawer({ epic, onClose, weeks, onSave, onDelete, canEdit, jiraConfi
             </select>
 
             <p style={{ marginTop: 14, marginBottom: 6, fontSize: 12, fontWeight: 500, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>Key Result</p>
-            <p style={{ fontSize: 13, color: epicOkr ? T.ink0 : "#d17000", fontFamily: "'Inter Tight', sans-serif", fontStyle: epicOkr ? "normal" : "italic" }}>
-              {epicOkr ? `${epicOkr.objective ? `${epicOkr.objective.name} › ` : ""}${epicOkr.kr.name}` : "Sem vínculo — ligue este épico ao Key Result que ele move, na tela de Key Results."}
-            </p>
+            <select
+              value={krLink.krOfKey[epic.key]?.id || ""}
+              onChange={async (e) => { const r = await krLink.assignToKr(epic.key, e.target.value || null); if (!r.ok) setError(r.message || "Não foi possível vincular ao Key Result"); }}
+              disabled={!canCreateCard}
+              style={{ width: "100%", borderRadius: 8, border: `1px solid ${epicOkr ? T.border2 : "#d1700088"}`, background: T.bg1, color: T.ink0, fontSize: 13, padding: "7px 8px", fontFamily: "'Inter Tight', sans-serif" }}
+            >
+              <option value="">{inheritedOkr ? "Herdar do épico pai" : "Sem vínculo"}</option>
+              {planItems.objectives.map((o) => (
+                <optgroup key={o.id} label={o.name}>
+                  {planItems.keyResults.filter((k) => k.objectiveId === o.id).map((k) => <option key={k.id} value={k.id}>{k.name}</option>)}
+                </optgroup>
+              ))}
+              {planItems.keyResults.some((k) => !planItems.objectives.some((o) => o.id === k.objectiveId)) && (
+                <optgroup label="Sem objetivo">
+                  {planItems.keyResults.filter((k) => !planItems.objectives.some((o) => o.id === k.objectiveId)).map((k) => <option key={k.id} value={k.id}>{k.name}</option>)}
+                </optgroup>
+              )}
+            </select>
+            {inheritedOkr && <p style={{ marginTop: 4, fontSize: 11.5, color: T.ink2, fontFamily: "'Inter Tight', sans-serif" }}>Herdado do épico {epic.parent}: {inheritedOkr.kr.name}</p>}
 
             <dl style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 8, fontSize: 12.5, fontFamily: "'Inter Tight', sans-serif" }}>
               {[
@@ -2190,6 +2210,7 @@ function RoadmapScreen() {
   // só o super o move. Reordenar as listas mexe na ordem de todo mundo: super.
   const { user, canCreateCard, ownsCard, canWriteShared } = useAuth();
   const { initiatives, createInitiative, deleteInitiative, assignEpicToInitiative, updateInitiative, initiativeByEpicKey } = useRoadmapFeatures();
+  const krLink = useEpicKrLink();
   const { moveComments } = useCardComments();
   // Vínculo com os OKRs: o KR guarda os épicos (`epicKeys`); aqui só se lê.
   const planIdx = usePlanIndex();
@@ -2281,6 +2302,7 @@ function RoadmapScreen() {
     const r = await deleteEpicShared(key);
     if (!r.ok) return r;
     if (init) await updateInitiative(init.id, { epicKeys: init.epicKeys.filter((k) => k !== key) });
+    await krLink.unlinkEpic(key);
     setOpenKey(null);
     return r;
   };
@@ -2290,6 +2312,7 @@ function RoadmapScreen() {
     if (!r.ok) return r;
     if (r.newKey) await moveComments(key, r.newKey);
     if (r.newKey && init) await updateInitiative(init.id, { epicKeys: init.epicKeys.map((k) => (k === key ? r.newKey : k)) });
+    if (r.newKey) await krLink.rekeyEpic(key, r.newKey);
     setOpenKey(null);
     return r;
   };
@@ -3833,6 +3856,34 @@ function useRoadmapFeatures() {
   };
 }
 
+/** Vínculo card → Key Result, editável pelo Roadmap. A fonte é o próprio KR
+    (`epicKeys`, que aceita épico e também tarefa/story/bug); o servidor tira a
+    chave do KR anterior ao vincular no novo. */
+function useEpicKrLink() {
+  const { items, update } = usePlanning();
+  const krs = items.keyResults;
+  const krOfKey = useMemo(() => {
+    const map = {};
+    krs.forEach((kr) => (kr.epicKeys || []).forEach((k) => { map[k] = kr; }));
+    return map;
+  }, [krs]);
+  const assignToKr = useCallback(async (key, krId) => {
+    const current = krOfKey[key];
+    if ((current ? current.id : null) === (krId || null)) return { ok: true };
+    if (!krId) return update("keyResults", current.id, { epicKeys: current.epicKeys.filter((k) => k !== key) });
+    const target = krs.find((k) => k.id === krId);
+    if (!target) return { ok: false, message: "Key Result não encontrado" };
+    return update("keyResults", krId, { epicKeys: [...(target.epicKeys || []), key] });
+  }, [krs, krOfKey, update]);
+  // Rascunho que vira épico no Jira troca de chave; o vínculo acompanha.
+  const rekeyEpic = useCallback(async (oldKey, newKey) => {
+    const current = krOfKey[oldKey];
+    return current ? update("keyResults", current.id, { epicKeys: current.epicKeys.map((k) => (k === oldKey ? newKey : k)) }) : { ok: true };
+  }, [krOfKey, update]);
+  const unlinkEpic = useCallback((key) => assignToKr(key, null), [assignToKr]);
+  return { krOfKey, assignToKr, rekeyEpic, unlinkEpic };
+}
+
 /** Comentários de decisão por card (planning, tipo "comments"). Escrever é de
     admin/super; apagar, só do autor ou do super (o servidor também confere). */
 function useCardComments() {
@@ -4493,7 +4544,7 @@ function FormInput({ field: f, value, onChange, ctx, draft, disabled }) {
   }
   if (f.type === "epics") {
     const keys = value || [];
-    const byKey = Object.fromEntries(ctx.epics.map((e) => [e.key, e]));
+    const byKey = Object.fromEntries([...(ctx.tasks || []), ...ctx.epics].map((e) => [e.key, e]));
     const pool = f.pool(ctx, draft).filter((e) => !keys.includes(e.key));
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -4570,7 +4621,7 @@ function EditorDrawer({ editor, onClose }) {
   const ro = !canCreateCard;
   const { tasks } = useData();
   const people = useMemo(() => [...new Set([...epics, ...(tasks || [])].flatMap((x) => [x.assignee, x.reporter]).filter(Boolean))].sort(), [epics, tasks]);
-  const ctx = { ...planning.items, epics, products, people, objectiveById: idx.objectiveById };
+  const ctx = { ...planning.items, epics, tasks: tasks || [], products, people, objectiveById: idx.objectiveById };
 
   const save = async () => {
     if (!String(draft.name || "").trim()) { setError("Dê um nome."); return; }
@@ -5349,6 +5400,7 @@ function EpicsScreen() {
   const { canCreateCard, ownsCard } = useAuth();
   const { items: planItems } = usePlanning();
   const features = useRoadmapFeatures();
+  const krLink = useEpicKrLink();
   const { moveComments } = useCardComments();
   // Rascunhos criados aqui ou no Roadmap aparecem junto (coluna "Rascunho").
   const epics = useMemo(() => mergeCustomEpics(sheetEpics, customEpics), [sheetEpics, customEpics]);
@@ -5384,6 +5436,7 @@ function EpicsScreen() {
     if (!r.ok) return r;
     if (r.newKey) await moveComments(key, r.newKey);
     if (r.newKey && feat) await features.updateInitiative(feat.id, { epicKeys: feat.epicKeys.map((k) => (k === key ? r.newKey : k)) });
+    if (r.newKey) await krLink.rekeyEpic(key, r.newKey);
     setOpenKey(null);
     return r;
   };
@@ -5395,6 +5448,7 @@ function EpicsScreen() {
     const r = await deleteEpicShared(key);
     if (!r.ok) return r;
     if (feat) await features.updateInitiative(feat.id, { epicKeys: feat.epicKeys.filter((k) => k !== key) });
+    await krLink.unlinkEpic(key);
     setOpenKey(null);
     return r;
   };
