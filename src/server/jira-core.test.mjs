@@ -77,7 +77,7 @@ function fakeJira(opts = {}) {
       if (opts.rejectDescription && f.description) return reply(400, { errors: { description: "Field 'description' cannot be set. It is not on the appropriate screen, or unknown." } });
       counters[f.project.key] = (counters[f.project.key] || 300) + 1;
       const key = `${f.project.key}-${counters[f.project.key]}`;
-      issues.set(key, { summary: f.summary, status: "Backlog", type: epicType });
+      issues.set(key, { summary: f.summary, status: "Backlog", type: epicType, description: f.description || null });
       return reply(201, { id: "9999", key });
     }
     if (method === "GET" && u.pathname === "/rest/api/3/user/assignable/search") {
@@ -93,14 +93,15 @@ function fakeJira(opts = {}) {
     if (method === "GET" && (m = u.pathname.match(/^\/rest\/api\/3\/issue\/([A-Z0-9]+-\d+)$/))) {
       const it = issues.get(m[1]);
       if (!it) return reply(404, { errorMessages: ["Issue does not exist"] });
-      return reply(200, { key: m[1], fields: { summary: it.summary, status: { name: it.status }, issuetype: it.type, assignee: it.assignee ? { accountId: it.assignee.accountId, displayName: it.assignee.displayName } : null } });
+      return reply(200, { key: m[1], fields: { summary: it.summary, description: it.description || null, status: { name: it.status }, issuetype: it.type, assignee: it.assignee ? { accountId: it.assignee.accountId, displayName: it.assignee.displayName } : null } });
     }
     if (method === "GET" && (m = u.pathname.match(/^\/rest\/api\/3\/issue\/([A-Z0-9]+-\d+)\/editmeta$/))) {
       return reply(200, { fields: opts.editmetaFields || { summary: { name: "Summary" } } });
     }
     if (method === "PUT" && (m = u.pathname.match(/^\/rest\/api\/3\/issue\/([A-Z0-9]+-\d+)$/))) {
       if (opts.rejectEpicNamePut && body.fields.customfield_10011) return reply(400, { errors: { customfield_10011: "Field cannot be set." } });
-      issues.get(m[1]).summary = body.fields.summary;
+      if (body.fields.summary !== undefined) issues.get(m[1]).summary = body.fields.summary;
+      if (body.fields.description !== undefined) issues.get(m[1]).description = body.fields.description;
       return reply(204);
     }
     if (method === "GET" && (m = u.pathname.match(/^\/rest\/api\/3\/issue\/([A-Z0-9]+-\d+)\/transitions$/))) {
@@ -404,6 +405,66 @@ test("renomear: qualquer tipo de issue; chaves malformadas são recusadas", asyn
   assert.equal((await handleRenameEpic({ key: "SELLER-1", summary: "" }, SUPER, rcfg, j)).status, 400);
   assert.equal(jira.writes().length, writesBefore, "chave inválida não chega ao Jira");
   assert.equal((await handleRenameEpic({ key: "SELLER-999", summary: "x" }, SUPER, rcfg, j)).status, 404);
+});
+
+/* ---------------------------- cabeçalho do épico ---------------------------- */
+
+const HEADER = {
+  keyResult: { name: "Churn de 6% para 4%", metric: "5,2% / 4%", due: "15/01/2027" },
+  opportunity: { name: "Usuário não acha o que baixar", description: "Evidência em 3 entrevistas.", links: [{ label: "Estudo", url: "https://example.com/estudo" }] },
+  solution: { name: "Busca por imagem" },
+};
+const headerOf = (doc) => (doc && doc.content && doc.content[0] && doc.content[0].content ? doc.content[0].content[0].text : null);
+
+test("criar com cabeçalho: o bloco de contexto vai antes do texto livre da descrição", async () => {
+  const { rcfg, jira, j } = await setup(withEpics());
+  const r = await handleCreateEpic({ key: "NOVO-100", summary: "Com contexto", product: "STL IA", description: "Escopo do trabalho.", header: HEADER }, SUPER, rcfg, j);
+  assert.equal(r.status, 200);
+  noLeak(r);
+  const post = jira.calls.find((c) => c.method === "POST" && c.path === "/rest/api/3/issue");
+  const doc = post.body.fields.description;
+  assert.equal(doc.type, "doc");
+  assert.equal(headerOf(doc), "Contexto — STL Roadmap");
+  const json = JSON.stringify(doc);
+  assert.ok(json.includes("Churn de 6% para 4%") && json.includes("https://example.com/estudo"));
+  assert.ok(json.indexOf("Escopo do trabalho.") > json.indexOf("Busca por imagem"), "o texto livre vem depois do cabeçalho");
+  assert.equal(doc.content.filter((n) => n.type === "rule").length, 1);
+});
+
+test("criar só com cabeçalho (sem texto livre) também escreve a descrição; cabeçalho inválido é recusado antes do Jira", async () => {
+  const { rcfg, jira, j } = await setup(withEpics());
+  assert.equal((await handleCreateEpic({ key: "NOVO-100", summary: "x", product: "STL IA", header: { objective: { name: "  " } } }, SUPER, rcfg, j)).status, 400);
+  assert.equal((await handleCreateEpic({ key: "NOVO-100", summary: "x", product: "STL IA", header: "texto" }, SUPER, rcfg, j)).status, 400);
+  assert.equal(jira.writes().length, 0);
+  assert.equal((await handleCreateEpic({ key: "NOVO-100", summary: "x", product: "STL IA", header: HEADER }, SUPER, rcfg, j)).status, 200);
+  assert.equal(headerOf(jira.calls.find((c) => c.method === "POST" && c.path === "/rest/api/3/issue").body.fields.description), "Contexto — STL Roadmap");
+});
+
+test("atualizar cabeçalho: troca só o bloco e o resto da descrição fica como está", async () => {
+  const { rcfg, jira, j } = await setup(withEpics());
+  await handleCreateEpic({ key: "NOVO-100", summary: "Com contexto", product: "STL IA", description: "Escopo do trabalho.", header: HEADER }, SUPER, rcfg, j);
+  const key = Object.keys(Object.fromEntries(jira.issues)).find((k) => k.startsWith("IA-3"));
+  const r = await handleUpdateEpic({ key, header: { ...HEADER, keyResult: { name: "KR renomeado" } } }, SUPER, rcfg, j);
+  assert.equal(r.status, 200);
+  noLeak(r);
+  const doc = jira.issues.get(key).description;
+  const json = JSON.stringify(doc);
+  assert.ok(json.includes("KR renomeado") && !json.includes("Churn de 6% para 4%"));
+  assert.ok(json.includes("Escopo do trabalho."), "o texto livre sobrevive");
+  assert.equal(doc.content.filter((n) => n.type === "heading").length, 1, "um cabeçalho só");
+  // só o cabeçalho mudou: nenhum override de nome/status/responsável é gravado
+  assert.equal(key in (await state(rcfg)).state.epicOverrides, false);
+});
+
+test("atualizar cabeçalho: épico que ainda não tem descrição ganha o bloco; permissões valem como nas outras mudanças", async () => {
+  const { rcfg, jira, j } = await setup(withEpics());
+  assert.equal((await handleUpdateEpic({ key: "SELLER-1", header: HEADER }, SUPER, rcfg, j)).status, 200);
+  assert.equal(headerOf(jira.issues.get("SELLER-1").description), "Contexto — STL Roadmap");
+  const before = jira.writes().length;
+  assert.equal((await handleUpdateEpic({ key: "IA-5", header: HEADER }, ANDRE, rcfg, j)).status, 403); // épico da planilha: admin não mexe
+  assert.equal((await handleUpdateEpic({ key: "IA-5", header: HEADER }, LEITOR, rcfg, j)).status, 403);
+  assert.equal((await handleUpdateEpic({ key: "SELLER-1", header: { objective: { name: "" } } }, SUPER, rcfg, j)).status, 400);
+  assert.equal(jira.writes().length, before);
 });
 
 /* ----------------------------- mover de status ----------------------------- */

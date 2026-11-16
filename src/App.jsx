@@ -9,6 +9,7 @@ import { packRows } from "./lib/delivery-layout";
 import { comparePriority, mergePriority, reorderKeys } from "./lib/delivery-priority";
 import { QUEUE_STATUS_MAP, planQueueAutomation } from "./lib/status-queue";
 import { FUNNEL_STAGES, epicHealth, funnel, krHealth, krProgress, objectiveHealth, quarterTimeline, recentDeliveries, stageOf, withoutKr } from "./lib/director";
+import { buildEpicHeader } from "./lib/epic-header";
 import { NO_LINK, buildOkrLanes, matchesOkrFilter, okrCoverage, okrOf } from "./lib/okr-link";
 import { AuthProvider, useAuth } from "./lib/auth-context";
 import { DEFAULT_WS, currentWorkspaceId, isDefaultWorkspace, switchWorkspace } from "./lib/workspace";
@@ -656,7 +657,7 @@ function DataProvider({ children }) {
   }, [ownsCard, byKeyWithCustom, applyServerDoc]);
   // Cria um épico no Jira de uma vez, sem passar pelo drawer: grava o rascunho no servidor (o servidor só
   // cria a partir de um rascunho seu) e já o promove. Se o Jira recusar, o rascunho é desfeito.
-  const createEpicNow = useCallback(async ({ summary, project, description, tipo }) => {
+  const createEpicNow = useCallback(async ({ summary, project, description, tipo, header }) => {
     const fail = (message) => { setRoadmapError(message); return { ok: false, message }; };
     if (!canCreateCard) return fail("Sem permissão para criar épicos.");
     if (jiraConfiguredRef.current !== true) return fail("A integração com o Jira não está configurada — não dá pra criar o épico daqui.");
@@ -667,7 +668,7 @@ function DataProvider({ children }) {
     const draft = { key, project, summary, assignee: null, reporter: null, status: "Rascunho", tipo: tipo || null, created: null, priority: null, epic: true, createdBy: user ? user.email : null };
     await persistRoadmap({ ...cur.positions, [key]: position }, [...cur.customEpics, draft], cur.prioOrder, cur.filaProdutoOrder, cur.filaUxOrder);
     if (!serverRef.current.state || !serverRef.current.state.customEpics.some((e) => e.key === key)) return fail("Não consegui guardar o rascunho do épico no servidor.");
-    const r = await jiraApi.createEpic({ key, summary, product: project, description, tipo: tipo || null, position });
+    const r = await jiraApi.createEpic({ key, summary, product: project, description, tipo: tipo || null, position, header });
     if (!r.ok) {
       await persistRoadmap(cur.positions, cur.customEpics, cur.prioOrder, cur.filaProdutoOrder, cur.filaUxOrder); // desfaz o rascunho
       return fail(r.message);
@@ -4557,14 +4558,6 @@ function LinksInput({ value, onChange, disabled }) {
   );
 }
 
-/** Descrição do épico a partir do que já se sabe: a dor (oportunidade) e, se houver, a solução. */
-function epicBriefing(opp, solution) {
-  const parts = [];
-  if (opp) parts.push(`Oportunidade: ${opp.name}${opp.description ? `\n${opp.description}` : ""}`);
-  if (solution) parts.push(`Solução: ${solution.name}${solution.description ? `\n${solution.description}` : ""}`);
-  return parts.join("\n\n");
-}
-
 /**
  * Da descoberta para a entrega: cria o épico no Jira a partir de uma solução (priorizada ou validada) ou,
  * pela oportunidade, cria a solução e o épico juntos. O épico já nasce ligado ao Key Result da oportunidade
@@ -4591,19 +4584,44 @@ function EpicFromPlanningPanel({ kind, item, draft, setDraft }) {
     name: item.name || "",
     product: defaultProduct,
     tipo: "",
-    description: epicBriefing(opp, kind === "solutions" ? item : null),
+    description: "", // o contexto (KR, oportunidade, solução, experimentos) vai no cabeçalho; aqui, o resto
   }));
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
   const field = fieldStyle(T);
 
+  // O cabeçalho de contexto: o que o sistema sabe da cadeia KR → oportunidade → solução → experimentos.
+  const headerFor = (solution) => buildEpicHeader({
+    objective, keyResult: kr, opportunity: opp, solution,
+    experiments: solution && solution.id ? planning.items.experiments.filter((x) => x.solutionId === solution.id) : [],
+    appUrl: typeof window !== "undefined" ? window.location.origin : null,
+  });
+  // A solução como está salva agora (o `item` do painel é de quando ele abriu, antes de o épico existir).
+  const current = kind === "solutions" ? planning.items.solutions.find((s) => s.id === item.id) || item : item;
+  const updateHeader = async () => {
+    setBusy(true);
+    setError(null);
+    setDone(null);
+    const r = await jiraApi.updateEpic({ key: current.epicKey, header: headerFor(current) });
+    setBusy(false);
+    if (r.ok) setDone(`Cabeçalho de ${current.epicKey} atualizado no Jira. O resto da descrição não foi alterado.`);
+    else setError(r.message || "Não foi possível atualizar o cabeçalho no Jira.");
+  };
+
   const epicKey = kind === "solutions" ? draft.epicKey : null;
   const linkedEpic = epicKey ? epics.find((e) => e.key === epicKey) : null;
   if (kind === "solutions" && epicKey) {
+    const canUpdate = canCreateCard && jiraConfigured === true && kr && current.epicKey === epicKey && !epicKey.startsWith("NOVO-");
     return (
       <div style={{ marginTop: 12, fontSize: 12.5, color: T.ink1 }}>
         {done && <p role="status" style={{ margin: "0 0 6px", fontSize: 12, color: DONE_COLOR }}>{done}</p>}
+        {error && <p role="alert" style={{ margin: "0 0 6px", fontSize: 12, color: LATE_COLOR }}>{error}</p>}
         Épico: <a href={jiraUrl(epicKey)} target="_blank" rel="noopener noreferrer" style={{ color: ACCENT, fontWeight: 500, textDecoration: "none" }}>{epicKey}</a>
         {linkedEpic ? <span> — {linkedEpic.summary} · {linkedEpic.status}</span> : null}
+        {canUpdate && (
+          <div style={{ marginTop: 8 }}>
+            <button onClick={updateHeader} disabled={busy} title="Reescreve só o bloco de contexto no topo da descrição do épico" style={{ ...btnStyle(T), opacity: busy ? 0.6 : 1 }}>{busy ? "Atualizando…" : "Atualizar cabeçalho no Jira"}</button>
+          </div>
+        )}
       </div>
     );
   }
@@ -4626,7 +4644,7 @@ function EpicFromPlanningPanel({ kind, item, draft, setDraft }) {
       if (!r.ok) { setBusy(false); setError(r.message || "Não foi possível criar a solução."); return; }
       solution = r.data;
     }
-    const e = await createEpicNow({ summary: name, project: form.product, description: form.description.trim(), tipo: form.tipo });
+    const e = await createEpicNow({ summary: name, project: form.product, description: form.description.trim(), tipo: form.tipo, header: headerFor(solution) });
     if (!e.ok) {
       setBusy(false);
       setError(kind === "opportunities" ? `A solução foi criada, mas o épico não: ${e.message}. Abra a solução e tente de novo.` : e.message);
@@ -4660,7 +4678,8 @@ function EpicFromPlanningPanel({ kind, item, draft, setDraft }) {
               {TIPOS_ENTREGA.map((t) => <option key={t} value={t}>{t}</option>)}
             </select>
           </div>
-          <textarea rows={5} value={form.description} onChange={(ev) => set({ description: ev.target.value })} style={{ ...field, width: "100%", boxSizing: "border-box", resize: "vertical", lineHeight: 1.45 }} />
+          <Muted>O cabeçalho do épico no Jira leva o Objetivo, o Key Result, a oportunidade, a solução e os experimentos.</Muted>
+          <textarea rows={4} value={form.description} placeholder="Detalhes do trabalho (opcional) — vão depois do cabeçalho" onChange={(ev) => set({ description: ev.target.value })} style={{ ...field, width: "100%", boxSizing: "border-box", resize: "vertical", lineHeight: 1.45 }} />
           {error && <p role="alert" style={{ margin: 0, fontSize: 12, color: LATE_COLOR }}>{error}</p>}
           <div className="flex" style={{ gap: 8, justifyContent: "flex-end" }}>
             <button onClick={() => { setOpen(false); setError(null); }} disabled={busy} style={btnStyle(T)}>Cancelar</button>

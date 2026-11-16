@@ -13,7 +13,7 @@ const reply = (status, body) => ({ ok: status >= 200 && status < 300, status, te
 /** `rows` = as linhas de exemplo ("Key", "Summary", "Status"…); devolve um `fetch` compatível com o jiraFetch. */
 export function createMockJiraFetch(rows) {
   const nextNumber = {};
-  const issues = new Map(rows.map((r) => [r["Key"], { summary: r["Summary"] || "", status: r["Status"] || "Backlog", type: r["Issue Type"] || "Epic" }]));
+  const issues = new Map(rows.map((r) => [r["Key"], { summary: r["Summary"] || "", status: r["Status"] || "Backlog", type: r["Issue Type"] || "Epic", description: null }]));
   return async (url, init = {}) => {
     const u = new URL(url);
     const method = init.method || "GET";
@@ -22,7 +22,7 @@ export function createMockJiraFetch(rows) {
     if (method === "GET" && (m = u.pathname.match(/^\/rest\/api\/3\/issue\/([A-Z0-9]+-\d+)$/))) {
       const issue = issues.get(m[1]);
       if (!issue) return reply(404, { errorMessages: ["Issue does not exist"] });
-      return reply(200, { fields: { summary: issue.summary, status: { name: issue.status }, issuetype: { name: issue.type }, assignee: null } });
+      return reply(200, { fields: { summary: issue.summary, description: issue.description, status: { name: issue.status }, issuetype: { name: issue.type }, assignee: null } });
     }
     if (method === "GET" && (m = u.pathname.match(/^\/rest\/api\/3\/issue\/([A-Z0-9]+-\d+)\/transitions$/))) {
       const issue = issues.get(m[1]);
@@ -41,6 +41,7 @@ export function createMockJiraFetch(rows) {
       const issue = issues.get(m[1]);
       if (!issue) return reply(404, { errorMessages: ["Issue does not exist"] });
       if (body?.fields?.summary) issue.summary = body.fields.summary;
+      if (body?.fields?.description !== undefined) issue.description = body.fields.description;
       return reply(204);
     }
     if (method === "GET" && (m = u.pathname.match(/^\/rest\/api\/3\/project\/([A-Z][A-Z0-9]*)$/))) {
@@ -51,7 +52,7 @@ export function createMockJiraFetch(rows) {
       const project = body?.fields?.project?.key;
       if (!project) return reply(400, { errorMessages: ["project é obrigatório"] });
       const key = `${project}-${nextNumber[project] = (nextNumber[project] || 900) + 1}`;
-      issues.set(key, { summary: body.fields.summary || "", status: "Backlog", type: "Epic" });
+      issues.set(key, { summary: body.fields.summary || "", status: "Backlog", type: "Epic", description: body.fields.description || null });
       return reply(201, { id: String(issues.size + 10000), key });
     }
     return reply(501, { errorMessages: [`O Jira de teste não implementa ${method} ${u.pathname}`] });
