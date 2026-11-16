@@ -7,7 +7,7 @@ import { jiraApi } from "./lib/jira-client";
 import { BOARDS, boardOf, byStatusBackToFront, statusRank } from "./lib/status-order";
 import { packRows } from "./lib/delivery-layout";
 import { comparePriority, mergePriority, reorderKeys } from "./lib/delivery-priority";
-import { QUEUE_PROJECT_MAP, QUEUE_STATUS_MAP, planQueueAutomation } from "./lib/status-queue";
+import { QUEUE_STATUS_MAP, planQueueAutomation } from "./lib/status-queue";
 import { FUNNEL_STAGES, epicHealth, funnel, krHealth, krProgress, objectiveHealth, quarterTimeline, recentDeliveries, stageOf, withoutKr } from "./lib/director";
 import { NO_LINK, buildOkrLanes, matchesOkrFilter, okrCoverage, okrOf } from "./lib/okr-link";
 import { AuthProvider, useAuth } from "./lib/auth-context";
@@ -258,7 +258,6 @@ function DataProvider({ children }) {
   const [prioOrder, setPrioOrder] = useState([]);
   const [filaProdutoOrder, setFilaProdutoOrder] = useState([]);
   const [filaUxOrder, setFilaUxOrder] = useState([]);
-  const [filaOpsOrder, setFilaOpsOrder] = useState([]);
   const [roadmapSaving, setRoadmapSaving] = useState(false);
   const [roadmapMode, setRoadmapMode] = useState("loading");
   const [roadmapError, setRoadmapError] = useState(null);
@@ -285,7 +284,7 @@ function DataProvider({ children }) {
   const pendingRef = useRef(0);
   const projetosStatusRef = useRef({});
   const latestRef = useRef({});
-  latestRef.current = { positions, customEpics, prioOrder, filaProdutoOrder, filaUxOrder, filaOpsOrder, lastSync, canWriteShared };
+  latestRef.current = { positions, customEpics, prioOrder, filaProdutoOrder, filaUxOrder, lastSync, canWriteShared };
 
   const setMode = useCallback((m) => { roadmapModeRef.current = m; setRoadmapMode(m); }, []);
 
@@ -295,7 +294,6 @@ function DataProvider({ children }) {
     setPrioOrder(st.prioOrder || []);
     setFilaProdutoOrder(st.filaProdutoOrder || []);
     setFilaUxOrder(st.filaUxOrder || []);
-    setFilaOpsOrder(st.filaOpsOrder || []);
     setEpicOverrides(st.epicOverrides || {});
   }, []);
 
@@ -312,7 +310,6 @@ function DataProvider({ children }) {
           // vira a fila de Produto, e UX começa vazia.
           filaProdutoOrder: saved.filaProdutoOrder || saved.filaOrder || [],
           filaUxOrder: saved.filaUxOrder || [],
-          filaOpsOrder: saved.filaOpsOrder || [],
         };
       }
     } catch (e) {}
@@ -421,10 +418,8 @@ function DataProvider({ children }) {
     return () => clearTimeout(id);
   }, [roadmapError]);
 
-  // A fila ProductOps vai por último e é opcional: quem não mexe nela (a maioria
-  // dos handlers) não precisa passá-la — vale a que está na tela.
-  const persistRoadmap = useCallback(async (nextPositions, nextCustom, nextPrioOrder, nextFilaProdutoOrder, nextFilaUxOrder, nextFilaOpsOrder) => {
-    const next = { positions: nextPositions, customEpics: nextCustom, prioOrder: nextPrioOrder, filaProdutoOrder: nextFilaProdutoOrder, filaUxOrder: nextFilaUxOrder, filaOpsOrder: nextFilaOpsOrder !== undefined ? nextFilaOpsOrder : latestRef.current.filaOpsOrder || [] };
+  const persistRoadmap = useCallback(async (nextPositions, nextCustom, nextPrioOrder, nextFilaProdutoOrder, nextFilaUxOrder) => {
+    const next = { positions: nextPositions, customEpics: nextCustom, prioOrder: nextPrioOrder, filaProdutoOrder: nextFilaProdutoOrder, filaUxOrder: nextFilaUxOrder };
     const mode = roadmapModeRef.current;
     if (mode === "local") {
       setRoadmapSaving(true);
@@ -744,7 +739,7 @@ function DataProvider({ children }) {
   useEffect(() => {
     if (!roadmapLoaded || roadmapMode !== "server" || !canWriteShared || pendingRef.current > 0) return;
     const cur = latestRef.current;
-    const plan = planQueueAutomation({ cards: [...epicsShown, ...tasksShown], positions: cur.positions, filaProdutoOrder: cur.filaProdutoOrder, filaUxOrder: cur.filaUxOrder, filaOpsOrder: cur.filaOpsOrder || [] });
+    const plan = planQueueAutomation({ cards: [...epicsShown, ...tasksShown], positions: cur.positions, filaProdutoOrder: cur.filaProdutoOrder, filaUxOrder: cur.filaUxOrder });
     if (!plan) return;
     const sig = plan.changes.map((c) => `${c.key}:${c.to}`).join("|");
     if (sig === queueAutoSigRef.current) return; // já tentei exatamente isto: não repete em laço se o salvamento falhar
@@ -752,9 +747,8 @@ function DataProvider({ children }) {
     setPositions(plan.positions);
     setFilaProdutoOrder(plan.filaProdutoOrder);
     setFilaUxOrder(plan.filaUxOrder);
-    setFilaOpsOrder(plan.filaOpsOrder);
-    persistRoadmap(plan.positions, cur.customEpics, cur.prioOrder, plan.filaProdutoOrder, plan.filaUxOrder, plan.filaOpsOrder);
-  }, [epicsShown, tasksShown, positions, filaProdutoOrder, filaUxOrder, filaOpsOrder, roadmapLoaded, roadmapMode, canWriteShared, persistRoadmap]);
+    persistRoadmap(plan.positions, cur.customEpics, cur.prioOrder, plan.filaProdutoOrder, plan.filaUxOrder);
+  }, [epicsShown, tasksShown, positions, filaProdutoOrder, filaUxOrder, roadmapLoaded, roadmapMode, canWriteShared, persistRoadmap]);
 
   const value = useMemo(() => ({
     epics: epicsShown, tasks: tasksShown, allProjects, setEpics, setTasks, syncFromJira, lastSync, syncStatus, syncError,
@@ -762,13 +756,13 @@ function DataProvider({ children }) {
     // customEpics = lista completa (é ela que se salva: o servidor trata o que
     // falta como apagado); customEpicsShown = filtrada, só para exibir.
     positions, setPositions, customEpics, customEpicsShown: customShown, setCustomEpics, prioOrder, setPrioOrder,
-    filaProdutoOrder, setFilaProdutoOrder, filaUxOrder, setFilaUxOrder, filaOpsOrder, setFilaOpsOrder,
+    filaProdutoOrder, setFilaProdutoOrder, filaUxOrder, setFilaUxOrder,
     roadmapSaving, persistRoadmap, updatePosition, addEpic, deleteEpic, saveDrawer, roadmapWeeks,
     roadmapMode, roadmapError, clearRoadmapError, localSummary, migrateToServer, reassignEpic, moveEpicStatus, notifyRoadmapError,
   }), [
     epicsShown, tasksShown, allProjects, syncFromJira, lastSync, syncStatus, syncError,
     jiraConfigured,
-    positions, customEpics, customShown, prioOrder, filaProdutoOrder, filaUxOrder, filaOpsOrder,
+    positions, customEpics, customShown, prioOrder, filaProdutoOrder, filaUxOrder,
     roadmapSaving, persistRoadmap, updatePosition, addEpic, deleteEpic, saveDrawer, roadmapWeeks,
     roadmapMode, roadmapError, clearRoadmapError, localSummary, migrateToServer, reassignEpic, moveEpicStatus, notifyRoadmapError,
   ]);
@@ -1792,7 +1786,7 @@ function OkrChip({ epic }) {
   );
 }
 
-function PrioCard({ epic, onDragStart, onOpen, onAdd, onMoveToFilaProduto, onMoveToFilaUx, onMoveToFilaOps, onDragOverCard, onDropOnCard, onDragEndCard, dropIndicator, canDrag }) {
+function PrioCard({ epic, onDragStart, onOpen, onAdd, onMoveToFilaProduto, onMoveToFilaUx, onDragOverCard, onDropOnCard, onDragEndCard, dropIndicator, canDrag }) {
   const { T, PRODUCT_STYLE, TIPO_STYLE } = useTheme();
   const prod = epic.project ? (PRODUCT_STYLE[epic.project] || PRODUCT_STYLE["Backoffice"]) : null;
   const tipo = TIPO_STYLE[layerOf(epic)];
@@ -1824,7 +1818,7 @@ function PrioCard({ epic, onDragStart, onOpen, onAdd, onMoveToFilaProduto, onMov
         {prod && <span style={{ width: 6, height: 6, borderRadius: 999, background: prod.primary, display: "inline-block" }} />}
       </div>
       <OkrChip epic={epic} />
-      {(onAdd || onMoveToFilaProduto || onMoveToFilaUx || onMoveToFilaOps) && (
+      {(onAdd || onMoveToFilaProduto || onMoveToFilaUx) && (
         <div className="flex items-center" style={{ gap: 10, marginTop: 3, flexWrap: "wrap" }}>
           {onMoveToFilaProduto && (
             <label className="inline-flex items-center" style={{ gap: 3, fontSize: 9, color: T.ink2, fontFamily: "'Inter Tight', sans-serif", cursor: "pointer" }} onClick={(e) => e.stopPropagation()}>
@@ -1844,16 +1838,6 @@ function PrioCard({ epic, onDragStart, onOpen, onAdd, onMoveToFilaProduto, onMov
                 style={{ accentColor: prod ? prod.primary : "#5166e6", cursor: "pointer", flexShrink: 0 }}
               />
               Fila UX
-            </label>
-          )}
-          {onMoveToFilaOps && (
-            <label className="inline-flex items-center" style={{ gap: 3, fontSize: 9, color: T.ink2, fontFamily: "'Inter Tight', sans-serif", cursor: "pointer" }} onClick={(e) => e.stopPropagation()}>
-              <input
-                type="checkbox" checked={false} title="Mover para a fila de ProductOps"
-                onChange={(e) => { e.stopPropagation(); onMoveToFilaOps(epic.key); }}
-                style={{ accentColor: prod ? prod.primary : "#5166e6", cursor: "pointer", flexShrink: 0 }}
-              />
-              Fila ProductOps
             </label>
           )}
           {onAdd && (
@@ -2214,7 +2198,7 @@ function RoadmapScreen() {
   const {
     epics: EPICS_SEED, tasks: TASKS,
     positions, setPositions, customEpics, customEpicsShown, setCustomEpics, prioOrder, setPrioOrder,
-    filaProdutoOrder, setFilaProdutoOrder, filaUxOrder, setFilaUxOrder, filaOpsOrder, setFilaOpsOrder,
+    filaProdutoOrder, setFilaProdutoOrder, filaUxOrder, setFilaUxOrder,
     roadmapSaving: saving, persistRoadmap: persist, updatePosition, addEpic: addEpicShared, deleteEpic: deleteEpicShared, saveDrawer: saveDrawerShared,
     roadmapMode, roadmapError, clearRoadmapError, localSummary, migrateToServer, jiraConfigured, reassignEpic, notifyRoadmapError,
   } = useData();
@@ -2265,7 +2249,6 @@ function RoadmapScreen() {
         prioOrder: st.prioOrder || [],
         filaProdutoOrder: st.filaProdutoOrder || st.filaOrder || [],
         filaUxOrder: st.filaUxOrder || [],
-        filaOpsOrder: st.filaOpsOrder || [],
       });
     } catch (err) {
       setMigrationMsg("Arquivo inválido: use o JSON de backup do Roadmap (com positions, customEpics e as filas).");
@@ -2280,14 +2263,12 @@ function RoadmapScreen() {
   const [prioDropInfo, setPrioDropInfo] = useState(null);
   const [filaProdutoDropInfo, setFilaProdutoDropInfo] = useState(null);
   const [filaUxDropInfo, setFilaUxDropInfo] = useState(null);
-  const [filaOpsDropInfo, setFilaOpsDropInfo] = useState(null);
   // Parte de baixo do Roadmap: três camadas independentes — Produtos (fila de
   // Produto), UX (fila de UX) e Projetos (priorização por projeto) —, cada uma
   // com o próprio filtro. Projetos também alterna Épicos/Tarefas e Na fila/Done.
   const [layerFilters, setLayerFilters] = useState({
     produtos: { product: "all", search: "" },
     ux: { product: "all", search: "" },
-    ops: { product: "all", search: "" },
     projetos: { product: "all", search: "", kind: "epics", state: "open", limit: 40, sort: "desc" },
   });
   const setLayerFilter = (layer, patch) => setLayerFilters((prev) => ({ ...prev, [layer]: { ...prev[layer], ...patch } }));
@@ -2333,10 +2314,10 @@ function RoadmapScreen() {
   // Tarefa, story ou bug entra no Roadmap quando alguém a agenda no Gantt ou a
   // põe numa fila (Produto/UX); fora disso fica só na camada Projetos.
   const allEpics = useMemo(() => {
-    const queued = new Set([...filaProdutoOrder, ...filaUxOrder, ...filaOpsOrder]);
+    const queued = new Set([...filaProdutoOrder, ...filaUxOrder]);
     const placedTasks = (TASKS || []).filter((t) => (positions[t.key] && positions[t.key].roadmapLane) || queued.has(t.key));
     return [...mergeCustomEpics(EPICS_SEED, customEpicsShown), ...placedTasks];
-  }, [EPICS_SEED, customEpicsShown, TASKS, positions, filaProdutoOrder, filaUxOrder, filaOpsOrder]);
+  }, [EPICS_SEED, customEpicsShown, TASKS, positions, filaProdutoOrder, filaUxOrder]);
   const byKey = useMemo(() => Object.fromEntries([...(TASKS || []), ...allEpics].map((e) => [e.key, e])), [allEpics, TASKS]);
 
   const PAST_WEEKS = 4; // ~1 mês antes de hoje, sempre visível pra trás
@@ -2366,8 +2347,7 @@ function RoadmapScreen() {
   const backlogItems = enriched.filter((e) => !e.roadmapLane && e.status !== "Done");
   const filaProdutoSet = useMemo(() => new Set(filaProdutoOrder), [filaProdutoOrder]);
   const filaUxSet = useMemo(() => new Set(filaUxOrder), [filaUxOrder]);
-  const filaOpsSet = useMemo(() => new Set(filaOpsOrder), [filaOpsOrder]);
-  const filaSet = useMemo(() => new Set([...filaProdutoOrder, ...filaUxOrder, ...filaOpsOrder]), [filaProdutoOrder, filaUxOrder, filaOpsOrder]);
+  const filaSet = useMemo(() => new Set([...filaProdutoOrder, ...filaUxOrder]), [filaProdutoOrder, filaUxOrder]);
   const filaProdutoItems = useMemo(() => {
     const byKeyFila = Object.fromEntries(backlogItems.filter((e) => filaProdutoSet.has(e.key)).map((e) => [e.key, e]));
     return filaProdutoOrder.map((k) => byKeyFila[k]).filter(Boolean);
@@ -2376,12 +2356,6 @@ function RoadmapScreen() {
     const byKeyFila = Object.fromEntries(backlogItems.filter((e) => filaUxSet.has(e.key)).map((e) => [e.key, e]));
     return filaUxOrder.map((k) => byKeyFila[k]).filter(Boolean);
   }, [backlogItems, filaUxOrder, filaUxSet]);
-  const filaOpsItems = useMemo(() => {
-    const byKeyFila = Object.fromEntries(backlogItems.filter((e) => filaOpsSet.has(e.key)).map((e) => [e.key, e]));
-    return filaOpsOrder.map((k) => byKeyFila[k]).filter(Boolean);
-  }, [backlogItems, filaOpsOrder, filaOpsSet]);
-  // A fila ProductOps só aparece onde há ProductOps: no workspace de dev ela ficaria sempre vazia.
-  const showOps = filaOpsOrder.length > 0 || QUEUE_PROJECT_MAP.productops.some((n) => products.includes(n));
   const prioItemsRaw = backlogItems.filter((e) => !filaSet.has(e.key));
   const prioItems = useMemo(() => {
     const byKeyPrio = Object.fromEntries(prioItemsRaw.map((e) => [e.key, e]));
@@ -2476,48 +2450,31 @@ function RoadmapScreen() {
       const nextPositions = { ...positions, [dragKey]: { ...(positions[dragKey] || {}), roadmapLane: null, startWeek: null } };
       const nextFilaProduto = filaProdutoOrder.filter((k) => k !== dragKey);
       const nextFilaUx = filaUxOrder.filter((k) => k !== dragKey);
-      const nextFilaOps = filaOpsOrder.filter((k) => k !== dragKey);
       setPositions(nextPositions);
       setFilaProdutoOrder(nextFilaProduto);
       setFilaUxOrder(nextFilaUx);
-      setFilaOpsOrder(nextFilaOps);
-      persist(nextPositions, customEpics, prioOrder, nextFilaProduto, nextFilaUx, nextFilaOps);
+      persist(nextPositions, customEpics, prioOrder, nextFilaProduto, nextFilaUx);
     }
     setDragKey(null);
   };
-  // Um épico só fica em uma fila por vez: entrar numa tira das outras.
+  // Um épico só fica em uma fila por vez: entrar na de Produto tira da de UX e vice-versa.
   const moveToFilaProduto = (key) => {
     if (!ownsCard(byKey[key])) return;
     if (filaProdutoOrder.includes(key)) return;
     const nextFilaProduto = [...filaProdutoOrder, key];
     const nextFilaUx = filaUxOrder.filter((k) => k !== key);
-    const nextFilaOps = filaOpsOrder.filter((k) => k !== key);
     setFilaProdutoOrder(nextFilaProduto);
     setFilaUxOrder(nextFilaUx);
-    setFilaOpsOrder(nextFilaOps);
-    persist(positions, customEpics, prioOrder, nextFilaProduto, nextFilaUx, nextFilaOps);
+    persist(positions, customEpics, prioOrder, nextFilaProduto, nextFilaUx);
   };
   const moveToFilaUx = (key) => {
     if (!ownsCard(byKey[key])) return;
     if (filaUxOrder.includes(key)) return;
     const nextFilaUx = [...filaUxOrder, key];
     const nextFilaProduto = filaProdutoOrder.filter((k) => k !== key);
-    const nextFilaOps = filaOpsOrder.filter((k) => k !== key);
     setFilaUxOrder(nextFilaUx);
     setFilaProdutoOrder(nextFilaProduto);
-    setFilaOpsOrder(nextFilaOps);
-    persist(positions, customEpics, prioOrder, nextFilaProduto, nextFilaUx, nextFilaOps);
-  };
-  const moveToFilaOps = (key) => {
-    if (!ownsCard(byKey[key])) return;
-    if (filaOpsOrder.includes(key)) return;
-    const nextFilaOps = [...filaOpsOrder, key];
-    const nextFilaProduto = filaProdutoOrder.filter((k) => k !== key);
-    const nextFilaUx = filaUxOrder.filter((k) => k !== key);
-    setFilaOpsOrder(nextFilaOps);
-    setFilaProdutoOrder(nextFilaProduto);
-    setFilaUxOrder(nextFilaUx);
-    persist(positions, customEpics, prioOrder, nextFilaProduto, nextFilaUx, nextFilaOps);
+    persist(positions, customEpics, prioOrder, nextFilaProduto, nextFilaUx);
   };
   const onPrioDragOverCard = (e, overKey) => {
     e.preventDefault(); e.stopPropagation();
@@ -2569,14 +2526,12 @@ function RoadmapScreen() {
     else if (position === "after") insertAt += 1;
     fullOrder.splice(insertAt, 0, key);
     const nextFilaUx = filaUxOrder.filter((k) => k !== key);
-    const nextFilaOps = filaOpsOrder.filter((k) => k !== key);
     setPositions(nextPositions);
     setFilaProdutoOrder(fullOrder);
     setFilaUxOrder(nextFilaUx);
-    setFilaOpsOrder(nextFilaOps);
     const nextPrio = prioOrder.filter((k) => k !== key);
     setPrioOrder(nextPrio);
-    persist(nextPositions, customEpics, nextPrio, fullOrder, nextFilaUx, nextFilaOps);
+    persist(nextPositions, customEpics, nextPrio, fullOrder, nextFilaUx);
   };
   const onDropFilaProduto = (e) => {
     e.preventDefault();
@@ -2606,55 +2561,16 @@ function RoadmapScreen() {
     else if (position === "after") insertAt += 1;
     fullOrder.splice(insertAt, 0, key);
     const nextFilaProduto = filaProdutoOrder.filter((k) => k !== key);
-    const nextFilaOps = filaOpsOrder.filter((k) => k !== key);
     setPositions(nextPositions);
     setFilaUxOrder(fullOrder);
     setFilaProdutoOrder(nextFilaProduto);
-    setFilaOpsOrder(nextFilaOps);
     const nextPrio = prioOrder.filter((k) => k !== key);
     setPrioOrder(nextPrio);
-    persist(nextPositions, customEpics, nextPrio, nextFilaProduto, fullOrder, nextFilaOps);
+    persist(nextPositions, customEpics, nextPrio, nextFilaProduto, fullOrder);
   };
   const onDropFilaUx = (e) => {
     e.preventDefault();
     if (dragKey && !filaUxOrder.includes(dragKey)) moveToFilaUx(dragKey);
-    setDragKey(null);
-  };
-
-  const onFilaOpsDragOverCard = (e, overKey) => {
-    e.preventDefault(); e.stopPropagation();
-    if (!dragKey || overKey === dragKey) { setFilaOpsDropInfo(null); return; }
-    const rect = e.currentTarget.getBoundingClientRect();
-    setFilaOpsDropInfo({ key: overKey, position: e.clientX - rect.left < rect.width / 2 ? "before" : "after" });
-  };
-  const onFilaOpsDropOnCard = (e, overKey) => {
-    e.preventDefault(); e.stopPropagation();
-    const key = dragKey;
-    const position = filaOpsDropInfo?.position || "before";
-    setDragKey(null); setFilaOpsDropInfo(null);
-    if (!key || key === overKey) return;
-    if (!canWriteShared) return;
-    const nextPositions = positions[key]?.roadmapLane
-      ? { ...positions, [key]: { ...(positions[key] || {}), roadmapLane: null, startWeek: null } }
-      : positions;
-    const fullOrder = filaOpsOrder.filter((k) => k !== key);
-    let insertAt = fullOrder.indexOf(overKey);
-    if (insertAt === -1) insertAt = fullOrder.length;
-    else if (position === "after") insertAt += 1;
-    fullOrder.splice(insertAt, 0, key);
-    const nextFilaProduto = filaProdutoOrder.filter((k) => k !== key);
-    const nextFilaUx = filaUxOrder.filter((k) => k !== key);
-    setPositions(nextPositions);
-    setFilaOpsOrder(fullOrder);
-    setFilaProdutoOrder(nextFilaProduto);
-    setFilaUxOrder(nextFilaUx);
-    const nextPrio = prioOrder.filter((k) => k !== key);
-    setPrioOrder(nextPrio);
-    persist(nextPositions, customEpics, nextPrio, nextFilaProduto, nextFilaUx, fullOrder);
-  };
-  const onDropFilaOps = (e) => {
-    e.preventDefault();
-    if (dragKey && !filaOpsOrder.includes(dragKey)) moveToFilaOps(dragKey);
     setDragKey(null);
   };
   // Item concluído (épico, story, tarefa, bug) que entra no Gantt vai para a
@@ -2781,7 +2697,6 @@ function RoadmapScreen() {
   };
   const filaProdutoShown = filaProdutoItems.filter(passes(layerFilters.produtos));
   const filaUxShown = filaUxItems.filter(passes(layerFilters.ux));
-  const filaOpsShown = filaOpsItems.filter(passes(layerFilters.ops));
   const pf = layerFilters.projetos;
   const browsing = !(pf.kind === "epics" && pf.state === "open");
   const projetosList = (() => {
@@ -3153,26 +3068,6 @@ function RoadmapScreen() {
         </div>
       </div>
 
-      {/* Camada ProductOps — só onde há projeto ProductOps: a fila de ProductOps */}
-      {showOps && (
-        <div onDragOver={(e) => e.preventDefault()} onDrop={onDropFilaOps} style={{ padding: "18px 24px", borderBottom: `1px solid ${T.border1}` }}>
-          {layerHeader("ops", "ProductOps", filaOpsShown.length, `Próximas prioridades de ProductOps, na ordem em que vamos trabalhar. Entram sozinhos os cards do projeto ${QUEUE_PROJECT_MAP.productops.join(", ")} que saíram do Backlog e ainda não estão em Dev; o que está no Backlog você traz à mão (arraste, ou marque "Fila ProductOps"), e o que você mover à mão a automação não desfaz.`)}
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, minHeight: 56, borderRadius: 10, border: `1px dashed ${T.border2}`, padding: 8 }}>
-            {filaOpsShown.length === 0 && <span style={{ fontSize: 11.5, color: T.ink2, fontFamily: "'Inter Tight', sans-serif" }}>Nada na fila de ProductOps. Marque "Fila ProductOps" num card de Projetos ou arraste para cá.</span>}
-            {filaOpsShown.map((e) => (
-              <PrioCard
-                key={e.key} epic={e} onDragStart={onDragStart} onOpen={() => openItem(e)}
-                onAdd={e.project && ownsCard(e) ? addToGantt : undefined}
-                onDragOverCard={onFilaOpsDragOverCard} onDropOnCard={onFilaOpsDropOnCard}
-                onDragEndCard={() => setFilaOpsDropInfo(null)}
-                dropIndicator={filaOpsDropInfo?.key === e.key ? filaOpsDropInfo.position : null}
-                canDrag={ownsCard(e)}
-              />
-            ))}
-          </div>
-        </div>
-      )}
-
       {/* Camada 3 — Projetos: priorização por projeto, ou tarefas/feitos para agendar */}
       <div onDragOver={(e) => e.preventDefault()} onDrop={browsing ? undefined : onDropPrio} style={{ padding: "18px 24px 24px" }}>
         {layerHeader("projetos", "Projetos", projetosList.length, browsing
@@ -3207,7 +3102,6 @@ function RoadmapScreen() {
                             onAdd={e.project && ownsCard(e) ? addToGantt : undefined}
                             onMoveToFilaProduto={ownsCard(e) && !isEpicDone(e) ? moveToFilaProduto : undefined}
                             onMoveToFilaUx={ownsCard(e) && !isEpicDone(e) ? moveToFilaUx : undefined}
-                            onMoveToFilaOps={showOps && ownsCard(e) && !isEpicDone(e) ? moveToFilaOps : undefined}
                             canDrag={ownsCard(e)}
                           />
                         ))}
@@ -3221,7 +3115,6 @@ function RoadmapScreen() {
                     onAdd={e.project && ownsCard(e) ? addToGantt : undefined}
                     onMoveToFilaProduto={ownsCard(e) ? moveToFilaProduto : undefined}
                     onMoveToFilaUx={ownsCard(e) ? moveToFilaUx : undefined}
-                    onMoveToFilaOps={showOps && ownsCard(e) ? moveToFilaOps : undefined}
                     onDragOverCard={onPrioDragOverCard} onDropOnCard={onPrioDropOnCard}
                     onDragEndCard={() => setPrioDropInfo(null)}
                     dropIndicator={prioDropInfo?.key === e.key ? prioDropInfo.position : null}
@@ -4783,12 +4676,12 @@ function DirectorScreen() {
   const { T } = useTheme();
   const { items, status } = usePlanning();
   const idx = usePlanIndex();
-  const { epics, positions, customEpicsShown, filaProdutoOrder, filaUxOrder, filaOpsOrder } = useData();
+  const { epics, positions, customEpicsShown, filaProdutoOrder, filaUxOrder } = useData();
   const products = useProducts();
   const now = useNow();
   const [product, setProduct] = useState("all");
 
-  const queues = useMemo(() => ({ filaProdutoOrder, filaUxOrder, filaOpsOrder }), [filaProdutoOrder, filaUxOrder, filaOpsOrder]);
+  const queues = useMemo(() => ({ filaProdutoOrder, filaUxOrder }), [filaProdutoOrder, filaUxOrder]);
   // Projetos = épicos reais do Jira (rascunho ainda não criado não conta).
   const cards = useMemo(
     () => mergeCustomEpics(epics, customEpicsShown).filter((e) => !e.key.startsWith("NOVO-") && (product === "all" || e.project === product)),

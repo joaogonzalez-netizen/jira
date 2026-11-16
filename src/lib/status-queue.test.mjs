@@ -69,52 +69,8 @@ test("não duplica: mesma chave repetida na lista de cards conta uma vez", () =>
   assert.equal(out.changes.length, 1);
 });
 
-const ops = (key, status, extra = {}) => ({ key, status, project: "ProductOps", ...extra });
-const planOps = (cards, { positions = {}, produto = [], ux = [], opsOrder = [] } = {}) =>
-  planQueueAutomation({ cards, positions, filaProdutoOrder: produto, filaUxOrder: ux, filaOpsOrder: opsOrder });
-
 test("[UX] Em andamento e [UX] Priorizado (workflow real do Jira) vão para a fila de UX", () => {
   assert.equal(queueTargetOf(card("A", "[UX] Em andamento")), "ux");
   assert.equal(queueTargetOf(card("A", "[UX] Priorizado")), "ux");
-});
-
-test("projeto ProductOps: sai do Backlog sem disciplina -> Fila ProductOps; Backlog fica em Projetos; Produto/UX seguem o status", () => {
-  assert.equal(queueTargetOf(ops("A", "Backlog")), null);
-  assert.equal(queueTargetOf(ops("A", "Em refinamento Técnico")), "productops");
-  assert.equal(queueTargetOf(ops("A", "Produto")), "produto"); // status de disciplina vence o projeto
-  assert.equal(queueTargetOf(ops("A", "[UX] Em andamento")), "ux");
-  assert.equal(queueTargetOf(ops("A", "Pronto P/ DEV")), "dev");
-  assert.equal(queueTargetOf(ops("A", "Em DEV")), "dev");
-  assert.equal(queueTargetOf(card("A", "Em refinamento Técnico")), null); // outro projeto: sem regra
-});
-
-test("a regra por projeto não vale para outros projetos nem para Dados", () => {
-  assert.equal(queueTargetOf({ key: "A", status: "Em refinamento Técnico", project: "Dados" }), null);
-  assert.equal(queueTargetOf({ key: "A", status: "Produto", project: "STL Seller" }), "produto");
-});
-
-test("automação coloca o card de ProductOps na fila ProductOps e tira das outras", () => {
-  const out = planOps([ops("A", "Em refinamento Técnico"), ops("B", "Backlog")]);
-  assert.deepEqual(out.filaOpsOrder, ["A"]);
-  assert.deepEqual(out.filaProdutoOrder, []);
-  assert.equal(out.positions.A.autoQueue, "productops");
-  assert.equal(out.positions.B, undefined);
-});
-
-test("ProductOps: foi para o Dev, a automação o tira da fila; posto à mão numa fila, ninguém mexe", () => {
-  const positions = { A: { roadmapLane: null, startWeek: null, durationWeeks: 2, autoQueue: "productops" } };
-  const dev = planOps([ops("A", "Em DEV")], { positions, opsOrder: ["X", "A"] });
-  assert.deepEqual(dev.filaOpsOrder, ["X"]);
-  assert.equal(dev.positions.A.autoQueue, "dev");
-  assert.equal(planOps([ops("A", "Em refinamento Técnico")], { ux: ["A"] }), null);
-  // movido à mão para fora da fila depois da automação: decisão manual vence
-  assert.equal(planOps([ops("A", "Em refinamento Técnico")], { positions }), null);
-});
-
-test("fila ProductOps: idempotente e sem filaOpsOrder (dado antigo) continua funcionando", () => {
-  const cards = [ops("A", "Em refinamento Técnico"), card("B", "Em análise")];
-  const first = planOps(cards);
-  assert.equal(planOps(cards, { positions: first.positions, produto: first.filaProdutoOrder, ux: first.filaUxOrder, opsOrder: first.filaOpsOrder }), null);
-  const legacy = planQueueAutomation({ cards: [card("B", "Em análise")], positions: {}, filaProdutoOrder: [], filaUxOrder: [] });
-  assert.deepEqual(legacy.filaOpsOrder, []);
+  assert.equal(plan([card("A", "[UX] Em andamento")]).filaUxOrder[0], "A");
 });

@@ -111,7 +111,6 @@ export const FUNNEL_STAGES = [
   ["backlog", "Backlog"],
   ["produto", "Produto"],
   ["ux", "UX/UI"],
-  ["productops", "ProductOps"],
   ["tech", "Análise técnica"],
   ["ready", "Pronto p/ dev"],
   ["dev", "Em dev"],
@@ -121,12 +120,11 @@ const READY = new Set(["Pronto P/ DEV", "Pronta pra dev", "Fila da Sprint"].map(
 const TECH = new Set(["Em refinamento Técnico", "Análise técnica", "Aguardado suporte"].map(norm));
 
 /** Etapa de um projeto em aberto: a fila em que alguém o pôs à mão vale mais que o status. */
-export function stageOf(card, { filaProdutoOrder = [], filaUxOrder = [], filaOpsOrder = [] } = {}) {
+export function stageOf(card, { filaProdutoOrder = [], filaUxOrder = [] } = {}) {
   if (filaProdutoOrder.includes(card.key)) return "produto";
   if (filaUxOrder.includes(card.key)) return "ux";
-  if (filaOpsOrder.includes(card.key)) return "productops";
   const target = queueTargetOf(card);
-  if (target === "produto" || target === "ux" || target === "productops") return target;
+  if (target === "produto" || target === "ux") return target;
   const st = norm(card.status);
   if (st === norm("Em rollout")) return "rollout";
   if (READY.has(st)) return "ready";

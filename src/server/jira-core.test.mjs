@@ -470,7 +470,6 @@ test("cancelar: move para Cancelado (nunca exclui), limpa posições/filas e esc
   // SELLER-1 está posicionado e numa fila
   const { handlePatch } = await import("./roadmap-core.js");
   await handlePatch({ filaUxOrder: { add: ["SELLER-1"] } }, SUPER, rcfg);
-  await handlePatch({ filaOpsOrder: { add: ["SELLER-1"] } }, SUPER, rcfg);
   const r = await handleCancelEpic({ key: "SELLER-1" }, SUPER, rcfg, j);
   assert.equal(r.status, 200);
   noLeak(r);
@@ -481,7 +480,6 @@ test("cancelar: move para Cancelado (nunca exclui), limpa posições/filas e esc
   const s = (await state(rcfg)).state;
   assert.equal("SELLER-1" in s.positions, false);
   assert.equal(s.prioOrder.includes("SELLER-1"), false);
-  assert.equal(s.filaOpsOrder.includes("SELLER-1"), false, "sai também da fila ProductOps");
   assert.equal(s.filaUxOrder.includes("SELLER-1"), false);
   assert.equal(s.epicOverrides["SELLER-1"].removed, true);
 });
