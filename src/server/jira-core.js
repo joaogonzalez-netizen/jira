@@ -589,7 +589,7 @@ async function renameInJira(j, key, summary) {
   }
 }
 
-/** Altera o nome e/ou o responsável de um épico do Jira (e do Roadmap, no mesmo passo). */
+/** Altera o nome, o responsável e/ou o status de um épico do Jira (e do Roadmap, no mesmo passo). */
 export async function handleUpdateEpic(input, session, rcfg, j) {
   const cfgErr = jiraConfigError(j);
   if (cfgErr) return cfgErr;
@@ -601,7 +601,11 @@ export async function handleUpdateEpic(input, session, rcfg, j) {
     const summary = hasSummary ? cleanSummary(input.summary) : null;
     if (hasSummary && !summary) return bad(`O nome do épico é obrigatório (até ${MAX_SUMMARY} caracteres)`);
     const assignee = cleanAssigneeInput(input?.assignee);
-    if (!hasSummary && assignee === undefined) return bad("Nada para alterar");
+    const hasStatus = input?.status !== undefined;
+    const wantedStatus = hasStatus && typeof input.status === "string" ? input.status.trim() : "";
+    if (hasStatus && (!wantedStatus || wantedStatus.length > 80)) return bad("Status inválido");
+    if (hasStatus && isClosingStatus(wantedStatus)) return bad("Para cancelar ou arquivar, use Excluir no card do épico");
+    if (!hasSummary && assignee === undefined && !hasStatus) return bad("Nada para alterar");
 
     const { doc } = await readDoc(rcfg);
     if (!doc) return { status: 409, body: { code: "not-initialized", message: "O Roadmap ainda não foi migrado para o servidor" } };
@@ -622,6 +626,7 @@ export async function handleUpdateEpic(input, session, rcfg, j) {
       }
       patch.assignee = assignee ? assignee.displayName : null;
     }
+    if (hasStatus) patch.status = await moveInJira(j, key, current.status, wantedStatus);
 
     const at = new Date().toISOString();
     const result = await mutateDoc(rcfg, (cur) => touchDoc({
@@ -658,6 +663,24 @@ async function cancelInJira(j, key, currentStatus) {
   await jiraFetch(j, "POST", `/rest/api/3/issue/${key}/transitions`, { transition: { id: pick.id } });
 }
 
+/** Move a issue para o status pedido pelo nome, pela transição do workflow do Jira que chega nele.
+    Devolve o nome do status como o Jira o escreve; sem transição disponível, avisa quais existem. */
+async function moveInJira(j, key, currentStatus, wanted) {
+  if (norm(currentStatus) === norm(wanted)) return currentStatus;
+  const data = await jiraFetch(j, "GET", `/rest/api/3/issue/${key}/transitions`);
+  const transitions = Array.isArray(data?.transitions) ? data.transitions : [];
+  const pick = transitions.find((t) => norm(t?.to?.name) === norm(wanted));
+  if (!pick) {
+    const options = transitions.map((t) => t?.to?.name).filter(Boolean).join(", ") || "nenhuma";
+    throw new JiraError(409, `O Jira não deixa mover ${key} de "${currentStatus}" para "${wanted}". Status possíveis a partir daqui: ${options}.`);
+  }
+  await jiraFetch(j, "POST", `/rest/api/3/issue/${key}/transitions`, { transition: { id: pick.id } });
+  return String(pick.to.name);
+}
+
+/** Cancelar e arquivar têm caminho próprio (excluir); mover de status não passa por eles. */
+const isClosingStatus = (name) => CANCEL_STATUSES.includes(norm(name));
+
 export async function handleCancelEpic(input, session, rcfg, j) {
   const cfgErr = jiraConfigError(j);
   if (cfgErr) return cfgErr;
@@ -683,6 +706,7 @@ export async function handleCancelEpic(input, session, rcfg, j) {
         prioOrder: without(cur.prioOrder, key),
         filaProdutoOrder: without(cur.filaProdutoOrder, key),
         filaUxOrder: without(cur.filaUxOrder, key),
+        filaOpsOrder: without(cur.filaOpsOrder || [], key),
         // esconde também a versão que ainda vem da planilha, até ela sincronizar
         epicOverrides: { ...cur.epicOverrides, [key]: { ...(cur.epicOverrides[key] || {}), removed: true } },
       }, emailOf(session));

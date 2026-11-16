@@ -9,6 +9,7 @@ import {
   handleSnapshotGet,
   handleSnapshotPut,
   loadConfig,
+  pruneOverrides,
 } from "./roadmap-core.js";
 
 const SUPER = { role: "super", user: { id: "1", email: "joao@x.com" } };
@@ -290,4 +291,12 @@ test("fila ProductOps: seed e snapshot preservam a fila", async () => {
   const config = loadConfig({}, kv);
   const seeded = await handleSeed({ state: { ...SEED.state, filaOpsOrder: ["POD-1"] } }, SUPER, config);
   assert.deepEqual(seeded.body.state.filaOpsOrder, ["POD-1"]);
+});
+
+test("pruneOverrides: o override de status some quando a planilha alcança o Jira ou passa de 24 h", () => {
+  const doc = { epicOverrides: { A: { status: "Em rollout", at: new Date().toISOString() }, B: { status: "Em rollout", at: new Date().toISOString() }, C: { status: "Em rollout", at: "2020-01-01T00:00:00.000Z" } } };
+  const epics = [{ key: "A", status: "Em DEV" }, { key: "B", status: "em rollout" }, { key: "C", status: "Em DEV" }];
+  const pruned = pruneOverrides(doc, epics);
+  assert.deepEqual(Object.keys(pruned.epicOverrides), ["A"]); // B já alcançou; C expirou
+  assert.equal(pruneOverrides({ epicOverrides: { A: doc.epicOverrides.A } }, [{ key: "A", status: "Em DEV" }]), null); // nada a podar
 });

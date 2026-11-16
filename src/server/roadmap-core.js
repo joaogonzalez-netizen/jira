@@ -466,7 +466,7 @@ export async function handleSnapshotGet(config) {
 const OVERRIDE_TTL_MS = 24 * 60 * 60 * 1000;
 const normName = (s) => String(s ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase();
 
-/** Tira dos overrides (nome novo / responsável / cancelado) o que a planilha já
+/** Tira dos overrides (nome novo / responsável / status / cancelado) o que a planilha já
     alcançou ou o que passou de 24 h — assim uma mudança feita direto no Jira
     depois não fica escondida por um override velho. `null` se nada mudou. */
 export function pruneOverrides(doc, sheetEpics, now = Date.now()) {
@@ -484,7 +484,8 @@ export function pruneOverrides(doc, sheetEpics, now = Date.now()) {
     const expired = !!o.at && now - Date.parse(o.at) > OVERRIDE_TTL_MS;
     if ("summary" in o && (expired || sheet.summary === o.summary)) { delete o.summary; changed = true; }
     if ("assignee" in o && (expired || normName(sheet.assignee) === normName(o.assignee))) { delete o.assignee; changed = true; }
-    if (!o.removed && !("summary" in o) && !("assignee" in o)) { changed = true; continue; }
+    if ("status" in o && (expired || normName(sheet.status) === normName(o.status))) { delete o.status; changed = true; }
+    if (!o.removed && !("summary" in o) && !("assignee" in o) && !("status" in o)) { changed = true; continue; }
     next[key] = o;
   }
   return changed ? { ...doc, epicOverrides: next } : null;

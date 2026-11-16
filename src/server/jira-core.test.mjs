@@ -406,6 +406,63 @@ test("renomear: qualquer tipo de issue; chaves malformadas são recusadas", asyn
   assert.equal((await handleRenameEpic({ key: "SELLER-999", summary: "x" }, SUPER, rcfg, j)).status, 404);
 });
 
+/* ----------------------------- mover de status ----------------------------- */
+
+const ROLLOUT = [{ id: "41", name: "Rollout", to: { name: "Em rollout" } }, { id: "21", name: "Cancelar", to: { name: "Cancelado" } }];
+
+test("mover de status: faz a transição do workflow, guarda o status novo e carimba o override", async () => {
+  const { rcfg, jira, j } = await setup({ ...withEpics(), transitions: ROLLOUT });
+  const r = await handleUpdateEpic({ key: "SELLER-1", status: "em ROLLOUT" }, SUPER, rcfg, j); // grafia tolerante
+  assert.equal(r.status, 200);
+  noLeak(r);
+  assert.equal(jira.issues.get("SELLER-1").status, "Em rollout");
+  assert.deepEqual(jira.calls.find((c) => c.method === "POST" && c.path.endsWith("/transitions")).body, { transition: { id: "41" } });
+  const ov = (await state(rcfg)).state.epicOverrides["SELLER-1"];
+  assert.equal(ov.status, "Em rollout"); // o nome como o Jira escreve, não como veio
+  assert.ok(Date.parse(ov.at) > 0);
+});
+
+test("mover de status: já está nesse status -> nada vai ao Jira", async () => {
+  const { rcfg, jira, j } = await setup({ ...withEpics(), transitions: ROLLOUT });
+  const r = await handleUpdateEpic({ key: "SELLER-1", status: "Em DEV" }, SUPER, rcfg, j);
+  assert.equal(r.status, 200);
+  assert.equal(jira.calls.filter((c) => c.method === "POST").length, 0);
+});
+
+test("mover de status: sem transição para lá, 409 com as opções e nada muda", async () => {
+  const { rcfg, jira, j } = await setup({ ...withEpics(), transitions: ROLLOUT });
+  const r = await handleUpdateEpic({ key: "SELLER-1", status: "Done" }, SUPER, rcfg, j);
+  assert.equal(r.status, 409);
+  assert.match(r.body.message, /Em rollout/);
+  assert.equal(jira.issues.get("SELLER-1").status, "Em DEV");
+  assert.equal("SELLER-1" in (await state(rcfg)).state.epicOverrides, false);
+});
+
+test("mover de status: cancelar e arquivar não passam por aqui; status inválido é recusado antes do Jira", async () => {
+  const { rcfg, jira, j } = await setup({ ...withEpics(), transitions: ROLLOUT });
+  for (const status of ["Cancelado", "arquivado", "Canceled"]) {
+    const r = await handleUpdateEpic({ key: "SELLER-1", status }, SUPER, rcfg, j);
+    assert.equal(r.status, 400, status);
+  }
+  for (const status of ["", "   ", 7, null, "x".repeat(81)]) assert.equal((await handleUpdateEpic({ key: "SELLER-1", status }, SUPER, rcfg, j)).status, 400);
+  assert.equal(jira.calls.filter((c) => c.method !== "GET").length, 0);
+});
+
+test("mover de status: só quem pode mexer no épico (admin não mexe no da planilha, leitor não mexe)", async () => {
+  const { rcfg, jira, j } = await setup({ ...withEpics(), transitions: ROLLOUT });
+  assert.equal((await handleUpdateEpic({ key: "SELLER-1", status: "Em rollout" }, ANDRE, rcfg, j)).status, 403);
+  assert.equal((await handleUpdateEpic({ key: "SELLER-1", status: "Em rollout" }, LEITOR, rcfg, j)).status, 403);
+  assert.equal(jira.writes().length, 0);
+});
+
+test("mover de status junto com o nome faz as duas coisas", async () => {
+  const { rcfg, jira, j } = await setup({ ...withEpics(), transitions: ROLLOUT });
+  const r = await handleUpdateEpic({ key: "SELLER-1", summary: "Novo nome", status: "Em rollout" }, SUPER, rcfg, j);
+  assert.equal(r.status, 200);
+  assert.equal(jira.issues.get("SELLER-1").summary, "Novo nome");
+  assert.equal(jira.issues.get("SELLER-1").status, "Em rollout");
+});
+
 /* -------------------------------- cancelar -------------------------------- */
 
 test("cancelar: move para Cancelado (nunca exclui), limpa posições/filas e esconde a versão da planilha", async () => {
@@ -413,6 +470,7 @@ test("cancelar: move para Cancelado (nunca exclui), limpa posições/filas e esc
   // SELLER-1 está posicionado e numa fila
   const { handlePatch } = await import("./roadmap-core.js");
   await handlePatch({ filaUxOrder: { add: ["SELLER-1"] } }, SUPER, rcfg);
+  await handlePatch({ filaOpsOrder: { add: ["SELLER-1"] } }, SUPER, rcfg);
   const r = await handleCancelEpic({ key: "SELLER-1" }, SUPER, rcfg, j);
   assert.equal(r.status, 200);
   noLeak(r);
@@ -423,6 +481,7 @@ test("cancelar: move para Cancelado (nunca exclui), limpa posições/filas e esc
   const s = (await state(rcfg)).state;
   assert.equal("SELLER-1" in s.positions, false);
   assert.equal(s.prioOrder.includes("SELLER-1"), false);
+  assert.equal(s.filaOpsOrder.includes("SELLER-1"), false, "sai também da fila ProductOps");
   assert.equal(s.filaUxOrder.includes("SELLER-1"), false);
   assert.equal(s.epicOverrides["SELLER-1"].removed, true);
 });
