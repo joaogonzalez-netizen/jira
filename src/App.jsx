@@ -8,6 +8,7 @@ import { BOARDS, boardOf, byStatusBackToFront, statusRank } from "./lib/status-o
 import { packRows } from "./lib/delivery-layout";
 import { comparePriority, mergePriority, reorderKeys } from "./lib/delivery-priority";
 import { QUEUE_PROJECT_MAP, QUEUE_STATUS_MAP, planQueueAutomation } from "./lib/status-queue";
+import { NO_LINK, buildOkrLanes, matchesOkrFilter, okrCoverage, okrOf } from "./lib/okr-link";
 import { AuthProvider, useAuth } from "./lib/auth-context";
 import { DEFAULT_WS, currentWorkspaceId, isDefaultWorkspace, switchWorkspace } from "./lib/workspace";
 
@@ -986,6 +987,12 @@ function EpicDrawer({ epic, onClose, weeks, onSave, onDelete, canEdit, jiraConfi
   const { canCreateCard } = useAuth();
   // "Iniciativa" aqui é a Feature do épico (as camadas do Roadmap).
   const { initiatives, initiativeByEpicKey, assignEpicToInitiative } = useRoadmapFeatures();
+  const planIdx = usePlanIndex();
+  const { items: planItems } = usePlanning();
+  const krLink = useEpicKrLink();
+  const epicOkr = epic ? okrOf(epic, planIdx) : null;
+  // Tarefa sem vínculo próprio que herda o KR do épico pai.
+  const inheritedOkr = epic && !krLink.krOfKey[epic.key] ? epicOkr : null;
   const initiativeLabel = (i) => i.name;
   const schedulable = !!(weeks && onSave);
   const [summary, setSummary] = useState(epic?.summary || "");
@@ -1201,6 +1208,27 @@ function EpicDrawer({ epic, onClose, weeks, onSave, onDelete, canEdit, jiraConfi
               <option value="">Nenhuma</option>
               {initiatives.filter((i) => !i.product || i.product === epic.project || (i.epicKeys || []).includes(epic.key)).map((i) => <option key={i.id} value={i.id}>{initiativeLabel(i)}</option>)}
             </select>
+
+            <p style={{ marginTop: 14, marginBottom: 6, fontSize: 12, fontWeight: 500, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>Key Result</p>
+            <select
+              value={krLink.krOfKey[epic.key]?.id || ""}
+              onChange={async (e) => { const r = await krLink.assignToKr(epic.key, e.target.value || null); if (!r.ok) setError(r.message || "Não foi possível vincular ao Key Result"); }}
+              disabled={!canCreateCard}
+              style={{ width: "100%", borderRadius: 8, border: `1px solid ${epicOkr ? T.border2 : "#d1700088"}`, background: T.bg1, color: T.ink0, fontSize: 13, padding: "7px 8px", fontFamily: "'Inter Tight', sans-serif" }}
+            >
+              <option value="">{inheritedOkr ? "Herdar do épico pai" : "Sem vínculo"}</option>
+              {planItems.objectives.map((o) => (
+                <optgroup key={o.id} label={o.name}>
+                  {planItems.keyResults.filter((k) => k.objectiveId === o.id).map((k) => <option key={k.id} value={k.id}>{k.name}</option>)}
+                </optgroup>
+              ))}
+              {planItems.keyResults.some((k) => !planItems.objectives.some((o) => o.id === k.objectiveId)) && (
+                <optgroup label="Sem objetivo">
+                  {planItems.keyResults.filter((k) => !planItems.objectives.some((o) => o.id === k.objectiveId)).map((k) => <option key={k.id} value={k.id}>{k.name}</option>)}
+                </optgroup>
+              )}
+            </select>
+            {inheritedOkr && <p style={{ marginTop: 4, fontSize: 11.5, color: T.ink2, fontFamily: "'Inter Tight', sans-serif" }}>Herdado do épico {epic.parent}: {inheritedOkr.kr.name}</p>}
 
             <dl style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 8, fontSize: 12.5, fontFamily: "'Inter Tight', sans-serif" }}>
               {[
@@ -1731,6 +1759,26 @@ function layoutLane(epics) {
   return { rowOf, rowCount: Math.max(1, rowEnds.length) };
 }
 
+/** O Roadmap fornece `okrOf(card)`; fora dele (ou sem OKR carregado) os cards não mostram vínculo. */
+const OkrLinkCtx = createContext(null);
+
+/** KR do card, em uma linha: nome do KR (objetivo no tooltip) ou "sem KR" nos épicos que ainda não têm. */
+function OkrChip({ epic }) {
+  const { T } = useTheme();
+  const okr = useContext(OkrLinkCtx);
+  if (!okr) return null;
+  const link = okr.of(epic);
+  if (!link && !isEpicItem(epic)) return null;
+  return (
+    <div
+      title={link ? `${link.objective ? `${link.objective.name} › ` : ""}${link.kr.name}` : "Este épico não está ligado a nenhum Key Result"}
+      style={{ marginTop: 3, fontSize: 9.5, lineHeight: 1.3, fontFamily: "'Inter Tight', sans-serif", color: link ? T.ink1 : "#d17000", fontStyle: link ? "normal" : "italic", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+    >
+      {link ? `KR · ${link.kr.name}` : "sem KR"}
+    </div>
+  );
+}
+
 function PrioCard({ epic, onDragStart, onOpen, onAdd, onMoveToFilaProduto, onMoveToFilaUx, onMoveToFilaOps, onDragOverCard, onDropOnCard, onDragEndCard, dropIndicator, canDrag }) {
   const { T, PRODUCT_STYLE, TIPO_STYLE } = useTheme();
   const prod = epic.project ? (PRODUCT_STYLE[epic.project] || PRODUCT_STYLE["Backoffice"]) : null;
@@ -1762,6 +1810,7 @@ function PrioCard({ epic, onDragStart, onOpen, onAdd, onMoveToFilaProduto, onMov
         </div>
         {prod && <span style={{ width: 6, height: 6, borderRadius: 999, background: prod.primary, display: "inline-block" }} />}
       </div>
+      <OkrChip epic={epic} />
       {(onAdd || onMoveToFilaProduto || onMoveToFilaUx || onMoveToFilaOps) && (
         <div className="flex items-center" style={{ gap: 10, marginTop: 3, flexWrap: "wrap" }}>
           {onMoveToFilaProduto && (
@@ -1832,9 +1881,12 @@ function PrioCard({ epic, onDragStart, onOpen, onAdd, onMoveToFilaProduto, onMov
 function EpicBar({ epic, onDragStart, onOpen, onResize, onRemove, canEdit, showAssignee = true }) {
   const { T, PRODUCT_STYLE } = useTheme();
   const prod = PRODUCT_STYLE[epic.roadmapLane] || PRODUCT_STYLE["Backoffice"];
+  const okr = useContext(OkrLinkCtx);
+  const link = okr ? okr.of(epic) : null;
+  const okrLabel = okr ? (link ? `KR: ${link.kr.name}` : "sem KR") : null;
   return (
     <div
-      title={[epic.summary, showAssignee ? epic.assignee : epic.roadmapLane].filter(Boolean).join(" · ")}
+      title={[epic.summary, showAssignee ? epic.assignee : epic.roadmapLane, okrLabel].filter(Boolean).join(" · ")}
       draggable={canEdit} onDragStart={(e) => onDragStart(e, epic.key)} onClick={() => onOpen(epic)}
       style={{
         display: "flex", alignItems: "center", gap: 6, height: 26, borderRadius: 7, padding: "0 8px", cursor: canEdit ? "grab" : "pointer",
@@ -2158,14 +2210,21 @@ function RoadmapScreen() {
   // só o super o move. Reordenar as listas mexe na ordem de todo mundo: super.
   const { user, canCreateCard, ownsCard, canWriteShared } = useAuth();
   const { initiatives, createInitiative, deleteInitiative, assignEpicToInitiative, updateInitiative, initiativeByEpicKey } = useRoadmapFeatures();
+  const krLink = useEpicKrLink();
   const { moveComments } = useCardComments();
+  // Vínculo com os OKRs: o KR guarda os épicos (`epicKeys`); aqui só se lê.
+  const planIdx = usePlanIndex();
+  const { items: planItems } = usePlanning();
+  const [okrFilter, setOkrFilter] = useState("all");
+  const okrCtx = useMemo(() => ({ of: (card) => okrOf(card, planIdx) }), [planIdx]);
   const [weekCount, setWeekCount] = useState(13);
   // "produto" (linhas = produtos, com iniciativas) ou "responsavel" (linhas = pessoas; as barras mantêm a cor do produto).
   const [viewMode, setViewModeState] = useState(() => {
-    try { return localStorage.getItem("roadmap-view") === "responsavel" ? "responsavel" : "produto"; } catch { return "produto"; }
+    try { const v = localStorage.getItem("roadmap-view"); return v === "responsavel" || v === "okr" ? v : "produto"; } catch { return "produto"; }
   });
   const setViewMode = (v) => { setViewModeState(v); try { localStorage.setItem("roadmap-view", v); } catch { /* sem storage: vale só nesta sessão */ } };
   const byAssignee = viewMode === "responsavel";
+  const byOkr = viewMode === "okr";
   const [openKey, setOpenKey] = useState(null);
   // Qualquer card (épico, tarefa, story, bug) abre o mesmo drawer.
   const openItem = (e) => setOpenKey(e.key);
@@ -2243,6 +2302,7 @@ function RoadmapScreen() {
     const r = await deleteEpicShared(key);
     if (!r.ok) return r;
     if (init) await updateInitiative(init.id, { epicKeys: init.epicKeys.filter((k) => k !== key) });
+    await krLink.unlinkEpic(key);
     setOpenKey(null);
     return r;
   };
@@ -2252,6 +2312,7 @@ function RoadmapScreen() {
     if (!r.ok) return r;
     if (r.newKey) await moveComments(key, r.newKey);
     if (r.newKey && init) await updateInitiative(init.id, { epicKeys: init.epicKeys.map((k) => (k === key ? r.newKey : k)) });
+    if (r.newKey) await krLink.rekeyEpic(key, r.newKey);
     setOpenKey(null);
     return r;
   };
@@ -2284,7 +2345,11 @@ function RoadmapScreen() {
     if (scrollRef.current) scrollRef.current.scrollLeft = PAST_WEEKS * WEEK_COL_PX;
   }, []);
 
-  const enriched = useMemo(() => allEpics.map((e) => ({ ...e, ...(positions[e.key] || { roadmapLane: null, startWeek: null, durationWeeks: 2 }) })), [allEpics, positions]);
+  const enrichedAll = useMemo(() => allEpics.map((e) => ({ ...e, ...(positions[e.key] || { roadmapLane: null, startWeek: null, durationWeeks: 2 }) })), [allEpics, positions]);
+  // O filtro de KR vale para o Gantt e para as camadas de baixo de uma vez: tudo parte daqui.
+  const enriched = useMemo(() => (okrFilter === "all" ? enrichedAll : enrichedAll.filter((e) => matchesOkrFilter(okrOf(e, planIdx), okrFilter))), [enrichedAll, okrFilter, planIdx]);
+  // Quantos dos épicos em aberto já têm KR — o número que mostra o que falta ligar.
+  const okrGap = useMemo(() => okrCoverage(enrichedAll.filter((e) => isEpicItem(e) && !isEpicDone(e)), planIdx), [enrichedAll, planIdx]);
   const backlogItems = enriched.filter((e) => !e.roadmapLane && e.status !== "Done");
   const filaProdutoSet = useMemo(() => new Set(filaProdutoOrder), [filaProdutoOrder]);
   const filaUxSet = useMemo(() => new Set(filaUxOrder), [filaUxOrder]);
@@ -2373,7 +2438,21 @@ function RoadmapScreen() {
       return { product: name, isAssignee: true, scheduled: items, groups: [], unassigned: items, unassignedStartRow: startRow, unassignedRowOf: rowOf, startRow, rowCount: count, collapsed: false };
     });
   }, [enriched]);
-  const laneMeta = byAssignee ? assigneeLaneMeta : productLaneMeta;
+  // Visão por OKR: uma linha por Key Result (na ordem dos objetivos) + "Sem vínculo",
+  // que sempre existe para o que ainda não tem KR ficar à vista.
+  const okrLaneMeta = useMemo(() => {
+    const scheduled = enriched.filter((e) => e.roadmapLane && e.startWeek !== null);
+    let rowCursor = 2;
+    return buildOkrLanes(scheduled, { objectives: planItems.objectives, keyResults: planItems.keyResults, krByEpic: planIdx.krByEpic, objectiveById: planIdx.objectiveById }).map((lane) => {
+      const { rowOf, rowCount } = lane.items.length ? layoutLane(lane.items) : { rowOf: {}, rowCount: 0 };
+      const startRow = rowCursor;
+      const count = Math.max(1, rowCount);
+      rowCursor += count;
+      return { product: lane.key, isAssignee: true, label: lane.label, caption: lane.caption, muted: lane.key === NO_LINK, scheduled: lane.items, groups: [], unassigned: lane.items, unassignedStartRow: startRow, unassignedRowOf: rowOf, startRow, rowCount: count, collapsed: false };
+    });
+  }, [enriched, planItems, planIdx]);
+  const laneMeta = byOkr ? okrLaneMeta : byAssignee ? assigneeLaneMeta : productLaneMeta;
+  const singleCol = byAssignee || byOkr; // sem a coluna de features: só o rótulo da linha
   const assigneeStyle = { primary: T.ink2, subtle: T.bg2, text: T.ink1 };
   const totalRows = laneMeta.reduce((s, l) => s + l.rowCount, 2);
 
@@ -2595,7 +2674,7 @@ function RoadmapScreen() {
     const cur = positions[dragKey] || { durationWeeks: 2 };
     weekIndex = enteringStart(dragKey, weekIndex, cur.durationWeeks || 2);
     const donePatch = movedDonePatch(dragKey, weekIndex, cur.durationWeeks || 2);
-    if (!byAssignee) {
+    if (!byAssignee && !byOkr) {
       updatePosition(dragKey, { roadmapLane: laneKey, startWeek: weekIndex, durationWeeks: cur.durationWeeks || 2, ...donePatch });
       setDragKey(null);
       return;
@@ -2604,13 +2683,14 @@ function RoadmapScreen() {
     const epic = byKey[dragKey];
     const product = cur.roadmapLane || epic?.project;
     if (!product) {
-      notifyRoadmapError("Esse épico não tem projeto — defina o projeto antes de agendar na visão por responsável.");
+      notifyRoadmapError("Esse épico não tem projeto — defina o projeto antes de agendar nesta visão.");
       setDragKey(null);
       return;
     }
     updatePosition(dragKey, { roadmapLane: product, startWeek: weekIndex, durationWeeks: cur.durationWeeks || 2, ...donePatch });
+    // Na visão por OKR a linha é só leitura: arrastar muda a semana, nunca o vínculo com o KR.
     const target = laneKey === NO_ASSIGNEE ? null : laneKey;
-    if ((epic?.assignee || null) !== target && ownsCard(epic)) reassignEpic(dragKey, target);
+    if (byAssignee && (epic?.assignee || null) !== target && ownsCard(epic)) reassignEpic(dragKey, target);
     setDragKey(null);
   };
   // Soltar um épico em cima da barra tracejada da iniciativa vincula os dois.
@@ -2750,25 +2830,45 @@ function RoadmapScreen() {
   })();
 
   return (
+    <OkrLinkCtx.Provider value={okrCtx}>
     <div style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0 }}>
       <div style={{ borderBottom: `1px solid ${T.border1}`, padding: "16px 24px" }}>
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between" style={{ flexWrap: "wrap", gap: 10 }}>
           <div>
             <h1 style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", fontWeight: 700, fontSize: 18, color: T.ink0 }}>Roadmap (Gantt)</h1>
             <p style={{ fontSize: 12, color: T.ink1, marginTop: 2 }}>Épicos por semana · arraste entre camadas (produto) e ao longo do tempo</p>
           </div>
-          <div className="flex items-center" style={{ gap: 10 }}>
+          <div className="flex items-center" style={{ gap: 10, flexWrap: "wrap" }}>
             {saving && <span style={{ fontSize: 11, color: T.ink2 }}>salvando…</span>}
             <div className="flex items-center" style={{ gap: 6 }}>
               <span style={{ fontSize: 12, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>Ver por:</span>
               <div role="group" aria-label="Ver por" style={{ display: "flex", borderRadius: 8, border: `1px solid ${T.border2}`, overflow: "hidden" }}>
-                {[["produto", "Produto"], ["responsavel", "Responsável"]].map(([v, label]) => (
+                {[["produto", "Produto"], ["responsavel", "Responsável"], ["okr", "OKR"]].map(([v, label]) => (
                   <button key={v} onClick={() => setViewMode(v)} aria-pressed={viewMode === v}
                     style={{ padding: "5px 10px", fontSize: 12, fontWeight: 500, border: "none", cursor: "pointer", background: viewMode === v ? "#5166e6" : T.bg1, color: viewMode === v ? "#fff" : T.ink0, fontFamily: "'Inter Tight', sans-serif" }}>
                     {label}
                   </button>
                 ))}
               </div>
+            </div>
+            <div className="flex items-center" style={{ gap: 6 }}>
+              <select aria-label="Filtrar por Key Result" value={okrFilter} onChange={(e) => setOkrFilter(e.target.value)}
+                style={{ borderRadius: 8, border: `1px solid ${okrFilter === "all" ? T.border2 : "#5166e6"}`, background: T.bg1, color: T.ink0, fontSize: 12, padding: "5px 8px", fontFamily: "'Inter Tight', sans-serif", maxWidth: 220 }}>
+                <option value="all">Todos os KRs</option>
+                <option value="none">Sem vínculo com KR ({okrGap.total - okrGap.linked})</option>
+                {planItems.objectives.map((o) => {
+                  const krs = planItems.keyResults.filter((k) => k.objectiveId === o.id);
+                  return (
+                    <optgroup key={o.id} label={o.name}>
+                      <option value={`obj:${o.id}`}>Todo o objetivo</option>
+                      {krs.map((k) => <option key={k.id} value={`kr:${k.id}`}>{k.name}</option>)}
+                    </optgroup>
+                  );
+                })}
+              </select>
+              <span title="Épicos em aberto que já estão ligados a um Key Result" style={{ fontSize: 11, color: okrGap.linked < okrGap.total ? "#d17000" : T.ink2, fontFamily: "'Inter Tight', sans-serif", whiteSpace: "nowrap" }}>
+                {okrGap.linked}/{okrGap.total} com KR
+              </span>
             </div>
             {canCreateCard && (
               <button onClick={addEpic} style={{ display: "flex", alignItems: "center", gap: 5, borderRadius: 8, padding: "6px 10px", fontSize: 12, fontWeight: 500, border: "none", cursor: "pointer", background: "#5166e6", color: "#fff", fontFamily: "'Inter Tight', sans-serif" }}>
@@ -2834,7 +2934,7 @@ function RoadmapScreen() {
         </div>
       )}
 
-      {byAssignee && (
+      {(byAssignee || byOkr) && (
         <div className="flex items-center flex-wrap" style={{ gap: 12, padding: "10px 24px 0", fontFamily: "'Inter Tight', sans-serif", fontSize: 11.5, color: T.ink1 }}>
           {products.map((p) => (
             <span key={p} className="flex items-center" style={{ gap: 5 }}>
@@ -2846,9 +2946,9 @@ function RoadmapScreen() {
       <div className="flex" style={{ padding: "16px 24px", borderBottom: `1px solid ${T.border1}` }}>
         {/* Painel fixo (produto + iniciativa) — nunca rola horizontalmente, então
             não depende de position:sticky sobre um grid rolável (fonte dos vazamentos). */}
-        <div style={{ flexShrink: 0, display: "grid", gridTemplateColumns: byAssignee ? `${PROD_COL_PX + INIT_COL_PX}px` : `${PROD_COL_PX}px ${INIT_COL_PX}px`, gridTemplateRows: `32px repeat(${totalRows - 1}, 32px)`, borderRight: `1px solid ${T.border2}` }}>
+        <div style={{ flexShrink: 0, display: "grid", gridTemplateColumns: singleCol ? `${PROD_COL_PX + INIT_COL_PX}px` : `${PROD_COL_PX}px ${INIT_COL_PX}px`, gridTemplateRows: `32px repeat(${totalRows - 1}, 32px)`, borderRight: `1px solid ${T.border2}` }}>
           <div style={{ gridColumn: 1, gridRow: 1, borderBottom: `1px solid ${T.border2}` }} />
-          {!byAssignee && <div style={{ gridColumn: 2, gridRow: 1, borderBottom: `1px solid ${T.border2}`, display: "flex", alignItems: "center", fontSize: 11, fontWeight: 600, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>Feature</div>}
+          {!singleCol && <div style={{ gridColumn: 2, gridRow: 1, borderBottom: `1px solid ${T.border2}`, display: "flex", alignItems: "center", fontSize: 11, fontWeight: 600, color: T.ink1, fontFamily: "'Inter Tight', sans-serif" }}>Feature</div>}
 
           {laneMeta.map((lane) => {
             const style = lane.isAssignee ? assigneeStyle : PRODUCT_STYLE[lane.product];
@@ -2857,10 +2957,10 @@ function RoadmapScreen() {
                 {lane.isAssignee ? (
                   <div style={{ gridColumn: 1, gridRow: `${lane.startRow} / span ${lane.rowCount}`, display: "flex", alignItems: "center", gap: 8, borderTop: `2px solid ${T.border2}`, padding: "0 8px" }}>
                     <span style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 20, height: 20, borderRadius: 999, background: T.bg2, color: T.ink1, fontSize: 9, fontWeight: 700, textTransform: "uppercase", flexShrink: 0, fontFamily: "'Inter Tight', sans-serif" }}>
-                      {lane.product === NO_ASSIGNEE ? "–" : initials(lane.product)}
+                      {lane.label ? (lane.muted ? "–" : "KR") : lane.product === NO_ASSIGNEE ? "–" : initials(lane.product)}
                     </span>
-                    <span title={lane.product === NO_ASSIGNEE ? "Sem responsável" : lane.product} style={{ fontSize: 12, fontWeight: 600, color: lane.product === NO_ASSIGNEE ? T.ink2 : T.ink0, fontFamily: "'Inter Tight', sans-serif", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {lane.product === NO_ASSIGNEE ? "Sem responsável" : lane.product}
+                    <span title={lane.label ? `${lane.caption ? `${lane.caption} › ` : ""}${lane.label}` : lane.product === NO_ASSIGNEE ? "Sem responsável" : lane.product} style={{ fontSize: 12, fontWeight: 600, color: lane.muted || lane.product === NO_ASSIGNEE ? T.ink2 : T.ink0, fontFamily: "'Inter Tight', sans-serif", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {lane.label ? (<>{lane.caption && <span style={{ fontWeight: 500, color: T.ink2 }}>{lane.caption} › </span>}{lane.label}</>) : lane.product === NO_ASSIGNEE ? "Sem responsável" : lane.product}
                     </span>
                   </div>
                 ) : (
@@ -2950,7 +3050,7 @@ function RoadmapScreen() {
                   })}
                   {lane.unassigned.map((e) => (
                     <div key={e.key} style={{ gridColumn: `${colOf(e.startWeek)} / span ${e.durationWeeks}`, gridRow: lane.unassignedStartRow + lane.unassignedRowOf[e.key], display: "flex", alignItems: "center", zIndex: 1 }}>
-                      <EpicBar epic={e} onDragStart={onDragStart} onOpen={() => openItem(e)} onResize={resizeEpic} onRemove={removeFromGantt} canEdit={ownsCard(e)} showAssignee={!byAssignee} />
+                      <EpicBar epic={e} onDragStart={onDragStart} onOpen={() => openItem(e)} onResize={resizeEpic} onRemove={removeFromGantt} canEdit={ownsCard(e)} showAssignee={!singleCol} />
                     </div>
                   ))}
                 </React.Fragment>
@@ -3143,6 +3243,7 @@ function RoadmapScreen() {
         </div>
       )}
     </div>
+    </OkrLinkCtx.Provider>
   );
 }
 
@@ -3753,6 +3854,34 @@ function useRoadmapFeatures() {
     initiatives: features, initiativeByEpicKey: featureByEpicKey,
     createInitiative: createFeature, updateInitiative: updateFeature, deleteInitiative: deleteFeature, assignEpicToInitiative: assignEpicToFeature,
   };
+}
+
+/** Vínculo card → Key Result, editável pelo Roadmap. A fonte é o próprio KR
+    (`epicKeys`, que aceita épico e também tarefa/story/bug); o servidor tira a
+    chave do KR anterior ao vincular no novo. */
+function useEpicKrLink() {
+  const { items, update } = usePlanning();
+  const krs = items.keyResults;
+  const krOfKey = useMemo(() => {
+    const map = {};
+    krs.forEach((kr) => (kr.epicKeys || []).forEach((k) => { map[k] = kr; }));
+    return map;
+  }, [krs]);
+  const assignToKr = useCallback(async (key, krId) => {
+    const current = krOfKey[key];
+    if ((current ? current.id : null) === (krId || null)) return { ok: true };
+    if (!krId) return update("keyResults", current.id, { epicKeys: current.epicKeys.filter((k) => k !== key) });
+    const target = krs.find((k) => k.id === krId);
+    if (!target) return { ok: false, message: "Key Result não encontrado" };
+    return update("keyResults", krId, { epicKeys: [...(target.epicKeys || []), key] });
+  }, [krs, krOfKey, update]);
+  // Rascunho que vira épico no Jira troca de chave; o vínculo acompanha.
+  const rekeyEpic = useCallback(async (oldKey, newKey) => {
+    const current = krOfKey[oldKey];
+    return current ? update("keyResults", current.id, { epicKeys: current.epicKeys.map((k) => (k === oldKey ? newKey : k)) }) : { ok: true };
+  }, [krOfKey, update]);
+  const unlinkEpic = useCallback((key) => assignToKr(key, null), [assignToKr]);
+  return { krOfKey, assignToKr, rekeyEpic, unlinkEpic };
 }
 
 /** Comentários de decisão por card (planning, tipo "comments"). Escrever é de
@@ -4415,7 +4544,7 @@ function FormInput({ field: f, value, onChange, ctx, draft, disabled }) {
   }
   if (f.type === "epics") {
     const keys = value || [];
-    const byKey = Object.fromEntries(ctx.epics.map((e) => [e.key, e]));
+    const byKey = Object.fromEntries([...(ctx.tasks || []), ...ctx.epics].map((e) => [e.key, e]));
     const pool = f.pool(ctx, draft).filter((e) => !keys.includes(e.key));
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -4492,7 +4621,7 @@ function EditorDrawer({ editor, onClose }) {
   const ro = !canCreateCard;
   const { tasks } = useData();
   const people = useMemo(() => [...new Set([...epics, ...(tasks || [])].flatMap((x) => [x.assignee, x.reporter]).filter(Boolean))].sort(), [epics, tasks]);
-  const ctx = { ...planning.items, epics, products, people, objectiveById: idx.objectiveById };
+  const ctx = { ...planning.items, epics, tasks: tasks || [], products, people, objectiveById: idx.objectiveById };
 
   const save = async () => {
     if (!String(draft.name || "").trim()) { setError("Dê um nome."); return; }
@@ -5271,6 +5400,7 @@ function EpicsScreen() {
   const { canCreateCard, ownsCard } = useAuth();
   const { items: planItems } = usePlanning();
   const features = useRoadmapFeatures();
+  const krLink = useEpicKrLink();
   const { moveComments } = useCardComments();
   // Rascunhos criados aqui ou no Roadmap aparecem junto (coluna "Rascunho").
   const epics = useMemo(() => mergeCustomEpics(sheetEpics, customEpics), [sheetEpics, customEpics]);
@@ -5306,6 +5436,7 @@ function EpicsScreen() {
     if (!r.ok) return r;
     if (r.newKey) await moveComments(key, r.newKey);
     if (r.newKey && feat) await features.updateInitiative(feat.id, { epicKeys: feat.epicKeys.map((k) => (k === key ? r.newKey : k)) });
+    if (r.newKey) await krLink.rekeyEpic(key, r.newKey);
     setOpenKey(null);
     return r;
   };
@@ -5317,6 +5448,7 @@ function EpicsScreen() {
     const r = await deleteEpicShared(key);
     if (!r.ok) return r;
     if (feat) await features.updateInitiative(feat.id, { epicKeys: feat.epicKeys.filter((k) => k !== key) });
+    await krLink.unlinkEpic(key);
     setOpenKey(null);
     return r;
   };
