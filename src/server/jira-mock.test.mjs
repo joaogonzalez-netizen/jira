@@ -60,3 +60,14 @@ test("Jira de teste: o servidor real de mover status funciona de ponta a ponta s
   assert.equal((await handleGet(rcfg)).body.state.epicOverrides["FLIX-1"].status, "Pronto P/ DEV");
   assert.equal((await handleUpdateEpic({ key: "FLIX-1", status: "Cancelado" }, SUPER, rcfg, j)).status, 400);
 });
+
+test("Jira de teste: guarda a descrição (ADF) na criação e ao atualizar", async () => {
+  const f = createMockJiraFetch(ROWS);
+  const doc = { type: "doc", version: 1, content: [{ type: "paragraph", content: [{ type: "text", text: "oi" }] }] };
+  const created = await call(f, "POST", "/rest/api/3/issue", { fields: { project: { key: "FLIX" }, summary: "Com descrição", description: doc } });
+  assert.deepEqual((await call(f, "GET", `/rest/api/3/issue/${created.body.key}?fields=description`)).body.fields.description, doc);
+  const next = { type: "doc", version: 1, content: [] };
+  await call(f, "PUT", `/rest/api/3/issue/${created.body.key}`, { fields: { description: next } });
+  assert.deepEqual((await call(f, "GET", `/rest/api/3/issue/${created.body.key}?fields=description`)).body.fields.description, next);
+  assert.equal((await call(f, "GET", "/rest/api/3/issue/FLIX-1?fields=description")).body.fields.description, null);
+});
