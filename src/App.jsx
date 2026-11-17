@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { ChevronUp, ChevronDown, ChevronRight, ChevronLeft, X, BarChart3, Sun, Moon, Calendar, Plus, Minus, RefreshCw, LogOut, Lock, Layers, Trash2, Users, Settings, Sparkles, Target, LayoutDashboard, Lightbulb, Package, FlaskConical, Check, ExternalLink, Puzzle, PackageCheck, GripVertical } from "lucide-react";
+import { ChevronUp, ChevronDown, ChevronRight, ChevronLeft, X, BarChart3, Sun, Moon, Calendar, Plus, Minus, RefreshCw, LogOut, Lock, Layers, Trash2, Users, Settings, Sparkles, Target, LayoutDashboard, Lightbulb, Package, FlaskConical, Check, ExternalLink, Puzzle, PackageCheck, GripVertical, ChartGantt } from "lucide-react";
 import { BarChart, Bar, LineChart, Line, PieChart, Pie, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell, LabelList, ReferenceLine } from "recharts";
 import storage from "./lib/storage";
 import { roadmapStore, diffRoadmap, isEmptyDiff, summarizeRoadmap, emptyRoadmap, applyEpicOverrides, mergeCustomEpics } from "./lib/roadmap-store";
@@ -8,7 +8,8 @@ import { BOARDS, boardOf, byStatusBackToFront, statusRank } from "./lib/status-o
 import { packRows } from "./lib/delivery-layout";
 import { comparePriority, mergePriority, reorderKeys } from "./lib/delivery-priority";
 import { QUEUE_STATUS_MAP, planQueueAutomation } from "./lib/status-queue";
-import { FUNNEL_STAGES, epicHealth, funnel, krHealth, krProgress, objectiveHealth, quarterTimeline, recentDeliveries, stageOf, withoutKr } from "./lib/director";
+import { FUNNEL_STAGES, epicHealth, funnel, krHealth, krProgress, mondayOf, objectiveHealth, quarterTimeline, recentDeliveries, scheduleEnd, stageOf, withoutKr } from "./lib/director";
+import { barGeometry, buildOkrGantt } from "./lib/okr-gantt";
 import { buildEpicHeader } from "./lib/epic-header";
 import { NO_LINK, buildOkrLanes, matchesOkrFilter, okrCoverage, okrOf } from "./lib/okr-link";
 import { AuthProvider, useAuth } from "./lib/auth-context";
@@ -5146,6 +5147,148 @@ function OkrScreen() {
   );
 }
 
+/* ---- Gantt de Objetivos e Key Results ---- */
+
+const GANTT_LABEL_W = 300;
+const GANTT_MONTH_W = 110;
+const GANTT_ROW_H = 34;
+const GANTT_HEALTH_NAME = { on_track: "No prazo", risk: "Em risco", late: "Atrasado", done: "Atingido", idle: "Não avaliado", unscheduled: "Sem data" };
+
+function OkrGanttScreen() {
+  const { T } = useTheme();
+  const { items, status } = usePlanning();
+  const idx = usePlanIndex();
+  const { positions } = useData();
+  const { canCreateCard } = useAuth();
+  const now = useNow();
+  const [open, editorNode] = useEditor();
+  const [product, setProduct] = useState("all");
+  const [showEpics, setShowEpics] = useState(false);
+
+  const gantt = useMemo(() => {
+    const inProduct = (prods) => product === "all" || prods.includes(product);
+    const objectives = items.objectives.filter((o) => o.status !== "Cancelado" && inProduct([o.product, ...idx.krsOfObjective(o.id).flatMap(idx.productsOfKr)].filter(Boolean)));
+    const ids = new Set(objectives.map((o) => o.id));
+    const keyResults = items.keyResults.filter((k) => k.status !== "Cancelado" && ids.has(k.objectiveId) && inProduct(idx.productsOfKr(k)));
+    const monday = mondayOf(now);
+    const epicsOfKr = (kr) => idx.epicsOf(kr.epicKeys).map((e) => {
+      const pos = positions[e.key];
+      const end = scheduleEnd(pos, now);
+      const weeks = pos && Number.isInteger(pos.durationWeeks) ? pos.durationWeeks : 2;
+      const start = end ? new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + pos.startWeek * 7) : null;
+      return { key: e.key, summary: e.summary, start, end, health: epicHealth(e, pos, now), weeks };
+    });
+    return buildOkrGantt({ objectives, keyResults, today: now, epicsOfKr, showEpics });
+  }, [items, idx, positions, now, product, showEpics]);
+  const { rows, range, months, todayFraction, undated } = gantt;
+  const timelineW = months.length * GANTT_MONTH_W;
+  // Abre já com "hoje" à vista (e não no começo da janela, que pode ser meses atrás).
+  const scrollRef = useRef(null);
+  const hasRows = rows.length > 0;
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollLeft = Math.max(0, todayFraction * timelineW - (el.clientWidth - GANTT_LABEL_W) * 0.35);
+  }, [hasRows, todayFraction, timelineW]);
+  if (status === "error") return <PlanningLoadError />;
+
+  const fmt = (d) => `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getFullYear()).slice(2)}`;
+  const color = (h) => HEALTH_COLOR[h] || HEALTH_COLOR.idle;
+  const labelBg = T.bg0;
+
+  const labelOf = (row) => {
+    if (row.type === "objective") {
+      return (
+        <button onClick={() => canCreateCard && open("objectives", row.item)} title={row.item.name} style={{ ...linkBtn, ...ellipsis, display: "flex", alignItems: "center", gap: 6, color: T.ink0, fontSize: 13, fontWeight: 700, cursor: canCreateCard ? "pointer" : "default" }}>
+          <Target size={14} color={ACCENT} style={{ flexShrink: 0 }} /><span style={ellipsis}>{row.item.name}</span>
+        </button>
+      );
+    }
+    if (row.type === "kr") {
+      return (
+        <button onClick={() => canCreateCard && open("keyResults", row.item)} title={`${row.item.name}${row.reason ? ` — ${row.reason}` : ""}`} style={{ ...linkBtn, ...ellipsis, color: T.ink0, fontSize: 12.5, fontWeight: 500, paddingLeft: 20, cursor: canCreateCard ? "pointer" : "default" }}>
+          {row.item.name}
+        </button>
+      );
+    }
+    return (
+      <a href={jiraUrl(row.item.key)} target="_blank" rel="noopener noreferrer" title={row.item.summary} style={{ ...ellipsis, display: "block", paddingLeft: 40, color: T.ink1, fontSize: 11.5, textDecoration: "none" }}>
+        {row.item.key} · {row.item.summary}
+      </a>
+    );
+  };
+
+  const barOf = (row) => {
+    if (!row.span) return <span style={{ position: "absolute", left: 8, top: 9, fontSize: 11, color: T.ink2, fontStyle: "italic" }}>sem prazo</span>;
+    const g = barGeometry(row.span, range);
+    const c = color(row.health);
+    const tip = row.type === "epic"
+      ? `${row.item.key} · ${row.item.summary}\n${fmt(row.span.start)} → ${fmt(row.span.end)} · ${GANTT_HEALTH_NAME[row.health] || ""}`
+      : `${row.item.name}\n${fmt(row.span.start)} → ${fmt(row.span.end)} · ${GANTT_HEALTH_NAME[row.health] || ""}${row.type === "kr" && row.progress !== null && row.progress !== undefined ? ` · ${row.progress}% da meta` : ""}${row.reason && row.type === "kr" ? `\n${row.reason}` : ""}`;
+    const h = row.type === "objective" ? 12 : row.type === "kr" ? 18 : 12;
+    const pct = row.type === "kr" && isNum(row.progress) ? row.progress : row.type === "epic" && row.health === "done" ? 100 : 0;
+    return (
+      <div title={tip} style={{ position: "absolute", left: `${g.left * 100}%`, width: `${g.width * 100}%`, top: (GANTT_ROW_H - h) / 2, height: h, borderRadius: row.type === "objective" ? 3 : 5, border: `1px solid ${c}`, background: `${c}${row.type === "objective" ? "55" : "26"}`, overflow: "hidden" }}>
+        {pct > 0 && <div style={{ width: `${pct}%`, height: "100%", background: c, opacity: 0.75 }} />}
+      </div>
+    );
+  };
+
+  return (
+    <ScreenShell>
+      <PageTitle title="Gantt de Objetivos e KRs" sub="Cada barra vai do início do objetivo até o prazo; o preenchimento é o progresso e a cor é a saúde">
+        <ProductFilter value={product} onChange={setProduct} />
+        <label className="flex items-center" style={{ gap: 6, fontSize: 12, color: T.ink1, cursor: "pointer" }}>
+          <input type="checkbox" checked={showEpics} onChange={(e) => setShowEpics(e.target.checked)} style={{ accentColor: ACCENT }} />
+          Mostrar épicos agendados
+        </label>
+      </PageTitle>
+
+      <div className="flex items-center" style={{ gap: 14, flexWrap: "wrap", marginBottom: 12, fontSize: 11.5, color: T.ink1 }}>
+        {["on_track", "risk", "late", "done", "idle"].map((h) => (
+          <span key={h} className="flex items-center" style={{ gap: 5 }}><span style={{ width: 10, height: 10, borderRadius: 3, background: color(h) }} />{GANTT_HEALTH_NAME[h]}</span>
+        ))}
+        <span className="flex items-center" style={{ gap: 5 }}><span style={{ width: 0, height: 12, borderLeft: `1.5px dashed ${ACCENT}` }} />hoje</span>
+      </div>
+
+      {rows.length === 0 && <Muted>Nenhum objetivo com datas{product !== "all" ? " neste produto" : ""}. Defina o início e o fim em Objetivos e KRs.</Muted>}
+      {rows.length > 0 && (
+        <div ref={scrollRef} className="pp-scroll" style={{ overflowX: "auto", border: `1px solid ${T.border2}`, borderRadius: 10, background: labelBg }}>
+          <div style={{ position: "relative", width: GANTT_LABEL_W + timelineW, minWidth: "100%" }}>
+            {/* Colunas dos meses e linha de hoje, atrás das linhas */}
+            <div style={{ position: "absolute", left: GANTT_LABEL_W, top: 0, bottom: 0, width: timelineW, pointerEvents: "none", zIndex: 0 }}>
+              {months.map((m, i) => <div key={m.key} style={{ position: "absolute", left: i * GANTT_MONTH_W, top: 0, bottom: 0, borderLeft: `1px solid ${T.border1}` }} />)}
+              {todayFraction >= 0 && todayFraction <= 1 && <div style={{ position: "absolute", left: `${todayFraction * 100}%`, top: 0, bottom: 0, borderLeft: `1.5px dashed ${ACCENT}`, opacity: 0.8, zIndex: 1 }} />}
+            </div>
+
+            <div className="flex" style={{ height: 30, borderBottom: `1px solid ${T.border2}` }}>
+              <div style={{ position: "sticky", left: 0, zIndex: 3, width: GANTT_LABEL_W, flexShrink: 0, background: labelBg, borderRight: `1px solid ${T.border2}` }} />
+              <div style={{ display: "flex", width: timelineW, position: "relative", zIndex: 1 }}>
+                {months.map((m) => <div key={m.key} style={{ width: GANTT_MONTH_W, flexShrink: 0, padding: "0 8px", fontSize: 11, fontWeight: 600, color: T.ink1, display: "flex", alignItems: "center" }}>{m.label}</div>)}
+              </div>
+            </div>
+
+            {rows.map((row) => (
+              <div key={`${row.type}:${row.id}`} className="flex" style={{ height: GANTT_ROW_H, borderTop: row.type === "objective" ? `1px solid ${T.border2}` : "none" }}>
+                <div style={{ position: "sticky", left: 0, zIndex: 2, width: GANTT_LABEL_W, flexShrink: 0, background: labelBg, borderRight: `1px solid ${T.border2}`, display: "flex", alignItems: "center", padding: "0 10px", minWidth: 0 }}>
+                  <div style={{ minWidth: 0, flex: 1 }}>{labelOf(row)}</div>
+                </div>
+                <div style={{ position: "relative", width: timelineW, flexShrink: 0, zIndex: 1 }}>{barOf(row)}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {undated.length > 0 && (
+        <Muted style={{ marginTop: 10 }}>
+          Sem datas, fora do gráfico: {undated.map((o) => o.name).join(", ")}. Defina início e fim (ou prazo nos KRs) em Objetivos e KRs.
+        </Muted>
+      )}
+      {editorNode}
+    </ScreenShell>
+  );
+}
+
 function ObjectiveGoal({ goal }) {
   const { T } = useTheme();
   return (
@@ -6050,7 +6193,7 @@ function WorkspaceEditor({ editor, onClose }) {
 const SIDEBAR_KEY = "pp-sidebar-collapsed";
 const SIDEBAR_GROUPS = [
   { id: "visao", title: null, label: "Visão geral", items: [["visao", "Visão geral", LayoutDashboard]] },
-  { id: "estrategia", title: "Estratégia", items: [["okrs", "Objetivos e KRs", Target], ["oportunidades", "Oportunidades", Lightbulb]] },
+  { id: "estrategia", title: "Estratégia", items: [["okrs", "Objetivos e KRs", Target], ["okrgantt", "Gantt de OKRs", ChartGantt], ["oportunidades", "Oportunidades", Lightbulb]] },
   { id: "execucao", title: "Execução", items: [["epicos", "Épicos", Layers], ["roadmap", "Roadmap", Calendar], ["entregas", "Entregas", PackageCheck]] },
   { id: "produto", title: "Produto", items: [["produtos", "Produtos e features", Package]] },
 ];
@@ -6174,6 +6317,7 @@ function AppShell() {
 
       {menu === "visao" ? <DirectorScreen />
         : menu === "okrs" ? <OkrScreen />
+        : menu === "okrgantt" ? <OkrGanttScreen />
         : menu === "oportunidades" ? <OpportunitiesScreen />
         : menu === "epicos" ? <EpicsScreen />
         : menu === "produtos" ? <ProductsScreen />
