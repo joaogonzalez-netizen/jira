@@ -3714,7 +3714,7 @@ const DONE_COLOR = "#00aa6c";
 const LATE_COLOR = "#e5484d";
 const SOON_COLOR = "#d98a00";
 const EXPERIMENT_STATUSES = ["Ideia", "Rodando", "Analisando", "Concluído"];
-const KR_STATUSES = ["Em andamento", "Planejado", "Pausado", "Concluído", "Cancelado"];
+const KR_STATUSES = ["Em andamento", "Planejado", "Não iniciado", "Pausado", "Concluído", "Cancelado"];
 
 const isEpicDone = (e) => e.status === "Done" || e.stage === "Concluído";
 /** Em aberto: nem concluído nem cancelado/arquivado (esses dois a planilha/Jira já escondem, mas o filtro não depende disso). */

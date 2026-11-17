@@ -62,7 +62,7 @@ export const KINDS = {
       target: { type: "number" },
       current: { type: "number" },
       dueDate: { type: "date" },
-      status: { type: "enum", options: ["Planejado", "Em andamento", "Pausado", "Concluído", "Cancelado"], default: "Em andamento" },
+      status: { type: "enum", options: ["Não iniciado", "Planejado", "Em andamento", "Pausado", "Concluído", "Cancelado"], default: "Em andamento" },
       checkins: checkins("current"),
     },
   },

@@ -7,6 +7,8 @@
 import { krHealth, objectiveHealth } from "./director.js";
 
 const DAY = 86400000;
+/** KR que ainda não começou não tem barra: o Gantt mostra só o que já está em curso, planejado, pausado ou concluído. */
+const NOT_STARTED = new Set(["Não iniciado"]);
 const MONTHS = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
 
 const isoToDate = (iso) => {
@@ -82,12 +84,13 @@ export const fractionOf = (date, range) => (date - range.start) / (range.end - r
 /**
  * Linhas do Gantt, na ordem em que aparecem. `epicsOfKr(kr)` (opcional) devolve os épicos agendados do KR
  * como `{ key, summary, start, end, health }`; só entram quando `showEpics` é verdadeiro.
+ * KRs com status "Não iniciado" ficam de fora (e os épicos deles também).
  * Devolve `{ rows, range, months, todayFraction, undated }`: `undated` são os objetivos sem nenhuma data.
  */
 export function buildOkrGantt({ objectives, keyResults, today = new Date(), epicsOfKr = null, showEpics = false }) {
   const day = startOfDay(today);
   const groups = objectives.map((objective) => {
-    const krs = keyResults.filter((k) => k.objectiveId === objective.id).map((kr) => {
+    const krs = keyResults.filter((k) => k.objectiveId === objective.id && !NOT_STARTED.has(k.status)).map((kr) => {
       const s = krSpan(kr, objective);
       const h = krHealth(kr, { objective, now: day });
       const epics = showEpics && epicsOfKr ? epicsOfKr(kr).filter((e) => e.start && e.end) : [];
