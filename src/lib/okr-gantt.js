@@ -62,9 +62,12 @@ export function monthsBetween(start, end) {
   return out;
 }
 
-/** Janela do gráfico: tudo o que há de barra, hoje, e no mínimo seis meses, sempre em meses inteiros. */
-export function timeRange(spans, today, minMonths = 6) {
-  const points = [today, ...spans.filter(Boolean).flatMap((s) => [s.start, s.end])];
+/**
+ * Janela do gráfico: tudo o que há de barra, hoje, no mínimo seis meses, sempre em meses inteiros.
+ * `include` ({ start, end }) é um período que a janela sempre cobre (ex.: 2026 e 2027), mesmo sem barra nele.
+ */
+export function timeRange(spans, today, { minMonths = 6, include = null } = {}) {
+  const points = [today, ...spans.filter(Boolean).flatMap((s) => [s.start, s.end]), ...(include ? [include.start, new Date(include.end - 1)] : [])];
   const start = firstOfMonth(new Date(Math.min(...points)));
   let end = addMonths(firstOfMonth(new Date(Math.max(...points))), 1);
   while (monthsBetween(start, addDays(end, -1)).length < minMonths) end = addMonths(end, 1);
@@ -84,10 +87,11 @@ export const fractionOf = (date, range) => (date - range.start) / (range.end - r
 /**
  * Linhas do Gantt, na ordem em que aparecem. `epicsOfKr(kr)` (opcional) devolve os épicos agendados do KR
  * como `{ key, summary, start, end, health }`; só entram quando `showEpics` é verdadeiro.
- * KRs com status "Não iniciado" ficam de fora (e os épicos deles também).
+ * KRs com status "Não iniciado" ficam de fora (e os épicos deles também). `include` é o período que a janela
+ * sempre cobre; barras fora dele esticam a janela, nunca ficam escondidas.
  * Devolve `{ rows, range, months, todayFraction, undated }`: `undated` são os objetivos sem nenhuma data.
  */
-export function buildOkrGantt({ objectives, keyResults, today = new Date(), epicsOfKr = null, showEpics = false }) {
+export function buildOkrGantt({ objectives, keyResults, today = new Date(), epicsOfKr = null, showEpics = false, include = null }) {
   const day = startOfDay(today);
   const groups = objectives.map((objective) => {
     const krs = keyResults.filter((k) => k.objectiveId === objective.id && !NOT_STARTED.has(k.status)).map((kr) => {
@@ -109,6 +113,6 @@ export function buildOkrGantt({ objectives, keyResults, today = new Date(), epic
       for (const e of k.epics) rows.push({ type: "epic", id: `${k.kr.id}:${e.key}`, item: e, span: span(e.start, e.end), health: e.health });
     }
   }
-  const range = timeRange(rows.map((r) => r.span), day);
+  const range = timeRange(rows.map((r) => r.span), day, { include });
   return { rows, range, months: monthsBetween(range.start, addDays(range.end, -1)), todayFraction: fractionOf(day, range), undated };
 }
