@@ -148,3 +148,22 @@ test("buildOkrGantt: os status dos times entram no Gantt e a linha carrega o sta
   assert.equal(rows[4].health, "done");
   assert.ok(rows.slice(0, 4).every((r) => ["on_track", "risk", "late"].includes(r.health)));
 });
+
+test("timeRange: o período incluído (2026 e 2027) é sempre coberto e barras fora dele esticam a janela", () => {
+  const include = { start: D(2026, 1, 1), end: D(2028, 1, 1) };
+  const r = timeRange([{ start: D(2026, 11, 3), end: D(2026, 12, 20) }], TODAY, { include });
+  same(r.start, D(2026, 1, 1));
+  same(r.end, D(2028, 1, 1));
+  assert.equal(monthsBetween(r.start, new Date(r.end - 1)).length, 24);
+  const stretched = timeRange([{ start: D(2025, 10, 5), end: D(2028, 2, 10) }], TODAY, { include });
+  same(stretched.start, D(2025, 10, 1));
+  same(stretched.end, D(2028, 3, 1));
+});
+
+test("buildOkrGantt: com include, a janela abre em janeiro de 2026 e vai até dezembro de 2027", () => {
+  const g = buildOkrGantt({ objectives: [OBJ], keyResults: [kr()], today: TODAY, include: { start: D(2026, 1, 1), end: D(2028, 1, 1) } });
+  assert.equal(g.months.length, 24);
+  assert.equal(g.months[0].label, "jan/26");
+  assert.equal(g.months[23].label, "dez/27");
+  assert.ok(g.todayFraction > 0.4 && g.todayFraction < 0.5); // novembro de 2026 fica perto do meio da janela
+});

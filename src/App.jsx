@@ -5199,7 +5199,10 @@ function OkrScreen() {
 /* ---- Gantt de Objetivos e Key Results ---- */
 
 const GANTT_LABEL_W = 340;
-const GANTT_MONTH_W = 110;
+const GANTT_FALLBACK_MONTH_W = 110; // largura do mês até a tela ser medida
+const GANTT_VISIBLE_MONTHS = 3; // quantos meses cabem na tela de cada vez; o resto, rolando para os lados
+/** O Gantt sempre cobre 2026 e 2027 (barras fora desse período esticam a janela). */
+const GANTT_INCLUDE = { start: new Date(2026, 0, 1), end: new Date(2028, 0, 1) };
 const GANTT_ROW_H = 34;
 const GANTT_HEALTH_NAME = { on_track: "No prazo", risk: "Em risco", late: "Atrasado", done: "Atingido", idle: "Não avaliado", unscheduled: "Sem data" };
 
@@ -5226,18 +5229,41 @@ function OkrGanttScreen() {
       const start = end ? new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + pos.startWeek * 7) : null;
       return { key: e.key, summary: e.summary, status: e.status, start, end, health: epicHealth(e, pos, now), weeks };
     });
-    return buildOkrGantt({ objectives, keyResults, today: now, epicsOfKr, showEpics });
+    return buildOkrGantt({ objectives, keyResults, today: now, epicsOfKr, showEpics, include: GANTT_INCLUDE });
   }, [items, idx, positions, now, product, showEpics]);
   const { rows, range, months, todayFraction, undated } = gantt;
-  const timelineW = months.length * GANTT_MONTH_W;
-  // Abre já com "hoje" à vista (e não no começo da janela, que pode ser meses atrás).
   const scrollRef = useRef(null);
   const hasRows = rows.length > 0;
+  // Cada mês ocupa 1/3 da área do gráfico (a tela menos a coluna dos nomes): três meses por vez, o resto rolando.
+  const [viewW, setViewW] = useState(0);
   useEffect(() => {
     const el = scrollRef.current;
-    if (!el) return;
-    el.scrollLeft = Math.max(0, todayFraction * timelineW - (el.clientWidth - GANTT_LABEL_W) * 0.35);
-  }, [hasRows, todayFraction, timelineW]);
+    if (!el) return undefined;
+    const measure = () => setViewW(el.clientWidth);
+    measure();
+    if (typeof ResizeObserver === "undefined") return undefined;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [hasRows]);
+  const monthW = viewW > GANTT_LABEL_W + 120 ? (viewW - GANTT_LABEL_W) / GANTT_VISIBLE_MONTHS : GANTT_FALLBACK_MONTH_W;
+  const timelineW = months.length * monthW;
+  // Abre com o mês de hoje no meio dos três visíveis (e não em janeiro de 2026).
+  const todayMonth = months.findIndex((m) => now >= m.start && now < m.end);
+  const scrollToToday = useCallback((behavior = "auto") => {
+    const el = scrollRef.current;
+    if (!el || todayMonth === -1) return;
+    el.scrollTo({ left: Math.max(0, (todayMonth - 1) * monthW), behavior });
+  }, [todayMonth, monthW]);
+  const scrolledFor = useRef("");
+  useEffect(() => {
+    // Só no primeiro desenho com a largura medida (e se mudar o período): redimensionar não tira o lugar de quem rolou.
+    const key = `${hasRows}:${months.length}:${viewW > 0}`;
+    if (!hasRows || viewW === 0 || scrolledFor.current === key) return;
+    scrolledFor.current = key;
+    scrollToToday();
+  }, [hasRows, viewW, months.length, scrollToToday]);
+  const scrollMonths = (n) => scrollRef.current && scrollRef.current.scrollBy({ left: n * monthW, behavior: "smooth" });
   if (status === "error") return <PlanningLoadError />;
 
   const fmt = (d) => `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getFullYear()).slice(2)}`;
@@ -5294,6 +5320,13 @@ function OkrGanttScreen() {
     <ScreenShell>
       <PageTitle title="Gantt de Objetivos e KRs" sub="Cada barra vai do início do objetivo até o prazo; o preenchimento é o progresso e a cor é a saúde">
         <ProductFilter value={product} onChange={setProduct} />
+        {rows.length > 0 && (
+          <span className="flex items-center" style={{ gap: 4 }}>
+            <button onClick={() => scrollMonths(-1)} title="Um mês para trás" aria-label="Um mês para trás" style={{ ...btnStyle(T), padding: "6px 8px" }}><ChevronLeft size={14} /></button>
+            <button onClick={() => scrollToToday("smooth")} title="Voltar para o mês de hoje" style={btnStyle(T)}>Hoje</button>
+            <button onClick={() => scrollMonths(1)} title="Um mês para a frente" aria-label="Um mês para a frente" style={{ ...btnStyle(T), padding: "6px 8px" }}><ChevronRight size={14} /></button>
+          </span>
+        )}
         <label className="flex items-center" style={{ gap: 6, fontSize: 12, color: T.ink1, cursor: "pointer" }}>
           <input type="checkbox" checked={showEpics} onChange={(e) => setShowEpics(e.target.checked)} style={{ accentColor: ACCENT }} />
           Mostrar épicos agendados
@@ -5313,14 +5346,14 @@ function OkrGanttScreen() {
           <div style={{ position: "relative", width: GANTT_LABEL_W + timelineW, minWidth: "100%" }}>
             {/* Colunas dos meses e linha de hoje, atrás das linhas */}
             <div style={{ position: "absolute", left: GANTT_LABEL_W, top: 0, bottom: 0, width: timelineW, pointerEvents: "none", zIndex: 0 }}>
-              {months.map((m, i) => <div key={m.key} style={{ position: "absolute", left: i * GANTT_MONTH_W, top: 0, bottom: 0, borderLeft: `1px solid ${T.border1}` }} />)}
+              {months.map((m, i) => <div key={m.key} style={{ position: "absolute", left: i * monthW, top: 0, bottom: 0, borderLeft: `1px solid ${T.border1}` }} />)}
               {todayFraction >= 0 && todayFraction <= 1 && <div style={{ position: "absolute", left: `${todayFraction * 100}%`, top: 0, bottom: 0, borderLeft: `1.5px dashed ${ACCENT}`, opacity: 0.8, zIndex: 1 }} />}
             </div>
 
             <div className="flex" style={{ height: 30, borderBottom: `1px solid ${T.border2}` }}>
               <div style={{ position: "sticky", left: 0, zIndex: 3, width: GANTT_LABEL_W, flexShrink: 0, background: labelBg, borderRight: `1px solid ${T.border2}` }} />
               <div style={{ display: "flex", width: timelineW, position: "relative", zIndex: 1 }}>
-                {months.map((m) => <div key={m.key} style={{ width: GANTT_MONTH_W, flexShrink: 0, padding: "0 8px", fontSize: 11, fontWeight: 600, color: T.ink1, display: "flex", alignItems: "center" }}>{m.label}</div>)}
+                {months.map((m) => <div key={m.key} style={{ width: monthW, flexShrink: 0, padding: "0 8px", fontSize: 11, fontWeight: 600, color: T.ink1, display: "flex", alignItems: "center" }}>{m.label}</div>)}
               </div>
             </div>
 
