@@ -138,3 +138,13 @@ test("buildOkrGantt: objetivo com todos os KRs Não iniciado continua com a barr
   assert.deepEqual(undated.undated.map((o) => o.id), ["o1"]);
   assert.deepEqual(undated.rows, []);
 });
+
+test("buildOkrGantt: os status dos times entram no Gantt e a linha carrega o status do KR", () => {
+  const statuses = ["Em UX", "Pronta p/ dev", "Em dev", "Em rollout", "Done"];
+  const keyResults = statuses.map((status, i) => kr({ id: `t${i}`, name: status, status }));
+  const g = buildOkrGantt({ objectives: [OBJ], keyResults, today: TODAY });
+  const rows = g.rows.filter((r) => r.type === "kr");
+  assert.deepEqual(rows.map((r) => r.item.status), statuses);
+  assert.equal(rows[4].health, "done");
+  assert.ok(rows.slice(0, 4).every((r) => ["on_track", "risk", "late"].includes(r.health)));
+});

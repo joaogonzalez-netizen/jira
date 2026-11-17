@@ -4,6 +4,8 @@
  * o que está andando sem Key Result. Só lógica pura (sem React, sem rede) para
  * ser testada: a tela apenas desenha o que sai daqui.
  *
+ * Os status de KR que contam como "andando" e como "entregue" estão em KR_ACTIVE_STATUSES e KR_DONE_STATUSES.
+ *
  * Saúde, do pior para o melhor: "late" (atrasado) > "risk" (em risco) >
  * "on_track" (no prazo); "done" (atingido/concluído) e "idle" (não avaliado:
  * planejado, pausado ou sem dado para medir) ficam de fora da comparação.
@@ -18,6 +20,11 @@ export const PACE_TOLERANCE = 0.15;
 export const STALE_CHECKIN_DAYS = 14;
 
 export const isNum = (v) => typeof v === "number" && Number.isFinite(v);
+
+/** Status de KR em que o trabalho está andando: a saúde é avaliada e o check-in da semana é cobrado. */
+export const KR_ACTIVE_STATUSES = ["Em andamento", "Em UX", "Pronta p/ dev", "Em dev", "Em rollout"];
+/** Status de KR que significam entregue ("Done" é o mesmo que "Concluído", na língua dos times). */
+export const KR_DONE_STATUSES = ["Concluído", "Done"];
 
 /** % de 0 a 100 entre início e meta; `null` se faltar número ou se início = meta. */
 export function krProgress(kr) {
@@ -52,8 +59,8 @@ const addDays = (d, n) => { const r = new Date(d); r.setDate(r.getDate() + n); r
 export function krHealth(kr, { objective = null, now = new Date() } = {}) {
   const today = startOfDay(now);
   const progress = krProgress(kr);
-  if (kr.status === "Concluído" || (progress !== null && progress >= 100)) return { health: "done", progress, expected: null, reason: "Meta atingida" };
-  if (kr.status !== "Em andamento") return { health: "idle", progress, expected: null, reason: kr.status || "Sem status" };
+  if (KR_DONE_STATUSES.includes(kr.status) || (progress !== null && progress >= 100)) return { health: "done", progress, expected: null, reason: "Meta atingida" };
+  if (!KR_ACTIVE_STATUSES.includes(kr.status)) return { health: "idle", progress, expected: null, reason: kr.status || "Sem status" };
 
   const due = isoToDate(kr.dueDate);
   if (due && today > due) return { health: "late", progress, expected: 1, reason: `Prazo venceu em ${fmtBR(due)}` };

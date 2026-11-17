@@ -3,6 +3,7 @@ import {
   handleCreate,
   handleDelete,
   handleList,
+  handleMove,
   handleUpdate,
   loadConfig,
   resolveSessionFromCookie,
@@ -28,6 +29,7 @@ export default async function handler(req, res) {
     }
     if (req.method === "PATCH") {
       const body = jsonBody(req);
+      if (body.move !== undefined) return sendJson(res, await handleMove(body.kind, body.id, body.move, session, config));
       return sendJson(res, await handleUpdate(body.kind, body.id, body, session, config));
     }
     if (req.method === "DELETE") {

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { applyFields, mondayOf, handleCreate, handleDelete, handleList, handleUpdate } from "./planning-core.js";
+import { applyFields, mondayOf, handleCreate, handleDelete, handleList, handleMove, handleUpdate } from "./planning-core.js";
 
 const ADMIN = { role: "admin", user: { id: "1", email: "ana@x.com" } };
 const LEITOR = { role: "user", user: { id: "2", email: "leitor@x.com" } };
@@ -294,4 +294,70 @@ test("KR aceita o status Não iniciado e continua recusando status que não exis
   assert.equal((await handleUpdate("keyResults", kr.id, { status: "Não iniciado" }, ADMIN, config)).body.status, "Não iniciado");
   const bad = await handleUpdate("keyResults", kr.id, { status: "Quase lá" }, ADMIN, config);
   assert.notEqual(bad.body.status, "Quase lá"); // valor fora da lista é ignorado
+});
+
+test("KR aceita os status dos times e Done", async () => {
+  const config = fakeConfig();
+  const { kr } = await tree(config);
+  for (const status of ["Em UX", "Pronta p/ dev", "Em dev", "Em rollout", "Done"]) {
+    assert.equal((await handleUpdate("keyResults", kr.id, { status }, ADMIN, config)).body.status, status);
+  }
+});
+
+/* ------------------------------ reordenar ------------------------------ */
+
+const ids = (list) => list.map((i) => i.id);
+
+async function threeObjectives(config) {
+  const out = [];
+  for (const name of ["A", "B", "C"]) out.push((await handleCreate("objectives", { name, product: "STLFLIX" }, ADMIN, config)).body);
+  return out;
+}
+
+test("mover objetivo: antes e depois de outro, devolve a ordem nova e grava na lista", async () => {
+  const config = fakeConfig();
+  const [a, b, c] = await threeObjectives(config);
+  const up = await handleMove("objectives", c.id, { relativeTo: a.id, position: "before" }, ADMIN, config);
+  assert.equal(up.status, 200);
+  assert.deepEqual(up.body.order, [c.id, a.id, b.id]);
+  assert.deepEqual(ids((await handleList("objectives", config)).body), [c.id, a.id, b.id]);
+  const down = await handleMove("objectives", c.id, { relativeTo: b.id, position: "after" }, ADMIN, config);
+  assert.deepEqual(down.body.order, [a.id, b.id, c.id]);
+});
+
+test("mover objetivo: mover para o mesmo lugar não muda nada; ele mesmo como referência é aceito", async () => {
+  const config = fakeConfig();
+  const [a, b, c] = await threeObjectives(config);
+  assert.deepEqual((await handleMove("objectives", a.id, { relativeTo: b.id, position: "before" }, ADMIN, config)).body.order, [a.id, b.id, c.id]);
+  assert.deepEqual((await handleMove("objectives", b.id, { relativeTo: b.id, position: "after" }, ADMIN, config)).body.order, [a.id, b.id, c.id]);
+});
+
+test("mover Key Result: só dentro do mesmo objetivo; entre objetivos é recusado", async () => {
+  const config = fakeConfig();
+  const [o1, o2] = await threeObjectives(config);
+  const mk = async (name, objectiveId) => (await handleCreate("keyResults", { name, objectiveId }, ADMIN, config)).body;
+  const k1 = await mk("K1", o1.id), k2 = await mk("K2", o2.id), k3 = await mk("K3", o1.id), k4 = await mk("K4", o1.id);
+  const moved = await handleMove("keyResults", k4.id, { relativeTo: k1.id, position: "before" }, ADMIN, config);
+  assert.equal(moved.status, 200);
+  assert.deepEqual(moved.body.order, [k4.id, k1.id, k2.id, k3.id]); // K2, de outro objetivo, não se mexe
+  const cross = await handleMove("keyResults", k1.id, { relativeTo: k2.id, position: "after" }, ADMIN, config);
+  assert.equal(cross.status, 400);
+  assert.match(cross.body.message, /mesmo objetivo/);
+  assert.deepEqual(ids((await handleList("keyResults", config)).body), [k4.id, k1.id, k2.id, k3.id]);
+});
+
+test("mover: só admin, só objetivos e Key Results, e movimento mal formado é recusado", async () => {
+  const config = fakeConfig();
+  const [a, b] = await threeObjectives(config);
+  const good = { relativeTo: b.id, position: "after" };
+  assert.equal((await handleMove("objectives", a.id, good, LEITOR, config)).status, 403);
+  assert.equal((await handleMove("opportunities", a.id, good, ADMIN, config)).status, 400);
+  assert.equal((await handleMove("nada", a.id, good, ADMIN, config)).status, 400);
+  assert.equal((await handleMove("objectives", "", good, ADMIN, config)).status, 400);
+  for (const bad of [undefined, null, {}, { relativeTo: b.id }, { relativeTo: b.id, position: "meio" }, { relativeTo: 5, position: "after" }]) {
+    assert.equal((await handleMove("objectives", a.id, bad, ADMIN, config)).status, 400, JSON.stringify(bad));
+  }
+  assert.equal((await handleMove("objectives", "sumiu", good, ADMIN, config)).status, 404);
+  assert.equal((await handleMove("objectives", a.id, { relativeTo: "sumiu", position: "after" }, ADMIN, config)).status, 404);
+  assert.deepEqual(ids((await handleList("objectives", config)).body).length, 3); // nada se perdeu
 });
