@@ -398,3 +398,39 @@ export async function handleDelete(kind, id, session, config) {
   await writeAll(config, kind, list.filter((i) => i.id !== id));
   return { status: 200, body: { ok: true } };
 }
+
+/**
+ * Tipos que se reordenam à mão: a ordem da lista guardada é a ordem na tela. Objetivos se reordenam entre si;
+ * Key Results, só dentro do mesmo objetivo (o valor é o campo que define o grupo).
+ */
+const ORDERABLE = { objectives: null, keyResults: "objectiveId" };
+
+/**
+ * Põe o item `id` logo antes ou logo depois de outro (`move = { relativeTo, position }`, position "before" | "after").
+ * Responde com a ordem nova de todos os ids da lista, para a tela se ajustar sem reler tudo.
+ */
+export async function handleMove(kind, id, move, session, config) {
+  if (!isKind(kind)) return unknownKind();
+  if (!(kind in ORDERABLE)) return { status: 400, body: { message: "Só objetivos e Key Results podem ser reordenados" } };
+  if (!canWriteKind(kind, session)) return forbidden();
+  if (!id) return { status: 400, body: { message: "id é obrigatório" } };
+  const relativeTo = move && typeof move.relativeTo === "string" ? move.relativeTo : "";
+  const position = move && move.position;
+  if (!relativeTo || (position !== "before" && position !== "after")) return { status: 400, body: { message: "Movimento inválido: informe relativeTo e position (before ou after)" } };
+
+  const list = await readAll(config, kind);
+  const item = list.find((i) => i.id === id);
+  const other = list.find((i) => i.id === relativeTo);
+  if (!item || !other) return { status: 404, body: { message: `${KINDS[kind].label} não encontrado` } };
+  const groupField = ORDERABLE[kind];
+  if (groupField && (item[groupField] || "") !== (other[groupField] || "")) {
+    return { status: 400, body: { message: "Só dá para reordenar dentro do mesmo objetivo" } };
+  }
+  if (id === relativeTo) return { status: 200, body: { order: list.map((i) => i.id) } };
+
+  const without = list.filter((i) => i.id !== id);
+  const at = without.findIndex((i) => i.id === relativeTo) + (position === "after" ? 1 : 0);
+  const next = [...without.slice(0, at), item, ...without.slice(at)];
+  await writeAll(config, kind, next);
+  return { status: 200, body: { order: next.map((i) => i.id) } };
+}
