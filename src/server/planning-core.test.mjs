@@ -287,3 +287,11 @@ test("solução guarda o épico do Jira em que virou e o apaga ao desvincular", 
   assert.equal(linked.body.epicKey, "FLIX-123");
   assert.equal((await handleUpdate("solutions", sol.id, { epicKey: "" }, ADMIN, config)).body.epicKey, "");
 });
+
+test("KR aceita o status Não iniciado e continua recusando status que não existe", async () => {
+  const config = fakeConfig();
+  const { kr } = await tree(config);
+  assert.equal((await handleUpdate("keyResults", kr.id, { status: "Não iniciado" }, ADMIN, config)).body.status, "Não iniciado");
+  const bad = await handleUpdate("keyResults", kr.id, { status: "Quase lá" }, ADMIN, config);
+  assert.notEqual(bad.body.status, "Quase lá"); // valor fora da lista é ignorado
+});

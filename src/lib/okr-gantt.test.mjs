@@ -118,3 +118,23 @@ test("buildOkrGantt: nada cadastrado devolve uma janela vazia, sem quebrar", () 
   assert.deepEqual(g.rows, []);
   assert.ok(g.months.length >= 6);
 });
+
+test("buildOkrGantt: KR Não iniciado fica fora do Gantt (e os épicos dele); os outros status entram", () => {
+  const statuses = ["Em andamento", "Planejado", "Pausado", "Concluído", "Não iniciado"];
+  const keyResults = statuses.map((status, i) => kr({ id: `k${i}`, name: status, status }));
+  const epics = [{ key: "FLIX-1", summary: "A", start: D(2026, 11, 2), end: D(2026, 11, 29), health: "on_track" }];
+  const g = buildOkrGantt({ objectives: [OBJ], keyResults, today: TODAY, epicsOfKr: () => epics, showEpics: true });
+  const krRows = g.rows.filter((r) => r.type === "kr").map((r) => r.item.status);
+  assert.deepEqual(krRows, ["Em andamento", "Planejado", "Pausado", "Concluído"]);
+  assert.equal(g.rows.filter((r) => r.type === "epic").length, 4); // 1 por KR que está no gráfico, nenhum do Não iniciado
+});
+
+test("buildOkrGantt: objetivo com todos os KRs Não iniciado continua com a barra dele quando tem datas; sem datas vai para undated", () => {
+  const onlyNotStarted = [kr({ id: "a", status: "Não iniciado" }), kr({ id: "b", status: "Não iniciado" })];
+  const dated = buildOkrGantt({ objectives: [OBJ], keyResults: onlyNotStarted, today: TODAY });
+  assert.deepEqual(dated.rows.map((r) => r.type), ["objective"]);
+  assert.equal(dated.rows[0].health, "idle"); // nenhum KR avaliado
+  const undated = buildOkrGantt({ objectives: [{ id: "o1", name: "Sem datas" }], keyResults: onlyNotStarted, today: TODAY });
+  assert.deepEqual(undated.undated.map((o) => o.id), ["o1"]);
+  assert.deepEqual(undated.rows, []);
+});

@@ -23,9 +23,12 @@ test("krHealth: atingido por status ou por progresso", () => {
   assert.equal(health({ current: 100 }).health, "done");
 });
 
-test("krHealth: planejado e pausado não são avaliados", () => {
+test("krHealth: planejado, não iniciado e pausado não são avaliados", () => {
   assert.equal(health({ status: "Planejado" }).health, "idle");
   assert.equal(health({ status: "Pausado" }).health, "idle");
+  const notStarted = health({ status: "Não iniciado", dueDate: "2020-01-01" }); // nem o prazo velho o torna atrasado
+  assert.equal(notStarted.health, "idle");
+  assert.equal(notStarted.reason, "Não iniciado");
 });
 
 test("krHealth: prazo vencido sem atingir é atrasado, com a data no motivo", () => {
