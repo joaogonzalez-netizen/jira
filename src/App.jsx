@@ -8,7 +8,7 @@ import { BOARDS, boardOf, byStatusBackToFront, statusRank } from "./lib/status-o
 import { packRows } from "./lib/delivery-layout";
 import { comparePriority, mergePriority, reorderKeys } from "./lib/delivery-priority";
 import { QUEUE_STATUS_MAP, planQueueAutomation } from "./lib/status-queue";
-import { FUNNEL_STAGES, epicHealth, funnel, krHealth, krProgress, mondayOf, objectiveHealth, quarterTimeline, recentDeliveries, scheduleEnd, stageOf, withoutKr } from "./lib/director";
+import { FUNNEL_STAGES, KR_ACTIVE_STATUSES, KR_DONE_STATUSES, epicHealth, funnel, krHealth, krProgress, mondayOf, objectiveHealth, quarterTimeline, recentDeliveries, scheduleEnd, stageOf, withoutKr } from "./lib/director";
 import { barGeometry, buildOkrGantt } from "./lib/okr-gantt";
 import { buildEpicHeader } from "./lib/epic-header";
 import { NO_LINK, buildOkrLanes, matchesOkrFilter, okrCoverage, okrOf } from "./lib/okr-link";
@@ -3714,7 +3714,7 @@ const DONE_COLOR = "#00aa6c";
 const LATE_COLOR = "#e5484d";
 const SOON_COLOR = "#d98a00";
 const EXPERIMENT_STATUSES = ["Ideia", "Rodando", "Analisando", "Concluído"];
-const KR_STATUSES = ["Em andamento", "Planejado", "Não iniciado", "Pausado", "Concluído", "Cancelado"];
+const KR_STATUSES = ["Em andamento", "Planejado", "Não iniciado", "Em UX", "Pronta p/ dev", "Em dev", "Em rollout", "Pausado", "Concluído", "Done", "Cancelado"];
 
 const isEpicDone = (e) => e.status === "Done" || e.stage === "Concluído";
 /** Em aberto: nem concluído nem cancelado/arquivado (esses dois a planilha/Jira já escondem, mas o filtro não depende disso). */
@@ -3760,7 +3760,7 @@ function iceScore(x) {
 }
 /** "late" = prazo passou sem concluir; "soon" = vence em até 7 dias. */
 function dueState(item, doneStatus) {
-  if (!item.dueDate || item.status === doneStatus) return null;
+  if (!item.dueDate || [].concat(doneStatus).includes(item.status)) return null;
   const d = daysUntil(item.dueDate);
   return d < 0 ? "late" : d <= 7 ? "soon" : null;
 }
@@ -4112,7 +4112,7 @@ function StatusBadge({ children, tone }) {
   const [bg, color] = tones[tone] || [T.bg2, T.ink1];
   return <Badge bg={bg} color={color}>{children}</Badge>;
 }
-const statusTone = (s) => (["Concluído", "Concluída", "Validada", "Validado"].includes(s) ? "done" : ["Em andamento", "Rodando", "Explorando", "Analisando", "Em teste", "Priorizada"].includes(s) ? "active" : null);
+const statusTone = (s) => (["Concluído", "Concluída", "Validada", "Validado", "Done"].includes(s) ? "done" : ["Em andamento", "Rodando", "Explorando", "Analisando", "Em teste", "Priorizada", "Em UX", "Pronta p/ dev", "Em dev", "Em rollout"].includes(s) ? "active" : null);
 
 function EpicStatus({ epic }) {
   return <StatusBadge tone={isEpicDone(epic) ? "done" : epicBucket(epic) === "doing" ? "active" : null}>{epic.status || "—"}</StatusBadge>;
@@ -5052,8 +5052,8 @@ function KrCard({ kr, expanded, onToggle, onOpen }) {
         <button onClick={onOpen} style={btnStyle(T)}>Editar</button>
         <div style={{ gridColumn: "2 / -1", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           <StatusBadge tone={statusTone(kr.status)}>{kr.status}</StatusBadge>
-          {hasMetric && <CheckinBadge item={kr} activeStatuses={["Em andamento"]} />}
-          <DueBadge item={kr} doneStatus="Concluído" />
+          {hasMetric && <CheckinBadge item={kr} activeStatuses={KR_ACTIVE_STATUSES} />}
+          <DueBadge item={kr} doneStatus={KR_DONE_STATUSES} />
           {kr.owner ? <OwnerTag name={kr.owner} /> : <span style={{ fontSize: 11, color: T.ink2 }}>sem responsável</span>}
           <ProductBadges products={idx.productsOfKr(kr)} />
           <span style={{ fontSize: 11, color: T.ink2 }}>{nEpics} {nEpics === 1 ? "épico" : "épicos"}</span>
@@ -5149,7 +5149,7 @@ function OkrScreen() {
 
 /* ---- Gantt de Objetivos e Key Results ---- */
 
-const GANTT_LABEL_W = 300;
+const GANTT_LABEL_W = 340;
 const GANTT_MONTH_W = 110;
 const GANTT_ROW_H = 34;
 const GANTT_HEALTH_NAME = { on_track: "No prazo", risk: "Em risco", late: "Atrasado", done: "Atingido", idle: "Não avaliado", unscheduled: "Sem data" };
@@ -5159,7 +5159,6 @@ function OkrGanttScreen() {
   const { items, status } = usePlanning();
   const idx = usePlanIndex();
   const { positions } = useData();
-  const { canCreateCard } = useAuth();
   const now = useNow();
   const [open, editorNode] = useEditor();
   const [product, setProduct] = useState("all");
@@ -5176,7 +5175,7 @@ function OkrGanttScreen() {
       const end = scheduleEnd(pos, now);
       const weeks = pos && Number.isInteger(pos.durationWeeks) ? pos.durationWeeks : 2;
       const start = end ? new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + pos.startWeek * 7) : null;
-      return { key: e.key, summary: e.summary, start, end, health: epicHealth(e, pos, now), weeks };
+      return { key: e.key, summary: e.summary, status: e.status, start, end, health: epicHealth(e, pos, now), weeks };
     });
     return buildOkrGantt({ objectives, keyResults, today: now, epicsOfKr, showEpics });
   }, [items, idx, positions, now, product, showEpics]);
@@ -5196,25 +5195,33 @@ function OkrGanttScreen() {
   const color = (h) => HEALTH_COLOR[h] || HEALTH_COLOR.idle;
   const labelBg = T.bg0;
 
+  // Abrir o objetivo/KR é para todo mundo: quem não edita vê os campos desabilitados.
+  const openRow = (row) => { if (row.type === "objective") open("objectives", row.item); else if (row.type === "kr") open("keyResults", row.item); else window.open(jiraUrl(row.item.key), "_blank", "noopener"); };
   const labelOf = (row) => {
     if (row.type === "objective") {
       return (
-        <button onClick={() => canCreateCard && open("objectives", row.item)} title={row.item.name} style={{ ...linkBtn, ...ellipsis, display: "flex", alignItems: "center", gap: 6, color: T.ink0, fontSize: 13, fontWeight: 700, cursor: canCreateCard ? "pointer" : "default" }}>
+        <button onClick={() => openRow(row)} title={row.item.name} style={{ ...linkBtn, ...ellipsis, display: "flex", alignItems: "center", gap: 6, color: T.ink0, fontSize: 13, fontWeight: 700 }}>
           <Target size={14} color={ACCENT} style={{ flexShrink: 0 }} /><span style={ellipsis}>{row.item.name}</span>
         </button>
       );
     }
     if (row.type === "kr") {
       return (
-        <button onClick={() => canCreateCard && open("keyResults", row.item)} title={`${row.item.name}${row.reason ? ` — ${row.reason}` : ""}`} style={{ ...linkBtn, ...ellipsis, color: T.ink0, fontSize: 12.5, fontWeight: 500, paddingLeft: 20, cursor: canCreateCard ? "pointer" : "default" }}>
-          {row.item.name}
-        </button>
+        <div className="flex items-center" style={{ gap: 6, minWidth: 0, paddingLeft: 20 }}>
+          <button onClick={() => openRow(row)} title={`${row.item.name}${row.reason ? ` — ${row.reason}` : ""}`} style={{ ...linkBtn, ...ellipsis, flex: "1 1 auto", minWidth: 0, textAlign: "left", color: T.ink0, fontSize: 12.5, fontWeight: 500 }}>
+            {row.item.name}
+          </button>
+          <span style={{ flexShrink: 0 }}><StatusBadge tone={statusTone(row.item.status)}>{row.item.status}</StatusBadge></span>
+        </div>
       );
     }
     return (
-      <a href={jiraUrl(row.item.key)} target="_blank" rel="noopener noreferrer" title={row.item.summary} style={{ ...ellipsis, display: "block", paddingLeft: 40, color: T.ink1, fontSize: 11.5, textDecoration: "none" }}>
-        {row.item.key} · {row.item.summary}
-      </a>
+      <div className="flex items-center" style={{ gap: 6, minWidth: 0, paddingLeft: 40 }}>
+        <a href={jiraUrl(row.item.key)} target="_blank" rel="noopener noreferrer" title={row.item.summary} style={{ ...ellipsis, flex: "1 1 auto", minWidth: 0, color: T.ink1, fontSize: 11.5, textDecoration: "none" }}>
+          {row.item.key} · {row.item.summary}
+        </a>
+        {row.item.status && <span style={{ flexShrink: 0, fontSize: 10.5, color: T.ink2 }}>{row.item.status}</span>}
+      </div>
     );
   };
 
@@ -5224,11 +5231,11 @@ function OkrGanttScreen() {
     const c = color(row.health);
     const tip = row.type === "epic"
       ? `${row.item.key} · ${row.item.summary}\n${fmt(row.span.start)} → ${fmt(row.span.end)} · ${GANTT_HEALTH_NAME[row.health] || ""}`
-      : `${row.item.name}\n${fmt(row.span.start)} → ${fmt(row.span.end)} · ${GANTT_HEALTH_NAME[row.health] || ""}${row.type === "kr" && row.progress !== null && row.progress !== undefined ? ` · ${row.progress}% da meta` : ""}${row.reason && row.type === "kr" ? `\n${row.reason}` : ""}`;
+      : `${row.item.name}${row.type === "kr" && row.item.status ? ` [${row.item.status}]` : ""}\n${fmt(row.span.start)} → ${fmt(row.span.end)} · ${GANTT_HEALTH_NAME[row.health] || ""}${row.type === "kr" && row.progress !== null && row.progress !== undefined ? ` · ${row.progress}% da meta` : ""}${row.reason && row.type === "kr" ? `\n${row.reason}` : ""}`;
     const h = row.type === "objective" ? 12 : row.type === "kr" ? 18 : 12;
     const pct = row.type === "kr" && isNum(row.progress) ? row.progress : row.type === "epic" && row.health === "done" ? 100 : 0;
     return (
-      <div title={tip} style={{ position: "absolute", left: `${g.left * 100}%`, width: `${g.width * 100}%`, top: (GANTT_ROW_H - h) / 2, height: h, borderRadius: row.type === "objective" ? 3 : 5, border: `1px solid ${c}`, background: `${c}${row.type === "objective" ? "55" : "26"}`, overflow: "hidden" }}>
+      <div title={tip} onClick={() => openRow(row)} style={{ cursor: "pointer", position: "absolute", left: `${g.left * 100}%`, width: `${g.width * 100}%`, top: (GANTT_ROW_H - h) / 2, height: h, borderRadius: row.type === "objective" ? 3 : 5, border: `1px solid ${c}`, background: `${c}${row.type === "objective" ? "55" : "26"}`, overflow: "hidden" }}>
         {pct > 0 && <div style={{ width: `${pct}%`, height: "100%", background: c, opacity: 0.75 }} />}
       </div>
     );
