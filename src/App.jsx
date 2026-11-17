@@ -5200,7 +5200,8 @@ function OkrScreen() {
 
 const GANTT_LABEL_W = 340;
 const GANTT_FALLBACK_MONTH_W = 110; // largura do mês até a tela ser medida
-const GANTT_VISIBLE_MONTHS = 3; // quantos meses cabem na tela de cada vez; o resto, rolando para os lados
+const GANTT_VISIBLE_MONTHS = 6; // quantos meses cabem na tela de cada vez; o resto, rolando para os lados
+const GANTT_MONTHS_BEFORE_TODAY = 2; // ao abrir, quantos meses antes do de hoje aparecem à esquerda
 /** O Gantt sempre cobre 2026 e 2027 (barras fora desse período esticam a janela). */
 const GANTT_INCLUDE = { start: new Date(2026, 0, 1), end: new Date(2028, 0, 1) };
 const GANTT_ROW_H = 34;
@@ -5234,7 +5235,7 @@ function OkrGanttScreen() {
   const { rows, range, months, todayFraction, undated } = gantt;
   const scrollRef = useRef(null);
   const hasRows = rows.length > 0;
-  // Cada mês ocupa 1/3 da área do gráfico (a tela menos a coluna dos nomes): três meses por vez, o resto rolando.
+  // A área do gráfico (a tela menos a coluna dos nomes) é dividida em GANTT_VISIBLE_MONTHS meses; o resto se alcança rolando.
   const [viewW, setViewW] = useState(0);
   useEffect(() => {
     const el = scrollRef.current;
@@ -5248,12 +5249,12 @@ function OkrGanttScreen() {
   }, [hasRows]);
   const monthW = viewW > GANTT_LABEL_W + 120 ? (viewW - GANTT_LABEL_W) / GANTT_VISIBLE_MONTHS : GANTT_FALLBACK_MONTH_W;
   const timelineW = months.length * monthW;
-  // Abre com o mês de hoje no meio dos três visíveis (e não em janeiro de 2026).
+  // Abre com o mês de hoje à vista, com um pouco do passado antes dele (e não em janeiro de 2026).
   const todayMonth = months.findIndex((m) => now >= m.start && now < m.end);
   const scrollToToday = useCallback((behavior = "auto") => {
     const el = scrollRef.current;
     if (!el || todayMonth === -1) return;
-    el.scrollTo({ left: Math.max(0, (todayMonth - 1) * monthW), behavior });
+    el.scrollTo({ left: Math.max(0, (todayMonth - GANTT_MONTHS_BEFORE_TODAY) * monthW), behavior });
   }, [todayMonth, monthW]);
   const scrolledFor = useRef("");
   useEffect(() => {
