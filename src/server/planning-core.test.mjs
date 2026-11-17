@@ -295,3 +295,11 @@ test("KR aceita o status Não iniciado e continua recusando status que não exis
   const bad = await handleUpdate("keyResults", kr.id, { status: "Quase lá" }, ADMIN, config);
   assert.notEqual(bad.body.status, "Quase lá"); // valor fora da lista é ignorado
 });
+
+test("KR aceita os status dos times e Done", async () => {
+  const config = fakeConfig();
+  const { kr } = await tree(config);
+  for (const status of ["Em UX", "Pronta p/ dev", "Em dev", "Em rollout", "Done"]) {
+    assert.equal((await handleUpdate("keyResults", kr.id, { status }, ADMIN, config)).body.status, status);
+  }
+});

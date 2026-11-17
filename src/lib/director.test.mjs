@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  epicHealth, funnel, krHealth, krProgress, objectiveHealth, quarterOf, quarterTimeline, recentDeliveries, scheduleEnd, stageOf, timelineQuarters, withoutKr,
+  KR_ACTIVE_STATUSES, KR_DONE_STATUSES, epicHealth, funnel, krHealth, krProgress, objectiveHealth, quarterOf, quarterTimeline, recentDeliveries, scheduleEnd, stageOf, timelineQuarters, withoutKr,
 } from "./director.js";
 
 // quarta-feira, 18/11/2026 (a segunda dessa semana é 16/11)
@@ -187,4 +187,22 @@ test("recentDeliveries: só concluídos na janela, mais recentes primeiro, com l
   const r = recentDeliveries(cards, positions, { now: NOW, weeks: 6, limit: 10 });
   assert.deepEqual(r.map((x) => x.card.key), ["e", "a", "b"]);
   assert.equal(recentDeliveries(cards, positions, { now: NOW, weeks: 6, limit: 1 }).length, 1);
+});
+
+test("krHealth: os status dos times (Em UX, Pronta p/ dev, Em dev, Em rollout) são avaliados como Em andamento", () => {
+  for (const status of ["Em UX", "Pronta p/ dev", "Em dev", "Em rollout"]) {
+    assert.ok(KR_ACTIVE_STATUSES.includes(status), status);
+    assert.equal(health({ status, current: 30 }).health, "risk", status); // atrás do ritmo
+    assert.equal(health({ status, current: 50 }).health, "on_track", status);
+    assert.equal(health({ status, dueDate: "2026-11-10" }).health, "late", status);
+  }
+  assert.equal(health({ status: "Em andamento", current: 30 }).health, "risk"); // o de sempre continua igual
+});
+
+test("krHealth: Done é o mesmo que Concluído (atingido), mesmo sem números", () => {
+  assert.deepEqual(KR_DONE_STATUSES, ["Concluído", "Done"]);
+  assert.equal(health({ status: "Done" }).health, "done");
+  assert.equal(health({ status: "Done", baseline: undefined, current: undefined }).health, "done");
+  assert.equal(health({ status: "Done", dueDate: "2020-01-01" }).health, "done"); // prazo velho não o atrasa
+  assert.equal(health({ status: "Pausado" }).health, "idle"); // quem não anda segue sem avaliação
 });
