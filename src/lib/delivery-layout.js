@@ -19,3 +19,21 @@ export function packRows(items) {
   }
   return { rowOf, rowCount: Math.max(rows.length, 1) };
 }
+
+/**
+ * Linhas do quadro, uma por feature, uma debaixo da outra. Cada feature ocupa tantas linhas da grade quantas
+ * precisar: as sub-linhas dos cards de semana (`packRows`) OU, se forem mais, uma por card de "Próximas
+ * entregas" (cada um fica na própria linha). A feature seguinte começa DEPOIS das linhas que esta ocupa de
+ * fato — senão os cards das duas se sobrepõem na mesma linha da grade.
+ * `features` = `[{ cards: [{ key, start, end }], upcomingCount }]`; devolve `[{ rowOf, rowCount, gridRow }]`.
+ */
+export function layoutFeatureRows(features, firstRow = 2) {
+  let next = firstRow;
+  return features.map(({ cards, upcomingCount }) => {
+    const { rowOf, rowCount: packed } = packRows(cards);
+    const rowCount = Math.max(packed, upcomingCount);
+    const placed = { rowOf, rowCount, gridRow: next };
+    next += rowCount;
+    return placed;
+  });
+}

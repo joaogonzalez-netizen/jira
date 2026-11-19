@@ -5,7 +5,7 @@ import storage from "./lib/storage";
 import { roadmapStore, diffRoadmap, isEmptyDiff, summarizeRoadmap, emptyRoadmap, applyEpicOverrides, mergeCustomEpics } from "./lib/roadmap-store";
 import { jiraApi } from "./lib/jira-client";
 import { BOARDS, boardOf, byStatusBackToFront, statusRank } from "./lib/status-order";
-import { packRows } from "./lib/delivery-layout";
+import { layoutFeatureRows } from "./lib/delivery-layout";
 import { comparePriority, mergePriority, reorderKeys } from "./lib/delivery-priority";
 import { QUEUE_STATUS_MAP, planQueueAutomation } from "./lib/status-queue";
 import { FUNNEL_STAGES, KR_ACTIVE_STATUSES, KR_DONE_STATUSES, epicHealth, funnel, krHealth, krProgress, mondayOf, objectiveHealth, quarterTimeline, recentDeliveries, scheduleEnd, stageOf, withoutKr } from "./lib/director";
@@ -3408,19 +3408,16 @@ function DeliveriesScreen() {
       return order.indexOf(a.id) - order.indexOf(b.id);
     });
     // Cada card ocupa as colunas de `start` a `end`; os que se sobrepõem vão
-    // para sub-linhas diferentes dentro da linha da feature.
-    let nextRow = 2; // a linha 1 é o cabeçalho
+    // para sub-linhas diferentes dentro da linha da feature. Cada card de
+    // "Próximas entregas" ocupa a própria linha (uma célula alta esticaria as
+    // sub-linhas e abriria vãos entre os cards da semana), e a feature seguinte
+    // só começa depois de todas as linhas que esta usa.
     rows.forEach((row) => {
       row.cards = row.items.filter((e) => e.week).map((e) => ({ item: e, start: idxOf(e.start || e.week), end: idxOf(e.week) }));
-      const { rowOf, rowCount } = packRows(row.cards.map((c) => ({ key: c.item.key, start: c.start, end: c.end })));
-      // Cada card de "Próximas entregas" ocupa a própria linha: uma célula alta
-      // esticaria as sub-linhas e abriria vãos entre os cards da semana.
       row.upcoming = row.items.filter((e) => e.upcoming);
-      row.rowOf = rowOf;
-      row.rowCount = Math.max(rowCount, row.upcoming.length);
-      row.gridRow = nextRow;
-      nextRow += rowCount;
     });
+    const placed = layoutFeatureRows(rows.map((row) => ({ cards: row.cards.map((c) => ({ key: c.item.key, start: c.start, end: c.end })), upcomingCount: row.upcoming.length })), 2); // a linha 1 é o cabeçalho
+    rows.forEach((row, i) => Object.assign(row, placed[i]));
     return { weekTimes, rows, items };
   }, [delivered, product, initiatives, initiativeByEpicKey, now, prioKeys]);
 
